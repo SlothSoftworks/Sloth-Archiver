@@ -1,0 +1,9 @@
+.mainTabs {
+    width: 100%;
+    height: 100%;
+}
+.tabContainer {
+    align-self: center;
+    height: 100vh;
+    align-content: center;
+}
