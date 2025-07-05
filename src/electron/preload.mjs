@@ -1,8 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 //const { contextBridge, ipcRenderer } = require('electron');
 
-console.log("ONEGAISHIMASU")
 
 contextBridge.exposeInMainWorld('electronAPI', {
-    pickFolder: () => ipcRenderer.invoke('dialog:openFolder'),
-})
+    pickFolder: (options) => ipcRenderer.invoke('dialog:openFolder', options),
+    saveVideoFile: (defaultName, format, options) => ipcRenderer.invoke('dialog:saveVideoFile', defaultName, format, options),
+    downloadVideoPython: (args) => ipcRenderer.invoke('downloadVideoPython', args),
+});
