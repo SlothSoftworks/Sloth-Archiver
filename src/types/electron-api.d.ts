@@ -1,10 +1,15 @@
 export {}
 
+type FolderPickerResult = {
+    filePath: string;
+    canceled: boolean;
+};
+
 declare global {
     interface Window {
         electronAPI: {
-            pickFolder: (options: T) => Promise <string | null>;
-            saveVideoFile: (defaultName?: string) => Promise <string | null>;
+            pickFolder: (options: T) => Promise <FolderPickerResult>;
+            saveVideoFile: (defaultName?: string) => Promise <FolderPickerResult>;
             downloadVideoPython: (args: T) => Promise <strin | null>; 
         };
     }
