@@ -1,17 +1,10 @@
 import yt_dlp
-from yt_dlp.utils import download_range_func
+from yt_dlp.utils import DownloadError
 import json
 import sys
 
 
-def getVideoInfo(url, outputFormat = None, expectedRes = 1080, fileOutputTemplate = f'%(title)s%(resolution)s', additionalOptions = {}):
-    desired_resolution = expectedRes  # Change to '1080p', '480p', etc.
-    output_template = f'%(title)s%(resolution)s'
-
-    # Convert '720p' to integer height
-    resolution_height = int(desired_resolution)
-
-    
+def getVideoInfo(url, outputFormat = None, expectedRes = 1080, fileOutputTemplate = f'%(title)s%(resolution)s', additionalOptions = {}):    
     yt_opts = {
         'verbose': False,
         'quiet': True,
@@ -25,11 +18,37 @@ def getVideoInfo(url, outputFormat = None, expectedRes = 1080, fileOutputTemplat
     with yt_dlp.YoutubeDL(yt_opts) as ydl:
         info = ydl.extract_info(url, download=False)
         formats = info.get('formats', [])
+        duration = info.get('duration')
 
-        resolutions = sorted(set(
-            fmt['height'] for fmt in formats
-            if fmt.get('vcodec') != 'none' and fmt.get('height') is not None
-        ))
+        resolutions = []
+        seen = set()
+
+        for fmt in formats:
+            height = fmt.get('height')
+            if fmt.get('vcodec') == 'none' or not height:
+                continue
+            if height in seen:
+                continue
+            seen.add(height)
+
+            size = fmt.get('filesize') or fmt.get('filesize_approx')
+            if not size and fmt.get('tbr') and duration:
+                size_kb = (fmt['tbr'] * duration) / 8
+                size = size_kb * 1024
+            if size is not None:
+                size_mb = round(size / (1024 * 1024), 2)
+            else:
+                size_mb = None
+            
+            resolutions.append({
+                'resolution': f"{height}",
+                'filesizeMb': size_mb,
+            })
+
+        # resolutions = sorted(set(
+        #     fmt['height'] for fmt in formats
+        #     if fmt.get('vcodec') != 'none' and fmt.get('height') is not None
+        # ))
 
         videoInfo = {
             'id': info['id'],
@@ -56,14 +75,30 @@ def getVideoInfo(url, outputFormat = None, expectedRes = 1080, fileOutputTemplat
             'language': info['language'],
             }
         return videoInfo
+    
+if __name__ == '__main__':
+    try:
+        url = sys.argv[1]
+        result = getVideoInfo(url)
+        print(json.dumps({
+            'success': True,
+            'response': result,
+        }, indent=4))
+    except DownloadError as e:
+        print(json.dumps({
+            'success': False,
+            'error': 'DownloadError',
+            'stacktrace': str(e),
+        }))
+        sys.exit(1)
+    except Exception as e:
+        print(json.dumps({
+            'success': False,
+            'error': 'Exception',
+            'stacktrace': str(e),
+        }))
+        sys.exit(1)
 
-url = sys.argv[1]
-res = getVideoInfo(url)
-
-#with open('data.json', 'w', encoding='utf-8') as fp: # print to file for debugging
-#    json.dump(res, fp, ensure_ascii=False, indent=4)
-
-print("VIDINFO=",json.dumps(res))
 
 
 
