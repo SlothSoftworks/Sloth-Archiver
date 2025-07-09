@@ -38,6 +38,38 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', format =
     ...options
 }))
 
+ipcMain.handle('getVideoInfoPython', async (event, url, args={}) => {
+    return new Promise((resolve, reject) => {
+        const script = spawn('python3', [path.join(pythonPath, "vidInfoFetch.py"), url, JSON.stringify(args) ]);
+        let data = '';
+        let error = '';
+        let resultObject = {}
+
+        script.stdout.on('data', (output) => {
+            data += output.toString();
+        });
+        script.stderr.on('data', err => {
+            error += err.toString();
+        });
+
+        script.on('close', (code) => {
+
+            if (code !== 0 || error) {
+                resultObject = {success: false, error: error || `Python script failed with code ${code}`};
+                reject (resultObject);
+            } else {
+                console.log(data);
+                try {
+                    resultObject = {success: true, data: JSON.parse(data)}
+                    resolve(resultObject);
+                } catch (e) {
+                    resultObject = {success: false, error: 'Failed to parse video data'}
+                    reject(resultObject);
+                }
+            }
+        });
+    });
+});
 
 ipcMain.handle('downloadVideoPython', async (event, args) => {
     return new Promise((resolve, reject) => {

@@ -10,7 +10,8 @@ declare global {
         electronAPI: {
             pickFolder: (options: T) => Promise <FolderPickerResult>;
             saveVideoFile: (defaultName?: string) => Promise <FolderPickerResult>;
-            downloadVideoPython: (args: T) => Promise <strin | null>; 
+            downloadVideoPython: (args: T) => Promise <string | null>; 
+            getVideoInfoPython: (url: string, options?: T) => Promise <T>
         };
     }
 }

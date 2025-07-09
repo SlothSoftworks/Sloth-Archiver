@@ -4,7 +4,7 @@ import json
 import sys
 
 
-def getVideoInfo(url, outputFormat = None, expectedRes = 1080, fileOutputTemplate = f'%(title)s%(resolution)s', additionalOptions = {}):    
+def getVideoInfo(url, additionalOptions = {}):    
     yt_opts = {
         'verbose': False,
         'quiet': True,
@@ -45,11 +45,6 @@ def getVideoInfo(url, outputFormat = None, expectedRes = 1080, fileOutputTemplat
                 'filesizeMb': size_mb,
             })
 
-        # resolutions = sorted(set(
-        #     fmt['height'] for fmt in formats
-        #     if fmt.get('vcodec') != 'none' and fmt.get('height') is not None
-        # ))
-
         videoInfo = {
             'id': info['id'],
             'title': info['title'],
@@ -83,7 +78,7 @@ if __name__ == '__main__':
         print(json.dumps({
             'success': True,
             'response': result,
-        }, indent=4))
+        }))
     except DownloadError as e:
         print(json.dumps({
             'success': False,
@@ -98,34 +93,4 @@ if __name__ == '__main__':
             'stacktrace': str(e),
         }))
         sys.exit(1)
-
-
-
-
-# info:
-#     id
-#     title
-#     formats:
-#         resolutions
-#     thumnails: []
-#     thumbnail: ""
-#     description:
-#     channel_url:
-#     categories: []
-#     tags:
-#     release_timestamp:
-#     channel: "channel name"
-#     upload_date:
-#     uploader_url:
-#     original_url:
-#     playlist: 
-#     fulltitle:
-#     diration_string:
-#     release_date:
-#     release_year:
-#     _has_drm: ??? might be usefu
-#     format:
-#     ext: "mp4"
-#     language: 
-#     resolution: (actual reoslution it was downloaded in)
     
