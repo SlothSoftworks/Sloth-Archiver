@@ -8,6 +8,7 @@ import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import DownloadIcon from '@mui/icons-material/Download';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
+import { isValidUrl } from '../../utils/utils.mjs';
 
 import { useDebounce } from '../../utils/useDebounce';
 
@@ -27,11 +28,17 @@ export default function DownloaderScreen() {
   const [videoUrl, setVideoUrl] = useState("");
   const debouncedVideoUrl = useDebounce(videoUrl);
   const [currentVidSavePath, setCurrentVidSavePath] = useState("");
+  const [videoInfo, setVideoInfo] = useState('');
 
 
   useEffect(() => {
     console.log(debouncedVideoUrl);
-    // TODO Add here loading of available resolutions
+    if (debouncedVideoUrl != '' && isValidUrl(debouncedVideoUrl)) {
+      handleGetVideoInfo(debouncedVideoUrl);
+    } else {
+      console.log('INVALID URL');
+    }
+    
   }, [debouncedVideoUrl])
 
 
@@ -47,7 +54,16 @@ export default function DownloaderScreen() {
   const handleSaveVideo = async () => {
     const result = await window.electronAPI.saveVideoFile();
     console.log(result);
+    if (!result.canceled) {
+      console.log('notcanceled');
+      setCurrentVidSavePath(result.filePath);
+    }
   };
+
+  const handleGetVideoInfo = async (url: string) => {
+    const result = await window.electronAPI.getVideoInfoPython(url);
+    console.log(result);
+  }
 
   const handleDowloadFromPython = async () => {
     const args = {
@@ -71,10 +87,9 @@ export default function DownloaderScreen() {
             </Grid>
             <Grid size={2}>
             <Button onClick={handlePickFolder} fullWidth variant="contained"><LibraryAddIcon/></Button>
-            <Button onClick={handleDowloadFromPython} fullWidth variant="contained">PYTHON</Button>
             </Grid>
             <Grid size={4}>
-            <Item>size=4</Item>
+            {currentVidSavePath && <Item>Filepath current vid {currentVidSavePath}</Item>} 
             </Grid>
             <Grid size={8}>
             <Item>size=8</Item>
