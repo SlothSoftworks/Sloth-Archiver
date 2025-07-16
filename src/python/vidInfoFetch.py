@@ -43,6 +43,7 @@ def getVideoInfo(url, additionalOptions = {}):
             resolutions.append({
                 'resolution': f"{height}",
                 'filesizeMb': size_mb,
+                'ext': fmt.get('ext'),
             })
 
         videoInfo = {

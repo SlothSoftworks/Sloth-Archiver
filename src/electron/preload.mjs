@@ -7,4 +7,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveVideoFile: (defaultName, format, options) => ipcRenderer.invoke('dialog:saveVideoFile', defaultName, format, options),
     getVideoInfoPython: (url, options) => ipcRenderer.invoke('getVideoInfoPython', url, options),
     downloadVideoPython: (args) => ipcRenderer.invoke('downloadVideoPython', args),
+    openDirectory: (path) => ipcRenderer.invoke('system:openDirectory', path),
+    openFileInDirectory: (filePath) => ipcRenderer.invoke('system:openFileInDirectory', filePath),
 });
+
+contextBridge.exposeInMainWorld('electronAPIPythonDownload', {
+    startDownloadPython: (options) => ipcRenderer.invoke('downloadVideoWithProgressUpdates', options),
+    onProgressUpdate: (callback) => ipcRenderer.on('progressUpdate', (_event, data) => callback(data)),
+    removeProgressListener: () => ipcRenderer.removeAllListeners('progressUpdate')
+});
+

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { fileURLToPath } from 'url';
 import path from 'path'
 import { spawn } from 'child_process';
@@ -87,4 +87,51 @@ ipcMain.handle('downloadVideoPython', async (event, args) => {
             resolve(result);
         });
     });
+});
+
+ipcMain.handle('downloadVideoWithProgressUpdates', (event, { videoUrl, outputhPath, format }) => {
+    console.log('PARAMS:',videoUrl, outputhPath, format)
+
+    const script = spawn('python3', [path.join(pythonPath, "vidDownloadWithProgressHook.py"), videoUrl, outputhPath, format ]);
+
+    let buffer = '';
+    
+    script.stdout.on('data', (data) => {
+        buffer += data.toString();
+
+        let lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        lines.forEach(line => {
+            try {
+                const msg = JSON.parse(line);
+                BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', msg);
+            } catch (e) {
+                console.warn('Invalid JSON found:', line);
+            }
+        })
+    });
+
+    script.stderr.on('data', (err) => {
+        console.error('Python stderr:', err.toString());
+    });
+
+    script.on('close', (code) => {
+        if (code !== 0) {
+            BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', {
+                type: 'error',
+                payload: { message: `Download failed with code ${code}` },
+            })
+        }
+    })
+
+});
+
+// openDirectory
+
+ipcMain.handle('system:openFileInDirectory', async (e, filepath) => {
+    shell.showItemInFolder(filepath);
+});
+ipcMain.handle('system:openDirectory', async (e, path) => {
+    shell.showItemInFolder(path);
 });
