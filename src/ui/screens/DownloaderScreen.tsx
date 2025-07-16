@@ -3,7 +3,6 @@ import { Box, Grid } from '@mui/material';
 import './screens.css'
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
-import DownloadIcon from '@mui/icons-material/Download';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
 import { isValidUrl } from '../../utils/utils.ts';
 import VideoDetailCard from './VideoDetailCard';
@@ -17,7 +16,6 @@ export default function DownloaderScreen() {
 
   const [videoUrl, setVideoUrl] = useState("");
   const debouncedVideoUrl = useDebounce(videoUrl);
-  const [currentVidSavePath, setCurrentVidSavePath] = useState("");
   const [videoInfo, setVideoInfo] = useState(window.mockingElectron !== "yes" ? null : videoResponseMock.data.response); // TODO change this after testing
 
 
