@@ -23,14 +23,9 @@ import type { LinearProgressProps } from '@mui/material/LinearProgress';
 import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
 import { formatComment } from '../components/componentUtils';
 
-import { electronAPIMock, electronAPIPythonDownloadMock } from '../../../testing/mockData/electronAPIMocks.ts'
+import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 
 
-if (!window.electronAPI) {
-  window.mockingElectron = "yes";
-  window.electronAPI = electronAPIMock;
-  window.electronAPIPythonDownload = electronAPIPythonDownloadMock;
-}
 
 async function handleOpenFileLocation(filePath: string) {
   await window.electronAPI.openFileInDirectory(filePath);
@@ -88,24 +83,12 @@ interface VideoDataProps {
     }
   }
 
-interface DownloadProgressMessage {
-  type: string;
-  payload: {
-    filename: string;
-    downloadedBytes: string;
-    totalBytes: string;
-    percent: string;
-    speed: string;
-  }
-}
-
 const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
 
   const [selectedFormat, setSelectedFormat] = useState('dflt');
-  const [downloadStatus, setDownloadStatus] = useState('idle');
-  const [currentDownloadProgress, setCurrentDownloadProgress] = useState('0%');
-  const [currentDownloadFinalPath, setCurrentDownloadFinalPath] = useState('');
+  const [currentDownloadFinalPath, setCurrentDownloadFinalPath] = useState<string>('');
 
+  const { finalFilePath, downloadStatus, downloadProgress, isDone, isError, downloadError, startDownload } = useDownloadVideo();
 
   const handleDownloadOperationFromResolution = async (resolution: string) => {
     console.log('resolution:', resolution, 'format:', selectedFormat)
@@ -113,43 +96,16 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
     console.log(selectedFile)
 
     if (!selectedFile.canceled) {
-      window.electronAPIPythonDownload.startDownloadPython({ videoUrl: videoMetaData.originalUrl, outputhPath: selectedFile.filePath })
+      startDownload({ videoUrl: videoMetaData.originalUrl, outputPath: selectedFile.filePath });
     }
     
   }
 
-
   useEffect(() => {
-    window.electronAPIPythonDownload.onProgressUpdate((msg: DownloadProgressMessage) => {
-      const { type, payload } = msg;
-      switch(type) {
-        case 'progress':
-          setCurrentDownloadProgress(payload.percent);
-          setDownloadStatus('progress');
-          break;
-        case 'downloading':
-          setDownloadStatus('Downloading...');
-          break;
-        case 'postprocessing':
-          setDownloadStatus('Postprocessing...')
-          break;
-        case 'error':
-          console.error('Download error:', msg)
-          break;
-        case 'done':
-          setDownloadStatus('Done: ')
-          setCurrentDownloadFinalPath(payload.filename)
-          break;
-      }
-      //TODO add validation for download done and link it to the openfolder function
-    });
-
-    return () => {
-      window.electronAPIPythonDownload.removeProgressListener();
+    if (isDone) {
+      setCurrentDownloadFinalPath(finalFilePath);
     }
-
-  })
-
+  }, [isDone])
 
   return (
     <Card elevation={3} sx={{ display: 'flex', p: 2, borderRadius: 4, backgroundColor: 'grey.800' }}>
@@ -212,12 +168,12 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
             
             <Stack direction={"row"}>
             <Typography variant="caption">{downloadStatus}</Typography>
-            <Button onClick={() => handleOpenFileLocation(currentDownloadFinalPath)} variant="contained"><FileOpenIcon/></Button>
+            {isDone && <Button onClick={() => handleOpenFileLocation(currentDownloadFinalPath)} variant="contained">Open File Location<FileOpenIcon/></Button>}
             </Stack>
             <Box sx={{ width: '100%' }}>
-              <LinearProgressWithLabel value={parseInt(currentDownloadProgress.replace('%', ''))} />
+              <LinearProgressWithLabel value={downloadProgress} />
             </Box>
-            {currentDownloadProgress}
+            {isError && <Typography>VALIO VERGAAAA</Typography>}
           </Grid>
         </Paper>
       </Box>
