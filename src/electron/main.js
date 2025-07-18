@@ -6,6 +6,8 @@ import { spawn } from 'child_process';
 import { getSupportedVideoFilters } from '../utils/constants.mjs';
 
 
+process.env.NODE_ENV = 'development';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const indexPath = path.resolve(__dirname, '../../yt-archiver-dist/index.html');
@@ -89,10 +91,10 @@ ipcMain.handle('downloadVideoPython', async (event, args) => {
     });
 });
 
-ipcMain.handle('downloadVideoWithProgressUpdates', (event, { videoUrl, outputhPath, format }) => {
-    console.log('PARAMS:',videoUrl, outputhPath, format)
+ipcMain.handle('downloadVideoWithProgressUpdates', (event, { videoUrl, outputPath, format }) => {
+    console.log('PARAMS:',videoUrl, outputPath, format)
 
-    const script = spawn('python3', [path.join(pythonPath, "vidDownloadWithProgressHook.py"), videoUrl, outputhPath, format ]);
+    const script = spawn('python3', [path.join(pythonPath, "vidDownloadWithProgressHook.py"), videoUrl, outputPath, format ]);
 
     let buffer = '';
     

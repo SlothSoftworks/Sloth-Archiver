@@ -29,5 +29,5 @@ export type DownloadProgressMessage = {
   export type DownloadVideoParams = {
     videoUrl: string;
     outputPath: string;
-    format: string;
+    format?: string;
   }
