@@ -47,25 +47,6 @@ function LinearProgressWithLabel(props: LinearProgressProps & { value: number })
   );
 }
 
-function LinearWithValueLabel() {
-  const [progress, setProgress] = useState(10);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setProgress((prevProgress) => (prevProgress >= 100 ? 10 : prevProgress + 10));
-    }, 800);
-    return () => {
-      clearInterval(timer);
-    };
-  }, []);
-
-  return (
-    <Box sx={{ width: '100%' }}>
-      <LinearProgressWithLabel value={progress} />
-    </Box>
-  );
-}
-
 interface Resolution {
     resolution: string;
     filesizeMb: string;
@@ -101,6 +82,10 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
     
   }
 
+  if(downloadError) {
+    console.log(downloadError);
+  }
+
   useEffect(() => {
     if (isDone) {
       setCurrentDownloadFinalPath(finalFilePath);
@@ -108,7 +93,7 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
   }, [isDone])
 
   return (
-    <Card elevation={3} sx={{ display: 'flex', p: 2, borderRadius: 4, backgroundColor: 'grey.800' }}>
+    <Card elevation={3} sx={{ display: 'flex', p: 2, borderRadius: 4, bgcolor: 'text.secondary' }}>
       <Box sx={{ width: '50%', pr: 2}}>
         <CardMedia
           component="div"
@@ -130,15 +115,17 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
         </CardMedia>
 
         <Paper sx={{ p: 1, border: '2px solid black', borderRadius: 2 }}>
-          <Grid container spacing={1}>
+          <Grid container
+          spacing={{xs:1, sm:1 }}
+          columns={{xs: 1, sm: 9,md: 12}}>
             {videoMetaData.resolutions?.map((res, idx) => (
-              <Grid size={{xs: 4}} key={idx}>
+              <Grid size={{xs: 2, sm: 3}} key={idx}>
                 <Button onClick={() => handleDownloadOperationFromResolution(res.resolution)} sx={{whiteSpace: "pre-line"}}  fullWidth variant="outlined">
                   <Stack 
                       spacing={0}
                       direction="column"
                       divider={<Divider flexItem sx={{mx:1}} orientation='horizontal'/>}>
-                      <Typography variant="button">{res.resolution}</Typography>
+                      <Typography variant="button" textTransform='none'>{res.resolution}p</Typography>
                       <Typography variant="caption">{res.filesizeMb}Mb</Typography>
                   </Stack>
                 </Button>
@@ -163,11 +150,10 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
           </Grid>
         </Paper>
         <Paper sx={{ p: 1, border: '2px solid black', borderRadius: 2 }}>
-          <Grid container spacing={1}>
-            <LinearWithValueLabel/>
-            
+          <Grid container spacing={1}>            
             <Stack direction={"row"}>
-            <Typography variant="caption">{downloadStatus}</Typography>
+            <Typography variant="subtitle1">Download</Typography>
+            <Typography variant="subtitle1">{`(${downloadStatus})`}</Typography>
             {isDone && <Button onClick={() => handleOpenFileLocation(currentDownloadFinalPath)} variant="contained">Open File Location<FileOpenIcon/></Button>}
             </Stack>
             <Box sx={{ width: '100%' }}>
@@ -179,17 +165,12 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
       </Box>
 
       <Box sx={{ width: '50%' }}>
-        <Stack spacing={1} direction="row" justifyContent="flex-end" mb={1}>
-          <Button variant="contained">Save</Button>
-          <Button variant="contained"><LibraryAddIcon/></Button>
-        </Stack>
-
         <Stack spacing={6} direction="row" justifyContent="left" mb={1}>
             <Grid size={8}>
                 <Typography textAlign="initial" variant="h6"> <a target="_blank" href={videoMetaData.originalUrl}>{videoMetaData.fullTitle}</a></Typography>
             </Grid>
             <Grid sx={{whiteSpace: 'nowrap'}} size={2} justifyContent={'right'}>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
+                <Typography variant="body2" gutterBottom sx={{color: 'info.main', fontWeight: 'bolder'}}>
                 {convertYYYYMMDDStringToDate(videoMetaData.uploadDate)}
                 </Typography>
             </Grid>

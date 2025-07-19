@@ -3,7 +3,7 @@ import type { DownloadProgressMessage, DownloadVideoParams } from '../../types'
 
 function useDownloadVideo() {
   const [downloadProgress, setDownloadProgress] = useState(0);
-  const [downloadStatus, setDownloadStatus] = useState("idle");
+  const [downloadStatus, setDownloadStatus] = useState("Idle");
   const [finalFilePath, setFinalFilePath] = useState<string>('');
   const [isDone, setIsDone] = useState(false);
   const [isError, setIsError] = useState(false);
@@ -14,7 +14,7 @@ function useDownloadVideo() {
         const { videoUrl, outputPath, format } = props;
 
         setDownloadProgress(0);
-        setDownloadStatus("idle");
+        setDownloadStatus("Idle");
         setFinalFilePath('');
         setIsDone(false);
         setIsError(false);
@@ -27,22 +27,22 @@ function useDownloadVideo() {
       window.electronAPIPythonDownload.onProgressUpdate((msg: DownloadProgressMessage) => {
         const { type, payload } = msg;
         switch(type) {
-          case 'progress':
+          case 'Progress':
             setDownloadProgress(parseInt(payload.percent.replace('%', '')));
             setDownloadStatus('progress');
             break;
-          case 'downloading':
+          case 'Downloading':
             setDownloadStatus('Downloading...');
             break;
-          case 'postprocessing':
+          case 'Postprocessing':
             setDownloadStatus('Postprocessing...')
             break;
-          case 'error':
+          case 'Error':
             console.error('Download error', msg)
             setIsError(true);
             setDownloadError(msg);
             break;
-          case 'done':
+          case 'Done':
             setDownloadStatus('Done')
             setFinalFilePath(payload.filename)
             setIsDone(true);
