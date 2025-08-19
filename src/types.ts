@@ -30,4 +30,6 @@ export type DownloadProgressMessage = {
     videoUrl: string;
     outputPath: string;
     format?: string;
+    resolution: string;
+    additionalOptions?: object;
   }

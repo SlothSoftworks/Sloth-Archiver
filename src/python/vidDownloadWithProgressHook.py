@@ -3,6 +3,8 @@ import json
 import os
 from yt_dlp import YoutubeDL
 from yt_dlp import DownloadError
+from yt_dlp.postprocessor.ffmpeg import FFmpegVideoConvertorPP
+import subprocess
 import re
 
 ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
@@ -18,6 +20,7 @@ class CustomLogger:
     def warning(self, msg):
         pass
     def error(self, msg):
+        emit('error', { 'message': str(e), 'type': 'YTDLP'})
         pass
 
 def emit(eventType, data=None):
@@ -34,7 +37,7 @@ def cleanFilename(filename):
     cleaned_base = re.sub(r'\.f\d+$', '', base)
     return f"{cleaned_base}{ext}"
 
-def downloadWithProgressEmitter(vidUrl, outputPath=None, format=None):
+def downloadWithProgressEmitter(vidUrl, resolution, outputPath=None, format=None, additionalOptions=None):
     def progressHook(data):
         if data['status'] == 'downloading':
             percentStr = stripAnsi(data.get('_percent_str', ""))
@@ -79,28 +82,44 @@ def downloadWithProgressEmitter(vidUrl, outputPath=None, format=None):
                 "filename": filename,
                 "error": d.get("error")
             })
-
-
     ydlOpts = {
         'progress_hooks': [progressHook],
         'postprocessor_hooks': [post_hook],
+        'format': f'bestvideo[height<={resolution}]+bestaudio/best',
         'outtmpl': outputPath or "%(title)s.%(ext)s",
         'quiet': True,
         'no_warnings': True,
         'logger': CustomLogger()
     }
-    if format:
-        ydlOpts['format'] = format
+
+    if resolution.lower() == 'mp3':
+        postProc = {
+            'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192'
+        }],
+        'format': f'bestvideo[height<=144]+bestaudio/best',
+        }
+    elif format is not None:
+        postProc = {
+            'postprocessors': [{
+            'key': 'FFmpegVideoConvertor',
+            'preferedformat': format,
+        }],
+        }
+    
+    ydlOpts = ydlOpts | postProc
 
     try:
         with YoutubeDL(ydlOpts) as ydl:
             ydl.download(vidUrl)
             emit('done', { 'filename': finalOutputName[0] })
     except DownloadError as e:
-        emit('error', { 'message': str(e)})
+        emit('error', { 'message': str(e), 'type': 'DownloadError'})
         sys.exit(1)
     except Exception as e:
-        emit('error', { 'message': str(e)})
+        emit('error', { 'message': str(e), 'type': 'Exception'})
         sys.exit(1)
 
 if __name__ == '__main__':
@@ -108,10 +127,13 @@ if __name__ == '__main__':
         emit('error', { 'message': 'No video URL provided'})
         sys.exit(1)
 
-vidUrl = sys.argv[1]
-outputPath = sys.argv[2] if len(sys.argv) > 2 else None
-format = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] != 'undefined' else None
+options = sys.argv[1]
+params = json.loads(options)
 
-#print('pythonvalues', vidUrl, outputPath, format, type(format))
+vidUrl = params['videoUrl']
+outputPath = params['outputPath']
+format = params['format'] if params['format'] not in ['undefined', 'dflt'] else None
+resolution = params['resolution']
+additionalOptions = params.get('additionalOptions', {})
 
-downloadWithProgressEmitter(vidUrl, outputPath, format)
+downloadWithProgressEmitter(vidUrl, resolution, outputPath, format, additionalOptions)

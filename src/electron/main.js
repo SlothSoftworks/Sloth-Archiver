@@ -32,10 +32,10 @@ ipcMain.handle('dialog:openFolder', async (e, options) => dialog.showOpenDialog(
     ...options
 }));
 
-ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', format = 'mp4', options) => dialog.showSaveDialog({
+ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options) => dialog.showSaveDialog({
     title: 'Save Video',
     buttonLabel: 'Save',
-    defaultPath: `${app.getPath('downloads')}/${defaultName}.${format}`,
+    defaultPath: `${app.getPath('downloads')}/${defaultName}`,
     filters: getSupportedVideoFilters(),
     ...options
 }))
@@ -60,7 +60,6 @@ ipcMain.handle('getVideoInfoPython', async (event, url, args={}) => {
                 resultObject = {success: false, error: error || `Python script failed with code ${code}`};
                 reject (resultObject);
             } else {
-                console.log(data);
                 try {
                     resultObject = {success: true, data: JSON.parse(data)}
                     resolve(resultObject);
@@ -91,10 +90,11 @@ ipcMain.handle('downloadVideoPython', async (event, args) => {
     });
 });
 
-ipcMain.handle('downloadVideoWithProgressUpdates', (event, { videoUrl, outputPath, format }) => {
-    console.log('PARAMS:',videoUrl, outputPath, format)
+ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
+    const { videoUrl, outputPath, format, resolution, additionalOptions } = options;
+    console.log('PARAMS:', JSON.stringify(options));
 
-    const script = spawn('python3', [path.join(pythonPath, "vidDownloadWithProgressHook.py"), videoUrl, outputPath, format ]);
+    const script = spawn('python3', [path.join(pythonPath, "vidDownloadWithProgressHook.py"), JSON.stringify(options)]);
 
     let buffer = '';
     

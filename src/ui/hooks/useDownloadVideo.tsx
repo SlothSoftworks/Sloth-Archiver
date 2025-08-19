@@ -11,7 +11,7 @@ function useDownloadVideo() {
 
     
     const startDownload = (props: DownloadVideoParams) => {
-        const { videoUrl, outputPath, format } = props;
+        const { videoUrl, outputPath, format, resolution, additionalOptions } = props;
 
         setDownloadProgress(0);
         setDownloadStatus("Idle");
@@ -20,31 +20,36 @@ function useDownloadVideo() {
         setIsError(false);
         setDownloadError(null);
 
-        window.electronAPIPythonDownload.startDownloadPython({ videoUrl, outputPath, format })
+        window.electronAPIPythonDownload.startDownloadPython({ videoUrl, outputPath, format, resolution, additionalOptions })
     }
 
     useEffect(() => {
       window.electronAPIPythonDownload.onProgressUpdate((msg: DownloadProgressMessage) => {
         const { type, payload } = msg;
         switch(type) {
-          case 'Progress':
+          case 'progress':
             setDownloadProgress(parseInt(payload.percent.replace('%', '')));
             setDownloadStatus('progress');
             break;
-          case 'Downloading':
+          case 'downloading':
             setDownloadStatus('Downloading...');
             break;
-          case 'Postprocessing':
+          case 'postprocessing':
             setDownloadStatus('Postprocessing...')
             break;
-          case 'Error':
+          case 'error':
             console.error('Download error', msg)
             setIsError(true);
             setDownloadError(msg);
             break;
-          case 'Done':
-            setDownloadStatus('Done')
-            setFinalFilePath(payload.filename)
+            case 'downloadDone':
+              setDownloadStatus('downloadDone');
+              setDownloadProgress(99);
+              break;
+          case 'done':
+            setDownloadStatus('Done');
+            setFinalFilePath(payload.filename);
+            setDownloadProgress(100);
             setIsDone(true);
             break;
         }
