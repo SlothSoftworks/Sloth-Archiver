@@ -48,7 +48,8 @@ export default function DownloaderScreen() {
     setLoadingVideoData(false);
     if (result.success) {
       setVideoInfo(result.data.response);
-    } console.log(result)
+    }
+    console.log(result)
   }
 
   return (

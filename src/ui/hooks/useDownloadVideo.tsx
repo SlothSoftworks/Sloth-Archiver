@@ -26,6 +26,7 @@ function useDownloadVideo() {
     useEffect(() => {
       window.electronAPIPythonDownload.onProgressUpdate((msg: DownloadProgressMessage) => {
         const { type, payload } = msg;
+        let accumErr = msg;
         switch(type) {
           case 'progress':
             setDownloadProgress(parseInt(payload.percent.replace('%', '')));
@@ -40,7 +41,10 @@ function useDownloadVideo() {
           case 'error':
             console.error('Download error', msg)
             setIsError(true);
-            setDownloadError(msg);
+            if (downloadError != null) {
+              accumErr = JSON.stringify(downloadError) + '\n' + JSON.stringify(msg);
+            }
+            setDownloadError(accumErr);
             break;
             case 'downloadDone':
               setDownloadStatus('downloadDone');

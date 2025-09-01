@@ -6,6 +6,7 @@ from yt_dlp import DownloadError
 from yt_dlp.postprocessor.ffmpeg import FFmpegVideoConvertorPP
 import subprocess
 import re
+import traceback
 
 ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
 
@@ -20,7 +21,7 @@ class CustomLogger:
     def warning(self, msg):
         pass
     def error(self, msg):
-        emit('error', { 'message': str(e), 'type': 'YTDLP'})
+        emit('error', { 'message': str(self), 'type': 'YTDLP'})
         pass
 
 def emit(eventType, data=None):
@@ -92,6 +93,7 @@ def downloadWithProgressEmitter(vidUrl, resolution, outputPath=None, format=None
         'logger': CustomLogger()
     }
 
+    postProc = {}
     if resolution.lower() == 'mp3':
         postProc = {
             'postprocessors': [{
@@ -119,7 +121,10 @@ def downloadWithProgressEmitter(vidUrl, resolution, outputPath=None, format=None
         emit('error', { 'message': str(e), 'type': 'DownloadError'})
         sys.exit(1)
     except Exception as e:
-        emit('error', { 'message': str(e), 'type': 'Exception'})
+        tb = traceback.format_exc()
+        emit('error', { 'message': tb, 'type': 'Exception'})
+        import time
+        time.sleep(2)
         sys.exit(1)
 
 if __name__ == '__main__':

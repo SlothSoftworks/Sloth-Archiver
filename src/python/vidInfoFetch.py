@@ -46,6 +46,11 @@ def getVideoInfo(url, additionalOptions = {}):
                 'ext': fmt.get('ext'),
             })
 
+
+        mp3Res = min(resolutions, key=lambda item: int(item['resolution'])).copy()
+        mp3Res['resolution'] = 'MP3'
+        resolutions.append(mp3Res)
+
         videoInfo = {
             'id': info['id'],
             'title': info['title'],
