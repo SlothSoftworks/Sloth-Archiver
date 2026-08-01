@@ -62,8 +62,8 @@ function useDownloadVideo() {
       return () => {
         window.electronAPIPythonDownload.removeProgressListener();
       }
-  
-    })
+
+    }, [])
 
   return {
     finalFilePath,

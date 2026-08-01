@@ -140,12 +140,24 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
 });
 
 function buildDownloadArgs({ videoUrl, outputPath, format, resolution }) {
+    // Note: --print (even "after_move:...") makes yt-dlp buffer ALL stdout/stderr
+    // until the process is about to exit, defeating live progress reporting entirely.
+    // The final file is instead located on disk after the process closes (see findFinalFile).
+    //
+    // Note: the download progress-template deliberately omits %(progress.filename)s.
+    // It's unused by the renderer, and yt-dlp's output filename comes from the video
+    // title/outputPath, which frequently contains "|" (e.g. "Song | Artist") -- with
+    // filename in the middle of a "|"-delimited line, that silently misaligns every
+    // field after it.
     const args = [
         '--newline',
         '--no-warnings',
-        '--progress-template', 'download:PROGRESS|%(progress.status)s|%(progress.filename)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress._percent_str)s|%(progress.eta)s|%(progress._speed_str)s',
+        // The user explicitly chose to download via a save dialog; always perform a
+        // real download rather than silently skipping if a same-named file already
+        // exists at that path (yt-dlp's default), which looks identical to a frozen UI.
+        '--force-overwrites',
+        '--progress-template', 'download:PROGRESS|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress._percent_str)s|%(progress.eta)s|%(progress._speed_str)s',
         '--progress-template', 'postprocess:POSTPROCESS|%(progress.status)s|%(progress.postprocessor)s',
-        '--print', 'after_move:DONE|%(filepath)s',
         '--ffmpeg-location', ffmpegDir,
         '-o', outputPath || '%(title)s.%(ext)s',
     ];
@@ -164,11 +176,25 @@ function buildDownloadArgs({ videoUrl, outputPath, format, resolution }) {
     return args;
 }
 
-function cleanFilename(filename) {
-    if (!filename) return null;
-    const ext = path.extname(filename);
-    const base = filename.slice(0, -ext.length || undefined);
-    return base.replace(/\.f\d+$/, '') + ext;
+// yt-dlp postprocessors append their target extension to the requested
+// outtmpl rather than swapping it (e.g. "video.mp4" + mp3 extraction ->
+// "video.mp4.mp3"), and that behavior isn't a documented, stable contract
+// worth hardcoding. Instead, look at what actually landed on disk.
+function findFinalFile(outputPath) {
+    const dir = path.dirname(outputPath);
+    const base = path.basename(outputPath);
+    try {
+        const matches = fs.readdirSync(dir)
+            .filter((f) => f.startsWith(base))
+            .map((f) => {
+                const full = path.join(dir, f);
+                return { full, mtimeMs: fs.statSync(full).mtimeMs };
+            })
+            .sort((a, b) => b.mtimeMs - a.mtimeMs);
+        return matches.length > 0 ? matches[0].full : outputPath;
+    } catch (e) {
+        return outputPath;
+    }
 }
 
 ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
@@ -184,12 +210,11 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
 
     function parseLine(line) {
         if (line.startsWith('PROGRESS|')) {
-            const [, status, filename, downloadedBytes, totalBytes, percent, eta, speed] = line.split('|');
+            const [, status, downloadedBytes, totalBytes, percent, eta, speed] = line.split('|');
             if (status === 'downloading') {
                 send({
                     type: 'progress',
                     payload: {
-                        filename,
                         downloadedBytes: Number(downloadedBytes) || null,
                         totalBytes: Number(totalBytes) || null,
                         percent: percent.trim(),
@@ -198,7 +223,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                     },
                 });
             } else if (status === 'finished') {
-                send({ type: 'downloadDone', payload: { filename: cleanFilename(filename) } });
+                send({ type: 'downloadDone', payload: {} });
             }
         } else if (line.startsWith('POSTPROCESS|')) {
             const [, status, processor] = line.split('|');
@@ -206,9 +231,6 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                 type: 'postprocessing',
                 payload: { stage: status === 'started' ? 'start' : status, processor },
             });
-        } else if (line.startsWith('DONE|')) {
-            const filename = line.slice('DONE|'.length);
-            send({ type: 'done', payload: { filename } });
         }
     }
 
@@ -227,7 +249,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     script.stdout.on('data', makeLineReader(parseLine));
 
     script.stderr.on('data', makeLineReader((line) => {
-        if (line.startsWith('PROGRESS|') || line.startsWith('POSTPROCESS|') || line.startsWith('DONE|')) {
+        if (line.startsWith('PROGRESS|') || line.startsWith('POSTPROCESS|')) {
             parseLine(line);
         } else {
             error += line + '\n';
@@ -238,6 +260,8 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     script.on('close', (code) => {
         if (code !== 0) {
             send({ type: 'error', payload: { message: error || `Download failed with code ${code}` } });
+        } else {
+            send({ type: 'done', payload: { filename: findFinalFile(options.outputPath) } });
         }
     })
 
