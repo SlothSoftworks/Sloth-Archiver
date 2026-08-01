@@ -23,3 +23,8 @@ yt-archiver-dist
 *.njsproj
 *.sln
 *.sw?
+
+
+src/python/__pycache__/*
+.venv-build
+build

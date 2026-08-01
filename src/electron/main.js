@@ -56,7 +56,7 @@ ipcMain.handle('getVideoInfoPython', async (event, url, args={}) => {
 
         script.on('close', (code) => {
 
-            if (code !== 0 || error) {
+            if (code !== 0) {
                 resultObject = {success: false, error: error || `Python script failed with code ${code}`};
                 reject (resultObject);
             } else {
