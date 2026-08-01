@@ -6,4 +6,5 @@
     align-self: center;
     height: 100vh;
     align-content: center;
+    overflow: auto;
 }

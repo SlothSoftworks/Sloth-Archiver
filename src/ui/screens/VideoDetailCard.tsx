@@ -20,7 +20,8 @@ import {
   DialogContent,
   DialogTitle,
   DialogContentText,
-  TextareaAutosize
+  TextareaAutosize,
+  Link
 } from '@mui/material';
 
 import InfoOutlineIcon from '@mui/icons-material/InfoOutline';
@@ -116,24 +117,30 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
                   height: 240,
                   border: '2px solid black',
                   borderRadius: 2,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
+                  position: 'relative',
+                  overflow: 'hidden',
                   mb: 2,
                   backgroundSize: 'cover',
                   backgroundPosition: 'center'
                 }}
               >
-                <Typography position={"absolute"} variant="h2"> <a target="_blank" href={videoMetaData.originalUrl}>▶</a></Typography>
-                <Typography sx={{backgroundColor: 'grey.800', left: '42%', top: '36%', position:'sticky', borderRadius: 2, padding: '0% 1% 0% 1%'}} variant='body1'>{videoMetaData.durationString}</Typography>
+                <Typography variant="h2" sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+                  <Link target="_blank" rel="noopener noreferrer" href={videoMetaData.originalUrl}>▶</Link>
+                </Typography>
+                <Typography
+                  variant='body1'
+                  sx={{ position: 'absolute', bottom: 8, right: 8, backgroundColor: 'grey.800', borderRadius: 2, px: 1, py: 0.25 }}
+                >
+                  {videoMetaData.durationString}
+                </Typography>
               </CardMedia>
 
               <Paper sx={{ p: 1, border: '2px solid black', borderRadius: 2, height: '50%' }}>
                 <Grid container
                 spacing={{xs:1, sm:1 }}
-                columns={{xs: 1, sm: 9,md: 12}}>
+                columns={{xs: 2, sm: 9,md: 12}}>
                   {displayedResolutions?.map((res, idx) => (
-                    <Grid size={{xs: 2, sm: 3}} key={idx}>
+                    <Grid size={{xs: 1, sm: 3}} key={idx}>
                       <Button onClick={() => handleDownloadOperationFromResolution(res.resolution)}
                       sx={{whiteSpace: "pre-line"}}
                       color={res.resolution === 'MP3' ? 'secondary' : 'primary'}
@@ -151,7 +158,7 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
                   ))}
                 </Grid>
                 <Divider flexItem sx={{pt:1}} orientation='horizontal'/>
-                <Box sx={{alignItems: 'center'}}>
+                <Box sx={{display: 'flex', alignItems: 'center'}}>
                   <Typography variant="button">Post-Processing</Typography>
                   <Tooltip placement="top" title="The postprocessing steps will add some extra processing after the download is done, for a quicker downloa select the Default option" arrow>
                     <InfoOutlineIcon sx={{fontSize: 'medium', textAlign:'center', pl: 2}}/>
@@ -178,19 +185,21 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
               </Paper>
             </Box>
             <Box sx={{ width: '50%' }}>
-              <Stack spacing={6} direction="row" justifyContent="left" mb={1}>
-                  <Grid size={8}>
-                      <Typography textAlign="initial" variant="h6"> <a target="_blank" href={videoMetaData.originalUrl}>{videoMetaData.fullTitle}</a></Typography>
-                  </Grid>
-                  <Grid sx={{whiteSpace: 'nowrap'}} size={2} justifyContent={'right'}>
-                      <Typography variant="body2" gutterBottom sx={{color: 'info.main', fontWeight: 'bolder'}}>
+              <Stack spacing={2} direction="row" justifyContent="space-between" alignItems="flex-start" mb={1}>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="h6">
+                        <Link target="_blank" rel="noopener noreferrer" href={videoMetaData.originalUrl}>{videoMetaData.fullTitle}</Link>
+                      </Typography>
+                  </Box>
+                  <Box sx={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
+                      <Typography variant="body2" gutterBottom textAlign="right" sx={{color: 'info.main', fontWeight: 'bolder'}}>
                       {convertYYYYMMDDStringToDate(videoMetaData.uploadDate)}
                       </Typography>
-                  </Grid>
+                  </Box>
               </Stack>
               <Card sx={{backgroundColor: 'primary.contrastText'}} >
                   <Stack sx={{backgroundColor: 'primary.main'}} spacing={1} direction="row" justifyContent="left">
-                      <Typography justifyContent={'left'} variant="subtitle1" gutterBottom>
+                      <Typography variant="subtitle1" gutterBottom sx={{ color: 'primary.contrastText' }}>
                       Description
                       </Typography>
                   </Stack>

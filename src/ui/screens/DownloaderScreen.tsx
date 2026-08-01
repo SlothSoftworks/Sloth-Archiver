@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Box, CircularProgress, Grid } from '@mui/material';
+import { Box, CircularProgress, Grid, InputAdornment } from '@mui/material';
 import './screens.css'
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
@@ -58,10 +58,27 @@ export default function DownloaderScreen() {
         <Box sx={{ flexGrow: 1 }}>
         <Grid container spacing={2}>
             <Grid size={10}>
-            <TextField error={isUrlError} helperText={isUrlError ? 'Invalid URL' : ''} value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} fullWidth id="outlined-basic" label="URL" variant="filled" />
+            <TextField
+              error={isUrlError}
+              helperText={isUrlError ? 'Invalid URL' : ''}
+              value={videoUrl}
+              onChange={(e) => setVideoUrl(e.target.value)}
+              fullWidth
+              id="outlined-basic"
+              label="URL"
+              variant="filled"
+              slotProps={{
+                input: {
+                  endAdornment: loadingVideoData ? (
+                    <InputAdornment position="end">
+                      <CircularProgress color="inherit" size={20} />
+                    </InputAdornment>
+                  ) : undefined,
+                },
+              }}
+            />
             </Grid>
-            {loadingVideoData && <CircularProgress color='inherit'/>}
-            <Grid size={1}>
+            <Grid size={2}>
             <Button onClick={handlePickFolder} fullWidth variant="contained"><LibraryAddIcon/></Button>
             </Grid>
             {
