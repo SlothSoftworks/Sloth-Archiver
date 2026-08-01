@@ -8,7 +8,9 @@
     "appId": "com.supersam.ytarchiver.app",
     "productName": "YTArchiver",
     "files": [
-      "dist/**/*"
+      "dist/electron/**/*",
+      "dist/renderer/**/*",
+      "!node_modules/**/*"
     ],
     "extraResources": [
       {
@@ -49,9 +51,9 @@
     "dist": "npm run build:all && npm run electron-build",
     "build:renderer": "vite build",
     "build:copy:electron": "cpx \"src/electron/**/*\" dist/electron",
-    "build:download:ytdlp": "node scripts/download-ytdlp.mjs",
+    "build:ytdlp:bin": "bash scripts/build-ytdlp-bin.sh",
     "build:copy:ffmpeg": "node scripts/copy-ffmpeg.mjs",
-    "build:electron": "npm run build:copy:electron && npm run build:download:ytdlp && npm run build:copy:ffmpeg",
+    "build:electron": "npm run build:copy:electron && npm run build:ytdlp:bin && npm run build:copy:ffmpeg",
     "build:all": "npm run build:renderer && npm run build:electron"
   },
   "dependencies": {

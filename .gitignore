@@ -26,3 +26,5 @@ yt-archiver-dist
 
 reports
 src/python/__pycache__
+.venv-build
+build
