@@ -1,5 +1,10 @@
 import sys
+import os
 import json
+
+import certifi
+os.environ.setdefault('SSL_CERT_FILE', certifi.where())
+os.environ.setdefault('REQUESTS_CA_BUNDLE', certifi.where())
 
 from vidInfoFetch import getVideoInfo
 from vidDownloadWithProgressHook import downloadWithProgressEmitter, emit

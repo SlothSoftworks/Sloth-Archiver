@@ -80,7 +80,8 @@ def getVideoInfo(url, additionalOptions = {}):
 if __name__ == '__main__':
     try:
         url = sys.argv[1]
-        result = getVideoInfo(url)
+        additionalOptions = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}
+        result = getVideoInfo(url, additionalOptions)
         print(json.dumps({
             'success': True,
             'response': result,

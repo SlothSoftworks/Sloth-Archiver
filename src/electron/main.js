@@ -2,16 +2,34 @@ import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { fileURLToPath } from 'url';
 import path from 'path'
 import { spawn } from 'child_process';
+import fs from "fs";
 
-import { getSupportedVideoFilters } from '../utils/constants.mjs';
+import { getSupportedVideoFilters } from './utils/constants.mjs';
 
-
-process.env.NODE_ENV = 'development';
+const logFile = path.join(app.getPath("userData"), "main.log");
+function log(...args) {
+    const msg = args.map(String).join(" ");
+    fs.appendFileSync(logFile, msg + "\n");
+    console.log(msg);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const indexPath = path.resolve(__dirname, '../../yt-archiver-dist/index.html');
-const pythonPath = path.resolve(__dirname, '../python');
+
+const isDev = !app.isPackaged;
+
+const indexPath = path.join(__dirname, '../renderer/index.html');
+const devPythonDir = path.resolve(__dirname, '../../src/python');
+const pyBinPath = isDev ? null : path.join(process.resourcesPath, 'python-bin', 'ytarchiver-py');
+const ffmpegDir = isDev ? path.resolve(__dirname, '../ffmpeg') : path.join(process.resourcesPath, 'ffmpeg');
+
+function spawnPython(subcommand, args) {
+    if (isDev) {
+        const scriptName = subcommand === 'info' ? 'vidInfoFetch.py' : 'vidDownloadWithProgressHook.py';
+        return spawn('python3', [path.join(devPythonDir, scriptName), ...args]);
+    }
+    return spawn(pyBinPath, [subcommand, ...args]);
+}
 
 app.on("ready", () => {
     const mainWindow = new BrowserWindow({
@@ -19,12 +37,13 @@ app.on("ready", () => {
         height: 720,
         webPreferences: {
             preload: path.join(__dirname, 'preload.mjs'),
-            contextIsolation: true, // TODO change to true on MVP
-            nodeIntegration: true, // TODO change to false on MVP
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false,
         },
     });
     mainWindow.loadFile(indexPath);
-    mainWindow.webContents.openDevTools(); // For startup with devtools
+    if (isDev) mainWindow.webContents.openDevTools();
 })
 
 ipcMain.handle('dialog:openFolder', async (e, options) => dialog.showOpenDialog({
@@ -42,10 +61,14 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options)
 
 ipcMain.handle('getVideoInfoPython', async (event, url, args={}) => {
     return new Promise((resolve, reject) => {
-        const script = spawn('python3', [path.join(pythonPath, "vidInfoFetch.py"), url, JSON.stringify(args) ]);
+        const mergedArgs = { ...args, ffmpeg_location: ffmpegDir };
+        const script = spawnPython('info', [url, JSON.stringify(mergedArgs)]);
         let data = '';
         let error = '';
-        let resultObject = {}
+
+        script.on('error', (err) => {
+            reject(new Error(`Failed to start python process: ${err.message}`));
+        });
 
         script.stdout.on('data', (output) => {
             data += output.toString();
@@ -57,47 +80,35 @@ ipcMain.handle('getVideoInfoPython', async (event, url, args={}) => {
         script.on('close', (code) => {
 
             if (code !== 0) {
-                resultObject = {success: false, error: error || `Python script failed with code ${code}`};
-                reject (resultObject);
+                reject(new Error(error || `Python script failed with code ${code}`));
             } else {
                 try {
-                    resultObject = {success: true, data: JSON.parse(data)}
-                    resolve(resultObject);
+                    resolve({success: true, data: JSON.parse(data)});
                 } catch (e) {
-                    resultObject = {success: false, error: 'Failed to parse video data'}
-                    reject(resultObject);
+                    reject(new Error('Failed to parse video data'));
                 }
             }
         });
     });
 });
 
-ipcMain.handle('downloadVideoPython', async (event, args) => {
-    return new Promise((resolve, reject) => {
-        const script = spawn('python3', [path.join(pythonPath, "vidDownloader.py"), JSON.stringify(args) ]);
-
-        let result = "";
-        script.stdout.on('data', (data) => {
-            result += data.toString();
-        });
-        script.stderr.on('data', err => {
-            console.error('Python Error:', err.toString());
-        });
-
-        script.on('close', () => {
-            resolve(result);
-        });
-    });
-});
-
 ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
-    const { videoUrl, outputPath, format, resolution, additionalOptions } = options;
-    console.log('PARAMS:', JSON.stringify(options));
+    const mergedOptions = {
+        ...options,
+        additionalOptions: { ...(options.additionalOptions || {}), ffmpeg_location: ffmpegDir },
+    };
 
-    const script = spawn('python3', [path.join(pythonPath, "vidDownloadWithProgressHook.py"), JSON.stringify(options)]);
+    const script = spawnPython('download', [JSON.stringify(mergedOptions)]);
 
     let buffer = '';
-    
+
+    script.on('error', (err) => {
+        BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', {
+            type: 'error',
+            payload: { message: `Failed to start python process: ${err.message}` },
+        });
+    });
+
     script.stdout.on('data', (data) => {
         buffer += data.toString();
 

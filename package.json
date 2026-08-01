@@ -3,14 +3,56 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "main": "src/electron/main.js",
+  "main": "dist/electron/main.js",
+  "build": {
+    "appId": "com.supersam.ytarchiver.app",
+    "productName": "YTArchiver",
+    "files": [
+      "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/python-bin/ytarchiver-py/",
+        "to": "python-bin",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "dist/ffmpeg/",
+        "to": "ffmpeg",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "buildResources": "assets"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.utilities",
+      "identity": null
+    },
+    "win": {
+      "target": "nsis"
+    }
+  },
   "scripts": {
     "dev": "vite",
     "dev:electron": "electron .",
     "build": "tsc -b && vite build",
     "build:nolint": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron-build": "electron-builder",
+    "dist": "npm run build:all && npm run electron-build",
+    "build:renderer": "vite build",
+    "build:copy:electron": "cpx \"src/electron/**/*\" dist/electron",
+    "build:python-bin": "bash scripts/build-python-bin.sh",
+    "build:copy:ffmpeg": "node scripts/copy-ffmpeg.mjs",
+    "build:electron": "npm run build:copy:electron && npm run build:python-bin && npm run build:copy:ffmpeg",
+    "build:all": "npm run build:renderer && npm run build:electron"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -27,12 +69,15 @@
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",
+    "cpx": "^1.5.0",
     "electron": "^36.5.0",
     "electron-builder": "^26.0.12",
     "electron-devtools-installer": "^4.0.0",
     "eslint": "^9.25.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.19",
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0",
     "globals": "^16.0.0",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.30.1",

@@ -6,7 +6,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pickFolder: (options) => ipcRenderer.invoke('dialog:openFolder', options),
     saveVideoFile: (defaultName, format, options) => ipcRenderer.invoke('dialog:saveVideoFile', defaultName, format, options),
     getVideoInfoPython: (url, options) => ipcRenderer.invoke('getVideoInfoPython', url, options),
-    downloadVideoPython: (args) => ipcRenderer.invoke('downloadVideoPython', args),
     openDirectory: (path) => ipcRenderer.invoke('system:openDirectory', path),
     openFileInDirectory: (filePath) => ipcRenderer.invoke('system:openFileInDirectory', filePath),
 });

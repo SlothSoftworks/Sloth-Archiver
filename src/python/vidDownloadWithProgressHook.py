@@ -111,7 +111,7 @@ def downloadWithProgressEmitter(vidUrl, resolution, outputPath=None, format=None
         }],
         }
     
-    ydlOpts = ydlOpts | postProc
+    ydlOpts = ydlOpts | postProc | (additionalOptions or {})
 
     try:
         with YoutubeDL(ydlOpts) as ydl:
@@ -132,13 +132,13 @@ if __name__ == '__main__':
         emit('error', { 'message': 'No video URL provided'})
         sys.exit(1)
 
-options = sys.argv[1]
-params = json.loads(options)
+    options = sys.argv[1]
+    params = json.loads(options)
 
-vidUrl = params['videoUrl']
-outputPath = params['outputPath']
-format = params['format'] if params['format'] not in ['undefined', 'dflt'] else None
-resolution = params['resolution']
-additionalOptions = params.get('additionalOptions', {})
+    vidUrl = params['videoUrl']
+    outputPath = params['outputPath']
+    format = params['format'] if params['format'] not in ['undefined', 'dflt'] else None
+    resolution = params['resolution']
+    additionalOptions = params.get('additionalOptions', {})
 
-downloadWithProgressEmitter(vidUrl, resolution, outputPath, format, additionalOptions)
+    downloadWithProgressEmitter(vidUrl, resolution, outputPath, format, additionalOptions)
