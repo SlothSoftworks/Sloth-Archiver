@@ -23,6 +23,13 @@ export type DownloadProgressMessage = {
       totalBytes: string;
       percent: string;
       speed: string;
+      // postprocessing-only fields (MP3 extraction/format recode's direct ffmpeg
+      // pass, see TD-004) -- postprocessPercent is a real, continuous number,
+      // deliberately not named `percent` to avoid confusion with the download
+      // phase's string-typed percent above.
+      stage?: string;
+      processor?: string;
+      postprocessPercent?: number;
     }
   }
 

@@ -30,6 +30,7 @@ Breaking the spec into its actual sub-problems and ranking those individually
 | "Delete video entry" | **Low-Medium** | Simple recursive delete, but needs a guard rail so it can only ever delete inside the configured library base directory — worth treating as a real safety check, not a one-liner. |
 | Channel-based vs. video-based view toggle *(you already deferred this)* | **Medium** | Agree with deferring — it's a second navigation model on top of the first, not worth building until the first is proven out. |
 | Rudimentary version control *(you already deferred this)* | **Very High** | Correctly identified as the hardest part — it's the same problem as "Download new version" above, generalized. Good instinct putting both of your "leave for the end" items on exactly the two hardest sub-problems here. |
+| Small ffmpeg utilities on already-downloaded library files (extract MP3, convert format, more TBD) | **Low** | *(New — added 2026-08-02, after ffmpeg was separated out per TD-004.)* This is the one item in the whole Library view spec that's now *easier* than when this table was first written, because the infrastructure it needs already exists and is proven: `runFfmpegWithProgress()` and the ffprobe-duration helper (`main.js`, built for TD-004) already do exactly "run ffmpeg on a local file with real progress," today applied to a freshly-downloaded raw file. Pointing that same helper at an *already-downloaded library file* instead — no yt-dlp involved at all — is a small, low-risk reuse, not new plumbing. The only real design question it inherits is one already flagged above: where the converted/extracted output lives (new file alongside the original? a new version entry? overwrite in place?) — the same question "Download different quality" and "Download new version" already have to answer, so worth deciding once and reusing the same rule here rather than a third bespoke answer. |
 
 **Suggested build order**, following the dependency you already called out (add-to-library
 depends on the library tab existing): base-directory setting → metadata persistence →
@@ -53,9 +54,11 @@ gets persisted to a single cache file (e.g. `<base>/.index.json`) so a very larg
 doesn't have to re-walk and re-parse every folder's `metadata.json` on every app launch —
 not needed at small scale, but cheap to build in now versus retrofitting later.
 
-## 2. yt-dlp updater
+## 2. yt-dlp updater — ✅ done
 
-**Overall: Very High** — and this one is worth flagging as a design conversation before
+**Resolved — 2026-08-02:** Went with a fourth option this original analysis didn't have on the table — you proposed fusing the "bundle our own Python" idea with an on-device rebuild: ship a standalone Python runtime purely as an on-demand build tool (not a new way of running yt-dlp day-to-day), fetched lazily only on first actual update. It pip-installs the latest `yt-dlp` from PyPI and re-runs the exact same PyInstaller onedir freeze recipe this project already had, on the user's own machine. This sidesteps every option below — no CI, no hosting, no reintroducing TD-002's onefile problem, no permanent Python dependency for normal use. `ytdlp-bin` was relocated to `userData` exactly as this analysis flagged was necessary. Full write-up of the shipped design lives in git history / the plan that was approved for it; not reproduced here since this section is a record of the *original* analysis, not the final implementation.
+
+**Overall (original analysis, kept for the record): Very High** — and this one is worth flagging as a design conversation before
 implementation, not just a build task. The reason is a direct conflict with a decision this
 project already made and tested on both platforms: yt-dlp isn't a live dependency the app
 calls out to, it's a frozen PyInstaller onedir binary built at package time by
@@ -106,4 +109,4 @@ no-preinstall-required goal.
 
 | Item | Difficulty | Why |
 |---|---|---|
-| 1. Resume a failed download instead of restarting from scratch | **Medium** | Good instinct — yt-dlp already resumes partial downloads by default (via `.part` files + range requests) when given the same output path, so the yt-dlp-level mechanics are essentially free. The catch: this app's current `--force-overwrites` flag (the same TD-001 flag from small-feature #3 above) unconditionally wipes any partial file before yt-dlp gets a chance to resume it — so today, resume can't actually be working even though yt-dlp supports it natively. This item, small-feature #3, and TD-001 are the same underlying flag; worth solving all three together in one pass instead of three separate times. |
+| 1. Resume a failed download instead of restarting from scratch | **Medium** — ✅ done | Good instinct — yt-dlp already resumes partial downloads by default (via `.part` files + range requests) when given the same output path, so the yt-dlp-level mechanics are essentially free. The catch: this app's current `--force-overwrites` flag (the same TD-001 flag from small-feature #3 above) unconditionally wipes any partial file before yt-dlp gets a chance to resume it — so today, resume can't actually be working even though yt-dlp supports it natively. This item, small-feature #3, and TD-001 are the same underlying flag; worth solving all three together in one pass instead of three separate times. |

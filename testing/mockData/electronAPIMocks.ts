@@ -18,6 +18,7 @@ export const electronAPIMock = {
     onYtdlpUpdateProgress: noop,
     removeYtdlpUpdateProgressListener: noop,
     quitApp: noop,
+    deleteVideoInfoCacheEntry: async () => ({ success: true, existed: false }),
 
 }
 

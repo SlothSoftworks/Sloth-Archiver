@@ -30,20 +30,41 @@ function useDownloadVideo() {
         const { type, payload } = msg;
         let accumErr = msg;
         switch(type) {
-          case 'progress':
-            setDownloadProgress(parseInt(payload.percent.replace('%', '')));
+          case 'progress': {
+            // yt-dlp reports download progress per-stream, not for the download as a
+            // whole -- a video+audio download runs as two separate 0-100% sequences
+            // (the video stream, then the audio stream), so a naive assignment here
+            // would visibly jump back down when the second stream starts. Simplest
+            // fix: never let the displayed value decrease within a single download
+            // (it's reset to 0 at the start of each new one in startDownload above).
+            const newPercent = parseInt(payload.percent.replace('%', ''));
+            setDownloadProgress((prev) => Math.max(prev, newPercent));
             setDownloadStatus('progress');
             break;
+          }
           case 'downloading':
             setDownloadStatus('Downloading...');
             break;
           case 'postprocessing':
             setDownloadStatus('Postprocessing...')
-            // yt-dlp's postprocess progress-template only reports discrete
-            // started/finished events per processing step, never a real
-            // percentage -- so this is a deliberate 2-state approximation
-            // rather than fake precision.
-            setPostprocessProgress(payload.stage === 'start' ? 50 : 100);
+            if (typeof payload.postprocessPercent === 'number') {
+              // A real, continuous percentage from our own direct ffmpeg pass
+              // (MP3 extraction/format recode, TD-004). Deliberately NOT clamped
+              // to be non-decreasing like the download case below: yt-dlp's own
+              // merge step (coarse 50/100 approximation, see the else branch)
+              // already runs before this and can leave postprocessProgress at
+              // 100 -- clamping here would make our real percent, which
+              // legitimately starts back near 0, get stuck showing 100% for the
+              // whole recode instead of real progress.
+              setPostprocessProgress(payload.postprocessPercent);
+            } else {
+              // yt-dlp's own merge-step postprocessing (still handled internally
+              // for non-MP3 downloads) only ever reports started/finished, never
+              // a real percentage -- this is a deliberate 2-state approximation
+              // rather than fake precision, and it's fine here since a plain
+              // stream merge is fast, not the slow re-encode case TD-004 is about.
+              setPostprocessProgress(payload.stage === 'start' ? 50 : 100);
+            }
             break;
           case 'error':
             console.error('Download error', msg)

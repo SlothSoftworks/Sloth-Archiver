@@ -8,6 +8,7 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  Divider,
   Stack,
   TextField,
   Typography,
@@ -101,7 +102,7 @@ export default function OptionsScreen() {
         This folder is suggested as the starting location whenever the save dialog opens
         for a new download.
       </Typography>
-      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 3 }}>
+      <Stack direction="row" spacing={2} alignItems="center">
         <Button variant="contained" onClick={handleChooseDownloadDir}>
           Choose folder
         </Button>
@@ -109,6 +110,8 @@ export default function OptionsScreen() {
           {downloadDir || 'Using system default'}
         </Typography>
       </Stack>
+
+      <Divider sx={{ my: 3 }} />
 
       <Typography variant="h6" gutterBottom>yt-dlp Version</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
@@ -133,7 +136,9 @@ export default function OptionsScreen() {
       {checkError &&
         <Typography variant="body2" color="error" sx={{ mt: 1 }}>{checkError}</Typography>}
 
-      <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>Personal Cookie</Typography>
+      <Divider sx={{ my: 3 }} />
+
+      <Typography variant="h6" gutterBottom>Personal Cookie</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
         Loading a personal YouTube cookie lets requests authenticate as you, which can help avoid
         "Sign in to confirm you're not a bot" errors. Paste either a Netscape-format cookies.txt

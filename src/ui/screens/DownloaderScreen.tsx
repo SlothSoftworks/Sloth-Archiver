@@ -3,6 +3,7 @@ import { Box, Chip, CircularProgress, InputAdornment, Stack, IconButton, Tooltip
 import './screens.css'
 import TextField from '@mui/material/TextField';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { isValidUrl } from '../../utils/utils.ts';
 import VideoDetailCard from './VideoDetailCard';
 
@@ -38,10 +39,17 @@ export default function DownloaderScreen() {
 
   const handlePickFolder = async () => {
     const result = await window.electronAPI.pickFolder( {
-      title: "Select Download Folder", 
+      title: "Select Download Folder",
       buttonLabel: "ONEGAI",
       message: "KIOBO",
     });
+  };
+
+  // Testing convenience: evict just this URL's cache entry without waiting
+  // out the week-long TTL or clearing the whole cache file by hand.
+  const handleDeleteCacheEntry = async () => {
+    await window.electronAPI.deleteVideoInfoCacheEntry(debouncedVideoUrl);
+    setVideoInfoFromCache(false);
   };
 
   const handleGetVideoInfo = async (url: string) => {
@@ -107,7 +115,14 @@ export default function DownloaderScreen() {
         {videoInfoError &&
           <Typography color="error" sx={{ mt: 2 }}>{videoInfoError}</Typography>}
         {videoInfoFromCache && videoInfo && !loadingVideoData &&
-          <Chip label="Loaded from cache" color="info" variant="outlined" size="small" sx={{ mt: 1 }} />}
+          <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 1 }}>
+            <Chip label="Loaded from cache" color="info" variant="outlined" size="small" />
+            <Tooltip title="Delete this entry from the cache (testing)" placement="top">
+              <IconButton size="small" onClick={handleDeleteCacheEntry}>
+                <DeleteOutlineIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Stack>}
         {loadingVideoData &&
           <Box sx={{ mt: 2 }}>
             <VideoDetailCardSkeleton/>

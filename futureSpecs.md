@@ -24,6 +24,10 @@ you point it here.
     - Future features to leave for the end: 
         - Rudimentary version control that lets user download a new version of the metadata and it will saved as a new version of the video entry, the user can swap between versions and the program will navigate the files based on the downloadEpoch directory structure
         - Switching view from channel based to video based for more flexible experience
+    - Now that FFMPEG is implemented separately (as of August 2nd 2026) add also small ffmpeg funcionalities that are useful for the user some examples are:
+        - Extract mp3 audio
+        - Convert to different format
+        - We'll come up with more later.
         
 
     Notes: Regarding exactly how stuff like the metadata is saved I planned it with files for ease of transport and archival but if you have suggestions I will hear them out.

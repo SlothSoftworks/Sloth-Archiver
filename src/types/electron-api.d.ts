@@ -32,6 +32,7 @@ declare global {
             onYtdlpUpdateProgress: (callback: (data: { stage: string }) => void) => void
             removeYtdlpUpdateProgressListener: () => void
             quitApp: () => Promise<void>
+            deleteVideoInfoCacheEntry: (url: string) => Promise<{ success: boolean; existed: boolean }>
         };
         electronAPIPythonDownload: {
             startDownloadPython: (options: T) => Promise<T>;

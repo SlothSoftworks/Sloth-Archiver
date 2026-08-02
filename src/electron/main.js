@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import path from 'path'
 import { spawn } from 'child_process';
 import fs from "fs";
+import crypto from 'crypto';
 
 import { getSupportedVideoFilters } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
@@ -22,6 +23,15 @@ const isDev = !app.isPackaged;
 const indexPath = path.join(__dirname, '../renderer/index.html');
 const ytdlpBinaryName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
 const ffmpegDir = isDev ? path.resolve(__dirname, '../ffmpeg') : path.join(process.resourcesPath, 'ffmpeg');
+// Still passed to yt-dlp via --ffmpeg-location for the merge step (combining
+// separate video+audio streams) it still handles internally -- only MP3
+// extraction/format recode move to spawning these binaries directly (see
+// runFfmpegWithProgress), since those are the slow, re-encode-y operations
+// where yt-dlp's own postprocessing can never report real progress (TD-004).
+const ffmpegBinaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+const ffprobeBinaryName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+const ffmpegBinaryPath = path.join(ffmpegDir, ffmpegBinaryName);
+const ffprobeBinaryPath = path.join(ffmpegDir, ffprobeBinaryName);
 
 // The bundled ytdlp-bin lives under extraResources (Contents/Resources on
 // mac, the installed resources dir on Windows), which isn't reliably
@@ -78,6 +88,16 @@ function readVideoInfoCache() {
 function writeVideoInfoCache(cache) {
     fs.writeFileSync(videoInfoCachePath, JSON.stringify(cache, null, 2), 'utf-8');
 }
+
+// Testing convenience: lets the UI evict a single cached entry without waiting
+// out the week-long TTL or clearing the whole cache file by hand.
+ipcMain.handle('videoInfoCache:deleteEntry', async (e, url) => {
+    const cache = readVideoInfoCache();
+    const existed = url in cache;
+    delete cache[url];
+    writeVideoInfoCache(cache);
+    return { success: true, existed };
+});
 
 ipcMain.handle('settings:getDownloadDir', async () => {
     const { downloadDir } = readSettings();
@@ -353,7 +373,20 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
     });
 });
 
-function buildDownloadArgs({ videoUrl, outputPath, format, resolution, overwriteMode }) {
+function needsDirectFfmpegPass({ format, resolution }) {
+    if (resolution && resolution.toLowerCase() === 'mp3') return true;
+    return !!format && !['undefined', 'dflt'].includes(format);
+}
+
+// yt-dlp itself only ever downloads (and merges separate video+audio streams,
+// when both are selected) from here on -- MP3 extraction and format recode
+// are handled by our own direct ffmpeg pass afterward (see
+// runFfmpegWithProgress), since yt-dlp's own postprocessing can never report
+// real progress for those (TD-004). outputPath is either the user's final
+// chosen path (no postprocessing needed) or a raw intermediate path in a temp
+// dir (postprocessing needed) -- the caller decides which, this function just
+// downloads to whatever it's given.
+function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteMode }) {
     // Note: --print (even "after_move:...") makes yt-dlp buffer ALL stdout/stderr
     // until the process is about to exit, defeating live progress reporting entirely.
     // The final file is instead located on disk after the process closes (see findFinalFile).
@@ -374,13 +407,13 @@ function buildDownloadArgs({ videoUrl, outputPath, format, resolution, overwrite
     ];
 
     if (resolution && resolution.toLowerCase() === 'mp3') {
-        args.push('-f', 'bestvideo[height<=144]+bestaudio/best');
-        args.push('--extract-audio', '--audio-format', 'mp3', '--audio-quality', '192K');
+        // Audio only -- the old bestvideo[height<=144]+bestaudio selector downloaded
+        // a throwaway low-res video track purely to feed yt-dlp's own extract-audio
+        // postprocessor. Now that we extract audio ourselves, there's no reason to
+        // download video at all.
+        args.push('-f', 'bestaudio/best');
     } else {
         args.push('-f', `bestvideo[height<=${resolution}]+bestaudio/best`);
-        if (format && !['undefined', 'dflt'].includes(format)) {
-            args.push('--recode-video', format);
-        }
     }
 
     // Overwrite behavior is a real user choice now (see the renderer's existing-file
@@ -417,19 +450,113 @@ function findFinalFile(outputPath) {
     }
 }
 
+// yt-dlp downloaded to a raw.%(ext)s template in a dedicated per-download temp
+// dir (nothing else lives there), so whatever single file landed is the one we want.
+function findRawDownloadedFile(rawDir) {
+    const match = fs.readdirSync(rawDir).find((f) => f.startsWith('raw.'));
+    if (!match) {
+        throw new Error('yt-dlp finished but no raw downloaded file was found');
+    }
+    return path.join(rawDir, match);
+}
+
+function getMediaDurationSeconds(filePath) {
+    return new Promise((resolve, reject) => {
+        const proc = spawn(ffprobeBinaryPath, ['-v', 'quiet', '-print_format', 'json', '-show_format', filePath]);
+        let stdout = '';
+        let stderr = '';
+        proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+        proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+            if (code !== 0) {
+                reject(new Error(stderr || `ffprobe exited with code ${code}`));
+                return;
+            }
+            try {
+                const duration = parseFloat(JSON.parse(stdout).format.duration);
+                resolve(Number.isFinite(duration) ? duration : 0);
+            } catch (e) {
+                reject(new Error('Failed to parse ffprobe output'));
+            }
+        });
+    });
+}
+
+// Bypasses yt-dlp's own postprocessing entirely -- see TD-004. yt-dlp runs its
+// postprocessing ffmpeg subprocess with a blocking call that only reads output
+// after the process exits, so it can never report real progress; spawning
+// ffmpeg ourselves with -progress pipe:1 gives a genuine, continuous percentage.
+function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress }) {
+    return new Promise((resolve, reject) => {
+        const args = ['-i', inputPath, ...codecArgs, '-progress', 'pipe:1', '-y', outputPath];
+        const proc = spawn(ffmpegBinaryPath, args);
+        let stderr = '';
+        let buffer = '';
+
+        proc.stdout.on('data', (chunk) => {
+            buffer += chunk.toString();
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+                const match = line.match(/^out_time_us=(\d+)/);
+                if (match && totalDurationSeconds > 0) {
+                    const percent = Math.min(100, (Number(match[1]) / (totalDurationSeconds * 1_000_000)) * 100);
+                    onProgress?.(percent);
+                }
+            }
+        });
+        proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+            if (code !== 0) {
+                reject(new Error(stderr || `ffmpeg exited with code ${code}`));
+            } else {
+                resolve();
+            }
+        });
+    });
+}
+
 // Tracked so the updater can refuse to swap the live yt-dlp binary out from
 // under a process that's actively using it.
 let activeDownloadCount = 0;
 
 ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
-    const script = spawn(ytdlpPath, buildDownloadArgs(options));
     activeDownloadCount++;
+    const send = (msg) => BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', msg);
+
+    // MP3 extraction and format recode need our own ffmpeg pass afterward (TD-004),
+    // so yt-dlp downloads to a raw intermediate file in a dedicated temp dir instead
+    // of the user's final chosen path -- deliberately outside that directory so it
+    // can never spuriously match findFinalFile's/checkFileExists' prefix-based
+    // lookups for the real target.
+    const postprocess = needsDirectFfmpegPass(options);
+    let rawDir = null;
+    let downloadArgs;
+    if (postprocess) {
+        // Derived from outputPath (not a random UUID) so retrying the same download
+        // reuses the same raw dir -- otherwise every retry of an MP3/recode download
+        // would start yt-dlp's own download from scratch even when a partial raw file
+        // already existed, silently losing the resume behavior TD-001 relies on.
+        const rawDirId = crypto.createHash('sha1').update(options.outputPath).digest('hex').slice(0, 16);
+        rawDir = path.join(app.getPath('temp'), 'yt-archiver-raw', rawDirId);
+        if (options.overwriteMode === 'overwrite') {
+            fs.rmSync(rawDir, { recursive: true, force: true });
+        }
+        fs.mkdirSync(rawDir, { recursive: true });
+        downloadArgs = buildDownloadArgs({ ...options, outputPath: path.join(rawDir, 'raw.%(ext)s') });
+    } else {
+        downloadArgs = buildDownloadArgs(options);
+    }
+
+    const script = spawn(ytdlpPath, downloadArgs);
 
     let error = '';
 
-    const send = (msg) => BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', msg);
-
     script.on('error', (err) => {
+        activeDownloadCount--;
+        if (rawDir) fs.rmSync(rawDir, { recursive: true, force: true });
         send({ type: 'error', payload: { message: `Failed to start yt-dlp: ${err.message}` } });
     });
 
@@ -482,12 +609,73 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
         }
     }));
 
-    script.on('close', (code) => {
-        activeDownloadCount--;
+    script.on('close', async (code) => {
         if (code !== 0) {
+            activeDownloadCount--;
+            if (rawDir) fs.rmSync(rawDir, { recursive: true, force: true });
             send({ type: 'error', payload: { message: error || `Download failed with code ${code}` } });
-        } else {
+            return;
+        }
+
+        if (!postprocess) {
+            activeDownloadCount--;
             send({ type: 'done', payload: { filename: findFinalFile(options.outputPath) } });
+            return;
+        }
+
+        try {
+            const rawFile = findRawDownloadedFile(rawDir);
+            const duration = await getMediaDurationSeconds(rawFile);
+            const onFfmpegProgress = (postprocessPercent) => send({
+                type: 'postprocessing',
+                payload: { stage: 'progress', processor: 'ffmpeg', postprocessPercent },
+            });
+
+            if (options.resolution && options.resolution.toLowerCase() === 'mp3') {
+                await runFfmpegWithProgress({
+                    inputPath: rawFile,
+                    outputPath: options.outputPath,
+                    codecArgs: ['-vn', '-c:a', 'libmp3lame', '-b:a', '192k'],
+                    totalDurationSeconds: duration,
+                    onProgress: onFfmpegProgress,
+                });
+            } else {
+                // Try a fast remux first (no quality loss, just a container swap);
+                // fall back to a full re-encode if the source codec isn't compatible
+                // with the target container. Reasonably close to yt-dlp's own
+                // remux-preferred behavior without hand-maintaining a codec/container
+                // compatibility matrix ourselves.
+                try {
+                    await runFfmpegWithProgress({
+                        inputPath: rawFile,
+                        outputPath: options.outputPath,
+                        codecArgs: ['-c', 'copy'],
+                        totalDurationSeconds: duration,
+                        onProgress: onFfmpegProgress,
+                    });
+                } catch {
+                    // WebM is spec'd to only hold VP8/VP9/AV1 video + Vorbis/Opus
+                    // audio -- falling back to libx264/aac universally would produce
+                    // a file labeled .webm that isn't actually valid WebM.
+                    const reencodeCodecArgs = (options.format || '').toLowerCase() === 'webm'
+                        ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus']
+                        : ['-c:v', 'libx264', '-c:a', 'aac'];
+                    await runFfmpegWithProgress({
+                        inputPath: rawFile,
+                        outputPath: options.outputPath,
+                        codecArgs: reencodeCodecArgs,
+                        totalDurationSeconds: duration,
+                        onProgress: onFfmpegProgress,
+                    });
+                }
+            }
+
+            fs.rmSync(rawDir, { recursive: true, force: true });
+            activeDownloadCount--;
+            send({ type: 'done', payload: { filename: options.outputPath } });
+        } catch (err) {
+            activeDownloadCount--;
+            send({ type: 'error', payload: { message: err instanceof Error ? err.message : String(err) } });
         }
     })
 
