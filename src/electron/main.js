@@ -21,6 +21,113 @@ const isDev = !app.isPackaged;
 const indexPath = path.join(__dirname, '../renderer/index.html');
 const ytdlpPath = isDev ? path.resolve(__dirname, '../ytdlp-bin/yt-dlp') : path.join(process.resourcesPath, 'ytdlp-bin', 'yt-dlp');
 const ffmpegDir = isDev ? path.resolve(__dirname, '../ffmpeg') : path.join(process.resourcesPath, 'ffmpeg');
+const cookiesPath = path.join(app.getPath('userData'), 'cookies.txt');
+
+function cookiesArgs() {
+    return fs.existsSync(cookiesPath) ? ['--cookies', cookiesPath] : [];
+}
+
+// Accepts either a real Netscape cookies.txt export (the format yt-dlp's own
+// docs recommend, produced by browser extensions like "Get cookies.txt"), or
+// a raw "name=value; name2=value2" cookie-header string as copied straight
+// out of a browser's DevTools Network tab -- normalizing the latter into
+// Netscape format so yt-dlp's --cookies flag can consume it either way.
+function looksLikeNetscapeFormat(text) {
+    return /^\s*#/.test(text) || /^[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]*$/m.test(text);
+}
+
+function convertHeaderCookiesToNetscape(text) {
+    const farFutureExpiry = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 5;
+    // A real cookie-header string is a single logical line. Pasting a long one
+    // out of a wrapped display (e.g. a chat code block) can pick up stray
+    // line breaks at the wrap points, which would otherwise silently sever a
+    // cookie's value mid-token and cascade into corrupting everything after
+    // it. Collapsing embedded newlines first makes that class of paste-damage
+    // harmless.
+    const normalized = text.replace(/[\r\n]+/g, '');
+    const lines = ['# Netscape HTTP Cookie File'];
+    for (const pair of normalized.split(';')) {
+        const trimmed = pair.trim();
+        if (!trimmed) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx === -1) continue;
+        const name = trimmed.slice(0, eqIdx).trim();
+        const value = trimmed.slice(eqIdx + 1).trim();
+        if (!name) continue;
+        // The header was captured from a request to youtube.com, so that's
+        // the only domain we know the value is valid for -- but yt-dlp's
+        // YouTube extractor also makes requests that aren't strictly scoped
+        // to youtube.com (Google's shared account-auth infrastructure). A
+        // cookie jar that only recognizes .youtube.com won't get attached to
+        // those, even though a real browser's cookie store would apply here
+        // more broadly. Registering each cookie under both domains costs
+        // nothing (cookie jars key by domain+path+name, so this can't
+        // conflict) and maximizes the chance it's actually sent where needed.
+        for (const domain of ['.youtube.com', '.google.com']) {
+            lines.push([domain, 'TRUE', '/', 'TRUE', String(farFutureExpiry), name, value].join('\t'));
+        }
+    }
+    // Validity/skip counts are derived centrally in validateNetscapeLines
+    // (by the caller) rather than tracked here, so they're correct for both
+    // this converted output and a raw Netscape passthrough alike.
+    return lines.join('\n') + '\n';
+}
+
+// Regardless of which input path produced it, verify the final file is
+// actually well-formed Netscape cookie format (every non-comment, non-blank
+// line has exactly 7 tab-separated fields) before trusting it -- a raw
+// Netscape paste can suffer the exact same wrapped-copy corruption as the
+// header-string path. "valid" counts *distinct cookie names*, not lines --
+// a single cookie may legitimately appear on more than one line (e.g. our
+// own dual .youtube.com/.google.com registration, or a real export that has
+// entries for both youtube.com and www.youtube.com), and reporting raw line
+// counts back to the user would overstate how many cookies were loaded.
+function validateNetscapeLines(content) {
+    const validNames = new Set();
+    let invalid = 0;
+    for (const line of content.split('\n')) {
+        if (!line.trim() || line.startsWith('#')) continue;
+        const fields = line.split('\t');
+        if (fields.length === 7) {
+            validNames.add(fields[5]);
+        } else {
+            invalid++;
+        }
+    }
+    return { valid: validNames.size, invalid };
+}
+
+ipcMain.handle('cookies:save', async (event, cookieText) => {
+    const trimmed = (cookieText || '').trim();
+    if (!trimmed) {
+        throw new Error('Cookie text is empty');
+    }
+
+    const content = looksLikeNetscapeFormat(trimmed) ? trimmed : convertHeaderCookiesToNetscape(trimmed);
+
+    const { valid, invalid } = validateNetscapeLines(content);
+    if (valid === 0) {
+        throw new Error('No valid cookies could be parsed from that text.');
+    }
+
+    fs.writeFileSync(cookiesPath, content, 'utf-8');
+    return { success: true, cookieCount: valid, skipped: invalid };
+});
+
+ipcMain.handle('cookies:delete', async () => {
+    if (fs.existsSync(cookiesPath)) {
+        fs.unlinkSync(cookiesPath);
+    }
+    return { success: true };
+});
+
+ipcMain.handle('cookies:status', async () => {
+    if (!fs.existsSync(cookiesPath)) {
+        return { loaded: false, cookieCount: 0 };
+    }
+    const { valid } = validateNetscapeLines(fs.readFileSync(cookiesPath, 'utf-8'));
+    return { loaded: true, cookieCount: valid };
+});
 
 app.on("ready", () => {
     const mainWindow = new BrowserWindow({
@@ -109,7 +216,19 @@ function reshapeVideoInfo(info) {
 
 ipcMain.handle('getVideoInfoPython', async (event, url) => {
     return new Promise((resolve, reject) => {
-        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ffmpeg-location', ffmpegDir, url]);
+        // --ignore-no-formats-error matters here specifically: -J alone does NOT
+        // put yt-dlp into a formats-only mode that skips format-selector
+        // resolution (only --list-formats/--simulate do that). So even a pure
+        // metadata dump still tries to resolve yt-dlp's *default* format
+        // selector against the available formats, and aborts the whole call
+        // with "Requested format is not available" if that fails -- e.g. when
+        // an authenticated session's format list doesn't happen to satisfy
+        // the default selector. We don't need format resolution at all here,
+        // only the raw formats list embedded in the JSON, so this flag makes
+        // that failure mode non-fatal. Verified directly: reproduced this
+        // exact error with a deliberately-unmatchable -f selector (no cookies
+        // needed) and confirmed this flag alone makes -J succeed regardless.
+        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ignore-no-formats-error', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), url]);
         let data = '';
         let error = '';
 
@@ -159,6 +278,7 @@ function buildDownloadArgs({ videoUrl, outputPath, format, resolution }) {
         '--progress-template', 'download:PROGRESS|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress._percent_str)s|%(progress.eta)s|%(progress._speed_str)s',
         '--progress-template', 'postprocess:POSTPROCESS|%(progress.status)s|%(progress.postprocessor)s',
         '--ffmpeg-location', ffmpegDir,
+        ...cookiesArgs(),
         '-o', outputPath || '%(title)s.%(ext)s',
     ];
 

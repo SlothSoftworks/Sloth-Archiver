@@ -7,6 +7,7 @@ import Box from '@mui/material/Box';
 import './App.css';
 import './MainPage.css';
 import DownloaderScreen from './screens/DownloaderScreen';
+import OptionsScreen from './screens/OptionsScreen';
 
 function MainPage() {
 
@@ -71,7 +72,7 @@ export function BasicTabs() {
         Item Two
       </CustomTabPanel>
       <CustomTabPanel value={value} index={2}>
-        Item Three
+        <OptionsScreen/>
       </CustomTabPanel>
     </Box>
   );

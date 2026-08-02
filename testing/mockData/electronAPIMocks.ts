@@ -7,6 +7,9 @@ export const electronAPIMock = {
     getVideoInfoPython: noop,
     openDirectory: noop,
     openFileInDirectory: noop,
+    saveCookie: async () => ({ success: true, cookieCount: 0, skipped: 0 }),
+    deleteCookie: async () => ({ success: true }),
+    getCookieStatus: async () => ({ loaded: false, cookieCount: 0 }),
 
 }
 

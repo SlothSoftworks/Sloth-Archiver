@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Box, CircularProgress, Grid, InputAdornment } from '@mui/material';
+import { Box, CircularProgress, Grid, InputAdornment, Stack, IconButton, Tooltip, Typography } from '@mui/material';
 import './screens.css'
 import TextField from '@mui/material/TextField';
-import Button from '@mui/material/Button';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
 import { isValidUrl } from '../../utils/utils.ts';
 import VideoDetailCard from './VideoDetailCard';
@@ -20,9 +19,11 @@ export default function DownloaderScreen() {
   const [isUrlError, setIsUrlError] = useState(false);
   const debouncedVideoUrl = useDebounce(videoUrl);
   const [videoInfo, setVideoInfo] = useState(window.mockingElectron !== "yes" ? null : videoResponseMock.data.response); // TODO change this after testing
+  const [videoInfoError, setVideoInfoError] = useState<string | null>(null);
 
 
   useEffect(() => {
+    setVideoInfoError(null);
     if (debouncedVideoUrl === '') { return; }
     if (isValidUrl(debouncedVideoUrl)) {
       setIsUrlError(false)
@@ -30,7 +31,7 @@ export default function DownloaderScreen() {
     } else {
       setIsUrlError(true);
     }
-    
+
   }, [debouncedVideoUrl])
 
 
@@ -44,20 +45,25 @@ export default function DownloaderScreen() {
 
   const handleGetVideoInfo = async (url: string) => {
     setLoadingVideoData(true);
-    const result = await window.electronAPI.getVideoInfoPython(url);
-    setLoadingVideoData(false);
-    if (result.success) {
-      setVideoInfo(result.data.response);
+    setVideoInfoError(null);
+    try {
+      const result = await window.electronAPI.getVideoInfoPython(url);
+      if (result.success) {
+        setVideoInfo(result.data.response);
+      }
+    } catch (err) {
+      setVideoInfo(null);
+      setVideoInfoError(err instanceof Error ? err.message : 'Failed to load video information.');
+    } finally {
+      setLoadingVideoData(false);
     }
-    console.log(result)
   }
 
   return (
     <>
     <Box sx={{ alignContent: 'center'}}>
         <Box sx={{ flexGrow: 1 }}>
-        <Grid container spacing={2}>
-            <Grid size={10}>
+        <Stack direction="row" spacing={1} alignItems="flex-start">
             <TextField
               error={isUrlError}
               helperText={isUrlError ? 'Invalid URL' : ''}
@@ -77,12 +83,29 @@ export default function DownloaderScreen() {
                 },
               }}
             />
-            </Grid>
-            <Grid size={2}>
-            <Button onClick={handlePickFolder} fullWidth variant="contained"><LibraryAddIcon/></Button>
-            </Grid>
+            <Tooltip title="Add to library (coming soon)" placement="top">
+              <span>
+                <IconButton
+                  onClick={handlePickFolder}
+                  sx={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 1,
+                    bgcolor: 'primary.main',
+                    color: 'primary.contrastText',
+                    '&:hover': { bgcolor: 'primary.dark' },
+                  }}
+                >
+                  <LibraryAddIcon/>
+                </IconButton>
+              </span>
+            </Tooltip>
+        </Stack>
+        {videoInfoError &&
+          <Typography color="error" sx={{ mt: 2 }}>{videoInfoError}</Typography>}
+        <Grid container spacing={2} sx={{ mt: 1 }}>
             {
-              loadingVideoData && 
+              loadingVideoData &&
               <Grid size={10}>
                 <VideoDetailCardSkeleton/>
               </Grid>
