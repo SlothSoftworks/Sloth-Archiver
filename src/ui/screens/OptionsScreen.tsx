@@ -37,6 +37,7 @@ export default function OptionsScreen() {
   const [error, setError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
   const [downloadDir, setDownloadDirState] = useState('');
+  const [libraryDir, setLibraryDirState] = useState('');
 
   const refreshStatus = async () => {
     const status = await window.electronAPI.getCookieStatus();
@@ -49,9 +50,15 @@ export default function OptionsScreen() {
     setDownloadDirState(downloadDir);
   };
 
+  const refreshLibraryDir = async () => {
+    const { libraryDir } = await window.electronAPI.getLibraryDir();
+    setLibraryDirState(libraryDir);
+  };
+
   useEffect(() => {
     refreshStatus();
     refreshDownloadDir();
+    refreshLibraryDir();
   }, []);
 
   const handleChooseDownloadDir = async () => {
@@ -62,6 +69,16 @@ export default function OptionsScreen() {
     if (result.canceled || !result.filePaths?.[0]) return;
     await window.electronAPI.setDownloadDir(result.filePaths[0]);
     await refreshDownloadDir();
+  };
+
+  const handleChooseLibraryDir = async () => {
+    const result = await window.electronAPI.pickFolder({
+      title: 'Select Library Folder',
+      buttonLabel: 'Select',
+    });
+    if (result.canceled || !result.filePaths?.[0]) return;
+    await window.electronAPI.setLibraryDir(result.filePaths[0]);
+    await refreshLibraryDir();
   };
 
   const handleOpenDialog = () => {
@@ -108,6 +125,23 @@ export default function OptionsScreen() {
         </Button>
         <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
           {downloadDir || 'Using system default'}
+        </Typography>
+      </Stack>
+
+      <Divider sx={{ my: 3 }} />
+
+      <Typography variant="h6" gutterBottom>Library Folder</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
+        Where videos added to the Library tab are tracked and stored. Unlike the download
+        folder above, this isn't set to a default automatically -- choose it deliberately,
+        since it's meant to be a persistent archive location.
+      </Typography>
+      <Stack direction="row" spacing={2} alignItems="center">
+        <Button variant="contained" onClick={handleChooseLibraryDir}>
+          Choose folder
+        </Button>
+        <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
+          {libraryDir || 'Not set'}
         </Typography>
       </Stack>
 

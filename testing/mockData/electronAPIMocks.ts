@@ -19,6 +19,13 @@ export const electronAPIMock = {
     removeYtdlpUpdateProgressListener: noop,
     quitApp: noop,
     deleteVideoInfoCacheEntry: async () => ({ success: true, existed: false }),
+    getLibraryDir: async () => ({ libraryDir: '' }),
+    setLibraryDir: async () => ({ success: true, libraryDir: '' }),
+    getLibraryIndex: async () => ({ channels: [] }),
+    refreshLibraryIndex: async () => ({ channels: [] }),
+    addLibraryEntry: async () => ({ success: true, videoDir: '' }),
+    overrideLibraryEntry: async () => ({ success: true, videoDir: '' }),
+    findLibraryVideo: async () => ({ found: false }),
 
 }
 

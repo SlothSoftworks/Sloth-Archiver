@@ -20,6 +20,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeYtdlpUpdateProgressListener: () => ipcRenderer.removeAllListeners('ytdlpUpdateProgress'),
     quitApp: () => ipcRenderer.invoke('app:quit'),
     deleteVideoInfoCacheEntry: (url) => ipcRenderer.invoke('videoInfoCache:deleteEntry', url),
+    getLibraryDir: () => ipcRenderer.invoke('settings:getLibraryDir'),
+    setLibraryDir: (dir) => ipcRenderer.invoke('settings:setLibraryDir', dir),
+    getLibraryIndex: () => ipcRenderer.invoke('library:getIndex'),
+    refreshLibraryIndex: () => ipcRenderer.invoke('library:refreshIndex'),
+    addLibraryEntry: (videoMetaData) => ipcRenderer.invoke('library:addEntry', videoMetaData),
+    overrideLibraryEntry: (videoMetaData, existingVideoDir) => ipcRenderer.invoke('library:overrideEntry', { videoMetaData, existingVideoDir }),
+    findLibraryVideo: (videoId) => ipcRenderer.invoke('library:findVideo', videoId),
 });
 
 contextBridge.exposeInMainWorld('electronAPIPythonDownload', {

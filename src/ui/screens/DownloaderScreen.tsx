@@ -1,5 +1,22 @@
 import { useEffect, useState } from 'react';
-import { Box, Chip, CircularProgress, InputAdornment, Stack, IconButton, Tooltip, Typography } from '@mui/material';
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  InputAdornment,
+  Stack,
+  IconButton,
+  Snackbar,
+  Tooltip,
+  Typography,
+} from '@mui/material';
 import './screens.css'
 import TextField from '@mui/material/TextField';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
@@ -22,6 +39,10 @@ export default function DownloaderScreen() {
   const [videoInfo, setVideoInfo] = useState(window.mockingElectron !== "yes" ? null : videoResponseMock.data.response); // TODO change this after testing
   const [videoInfoError, setVideoInfoError] = useState<string | null>(null);
   const [videoInfoFromCache, setVideoInfoFromCache] = useState(false);
+  const [libraryAddStatus, setLibraryAddStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
+  const [libraryErrorMessage, setLibraryErrorMessage] = useState<string | null>(null);
+  const [librarySuccessSnackbarOpen, setLibrarySuccessSnackbarOpen] = useState(false);
+  const [duplicateMatch, setDuplicateMatch] = useState<{ channelDisplayName: string | null; videoDir: string } | null>(null);
 
 
   useEffect(() => {
@@ -37,12 +58,72 @@ export default function DownloaderScreen() {
   }, [debouncedVideoUrl])
 
 
-  const handlePickFolder = async () => {
-    const result = await window.electronAPI.pickFolder( {
-      title: "Select Download Folder",
-      buttonLabel: "ONEGAI",
-      message: "KIOBO",
-    });
+  // Bare-bones for now: tracks the video (folder + metadata.json) without
+  // downloading its file -- adding to the library and downloading are
+  // separate actions, matching how the library is meant to work overall.
+  const performAddToLibrary = async () => {
+    if (!videoInfo) return;
+    setLibraryAddStatus('saving');
+    try {
+      await window.electronAPI.addLibraryEntry(videoInfo);
+      setLibrarySuccessSnackbarOpen(true);
+      // Clear the search result now that it's been added -- a placeholder for
+      // a more refined post-add flow later.
+      setVideoUrl('');
+      setVideoInfo(null);
+      setVideoInfoError(null);
+      setVideoInfoFromCache(false);
+      setIsUrlError(false);
+      setLibraryAddStatus('idle');
+    } catch (err) {
+      console.error('Failed to add to library', err);
+      setLibraryAddStatus('error');
+      setLibraryErrorMessage(err instanceof Error ? err.message : 'Failed to add video to the library.');
+    }
+  };
+
+  const handleAddToLibrary = async () => {
+    if (!videoInfo) return;
+    setLibraryAddStatus('saving');
+    try {
+      const existing = await window.electronAPI.findLibraryVideo(videoInfo.id);
+      if (existing.found && existing.videoDir) {
+        // Pause here rather than writing a redundant epoch folder for a video
+        // that's already tracked -- let the user decide via the dialog below.
+        setLibraryAddStatus('idle');
+        setDuplicateMatch({ channelDisplayName: existing.channelDisplayName || null, videoDir: existing.videoDir });
+        return;
+      }
+      await performAddToLibrary();
+    } catch (err) {
+      console.error('Failed to check the library for this video', err);
+      setLibraryAddStatus('error');
+      setLibraryErrorMessage(err instanceof Error ? err.message : 'Failed to add video to the library.');
+    }
+  };
+
+  // Replaces the existing tracked entry rather than adding another one --
+  // deletes its old epoch data first, then writes fresh. "Add as new
+  // version" (additive, keeps the old data) is the not-yet-built alternative.
+  const handleOverrideAdd = async () => {
+    if (!videoInfo || !duplicateMatch) return;
+    const existingVideoDir = duplicateMatch.videoDir;
+    setDuplicateMatch(null);
+    setLibraryAddStatus('saving');
+    try {
+      await window.electronAPI.overrideLibraryEntry(videoInfo, existingVideoDir);
+      setLibrarySuccessSnackbarOpen(true);
+      setVideoUrl('');
+      setVideoInfo(null);
+      setVideoInfoError(null);
+      setVideoInfoFromCache(false);
+      setIsUrlError(false);
+      setLibraryAddStatus('idle');
+    } catch (err) {
+      console.error('Failed to override library entry', err);
+      setLibraryAddStatus('error');
+      setLibraryErrorMessage(err instanceof Error ? err.message : 'Failed to add video to the library.');
+    }
   };
 
   // Testing convenience: evict just this URL's cache entry without waiting
@@ -56,6 +137,7 @@ export default function DownloaderScreen() {
     setLoadingVideoData(true);
     setVideoInfoError(null);
     setVideoInfoFromCache(false);
+    setLibraryAddStatus('idle');
     try {
       const result = await window.electronAPI.getVideoInfoPython(url);
       if (result.success) {
@@ -94,17 +176,32 @@ export default function DownloaderScreen() {
                 },
               }}
             />
-            <Tooltip title="Add to library (coming soon)" placement="top">
+            <Tooltip title={
+              !videoInfo ? 'Load a video first' :
+              libraryAddStatus === 'saving' ? 'Adding...' :
+              libraryAddStatus === 'done' ? 'Added to library' :
+              libraryAddStatus === 'error' ? 'Failed to add -- click to retry' :
+              'Add to library'
+            } placement="top">
               <span>
                 <IconButton
-                  onClick={handlePickFolder}
+                  onClick={handleAddToLibrary}
+                  disabled={!videoInfo || libraryAddStatus === 'saving'}
                   sx={{
                     width: 56,
                     height: 56,
                     borderRadius: 1,
-                    bgcolor: 'primary.main',
-                    color: 'primary.contrastText',
-                    '&:hover': { bgcolor: 'primary.dark' },
+                    // Only colored once a video is actually loaded -- applying this
+                    // bgcolor/color override unconditionally (including while disabled)
+                    // fought MUI's own disabled-button styling and made the button
+                    // render invisibly, even though its Tooltip still worked (the
+                    // span wrapper it needs to show a tooltip on a disabled button
+                    // doesn't depend on the button itself being visible).
+                    ...(videoInfo && {
+                      bgcolor: libraryAddStatus === 'error' ? 'error.main' : libraryAddStatus === 'done' ? 'success.main' : 'primary.main',
+                      color: 'primary.contrastText',
+                      '&:hover': { bgcolor: libraryAddStatus === 'error' ? 'error.dark' : libraryAddStatus === 'done' ? 'success.dark' : 'primary.dark' },
+                    }),
                   }}
                 >
                   <LibraryAddIcon/>
@@ -133,6 +230,43 @@ export default function DownloaderScreen() {
           </Box>}
         </Box>
     </Box>
+    <Dialog open={!!libraryErrorMessage} onClose={() => setLibraryErrorMessage(null)}>
+      <DialogTitle>Couldn't add to library</DialogTitle>
+      <DialogContent>
+        <DialogContentText>{libraryErrorMessage}</DialogContentText>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setLibraryErrorMessage(null)}>Close</Button>
+      </DialogActions>
+    </Dialog>
+    <Dialog open={!!duplicateMatch} onClose={() => setDuplicateMatch(null)}>
+      <DialogTitle>Already in your library</DialogTitle>
+      <DialogContent>
+        <DialogContentText>
+          This video is already tracked in your library{duplicateMatch?.channelDisplayName ? ` under "${duplicateMatch.channelDisplayName}"` : ''}.
+          What would you like to do?
+        </DialogContentText>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setDuplicateMatch(null)}>Cancel</Button>
+        <Tooltip title="Versioning isn't built yet -- coming in a later pass">
+          <span>
+            <Button disabled>Add as new version</Button>
+          </span>
+        </Tooltip>
+        <Button variant="contained" onClick={handleOverrideAdd}>Override</Button>
+      </DialogActions>
+    </Dialog>
+    <Snackbar
+      open={librarySuccessSnackbarOpen}
+      autoHideDuration={4000}
+      onClose={() => setLibrarySuccessSnackbarOpen(false)}
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+    >
+      <Alert onClose={() => setLibrarySuccessSnackbarOpen(false)} severity="success" variant="filled">
+        Added to library
+      </Alert>
+    </Snackbar>
     </>
   )
 }

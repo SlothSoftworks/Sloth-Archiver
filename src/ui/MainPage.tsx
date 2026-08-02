@@ -8,6 +8,7 @@ import './App.css';
 import './MainPage.css';
 import DownloaderScreen from './screens/DownloaderScreen';
 import OptionsScreen from './screens/OptionsScreen';
+import LibraryScreen from './screens/LibraryScreen';
 import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
 
 function MainPage() {
@@ -73,7 +74,7 @@ export function BasicTabs() {
         <DownloaderScreen/>
       </CustomTabPanel>
       <CustomTabPanel value={value} index={1}>
-        Item Two
+        <LibraryScreen/>
       </CustomTabPanel>
       <CustomTabPanel value={value} index={2}>
         <OptionsScreen/>

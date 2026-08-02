@@ -7,6 +7,7 @@ import crypto from 'crypto';
 
 import { getSupportedVideoFilters } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, getLibraryIndex, refreshLibraryIndex, findVideoInIndex } from './library.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -110,6 +111,68 @@ ipcMain.handle('settings:setDownloadDir', async (e, dir) => {
     writeSettings(settings);
     return { success: true, downloadDir: dir };
 });
+
+// Unlike downloadDir, deliberately no fallback to a default location here --
+// the library is a persistent archive location the user should choose
+// deliberately, not one we should guess at.
+ipcMain.handle('settings:getLibraryDir', async () => {
+    const { libraryDir } = readSettings();
+    return { libraryDir: libraryDir || '' };
+});
+
+ipcMain.handle('settings:setLibraryDir', async (e, dir) => {
+    const settings = readSettings();
+    settings.libraryDir = dir;
+    writeSettings(settings);
+    // Switching to a different library folder mid-session should reflect
+    // immediately, not show whatever the previous folder's scan found.
+    refreshLibraryIndex(dir);
+    return { success: true, libraryDir: dir };
+});
+
+ipcMain.handle('library:getIndex', async () => {
+    const { libraryDir } = readSettings();
+    return getLibraryIndex(libraryDir);
+});
+
+ipcMain.handle('library:refreshIndex', async () => {
+    const { libraryDir } = readSettings();
+    return refreshLibraryIndex(libraryDir);
+});
+
+ipcMain.handle('library:addEntry', async (e, videoMetaData) => {
+    const { libraryDir } = readSettings();
+    const result = writeLibraryEntry({ libraryDir, videoMetaData });
+    await refreshLibraryIndex(libraryDir);
+    return { success: true, videoDir: result.videoDir };
+});
+
+ipcMain.handle('library:overrideEntry', async (e, { videoMetaData, existingVideoDir }) => {
+    const { libraryDir } = readSettings();
+    const result = overrideLibraryEntry({ libraryDir, videoMetaData, existingVideoDir });
+    await refreshLibraryIndex(libraryDir);
+    return { success: true, videoDir: result.videoDir };
+});
+
+// Checked by the renderer before calling addEntry, so a duplicate can be
+// caught with a warning dialog instead of silently piling up a redundant
+// epoch folder for a video that's already tracked.
+ipcMain.handle('library:findVideo', async (e, videoId) => {
+    const { libraryDir } = readSettings();
+    const index = await getLibraryIndex(libraryDir);
+    const match = findVideoInIndex(index, videoId);
+    if (!match) {
+        return { found: false };
+    }
+    return { found: true, channelDisplayName: match.channel.displayName, videoDir: match.video.videoDir };
+});
+
+// Kick off the initial scan in the background at startup -- deliberately not
+// awaited (unlike ensureYtdlpBinInUserData's one-time small copy above, this
+// could be scanning an arbitrarily large library). getLibraryIndex reuses
+// this same in-flight scan rather than starting a redundant one when the
+// Library tab asks for it.
+getLibraryIndex(readSettings().libraryDir);
 
 // A literal fs.existsSync(filePath) isn't enough here: postprocessors (MP3
 // extraction, format recode) don't write to the exact chosen path, they
@@ -714,11 +777,13 @@ ipcMain.handle('app:quit', async () => {
     app.quit();
 });
 
-// openDirectory
-
 ipcMain.handle('system:openFileInDirectory', async (e, filepath) => {
     shell.showItemInFolder(filepath);
 });
-ipcMain.handle('system:openDirectory', async (e, path) => {
-    shell.showItemInFolder(path);
+// Was previously (and incorrectly, unused until now) implemented with
+// shell.showItemInFolder, which for a directory path reveals its *parent*
+// folder with that directory selected -- not what "open this folder" means.
+// shell.openPath opens the given folder's own contents directly.
+ipcMain.handle('system:openDirectory', async (e, dirPath) => {
+    shell.openPath(dirPath);
 });
