@@ -12,8 +12,23 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { useYtdlpUpdater, type YtdlpUpdateStage } from '../hooks/useYtdlpUpdater';
+
+const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
+  'checking',
+  'fetching-python-runtime',
+  'installing-pyinstaller',
+  'fetching-yt-dlp',
+  'building',
+  'verifying',
+]);
 
 export default function OptionsScreen() {
+  // Progress/error while updating is shown by the shared full-view overlay
+  // (YtdlpUpdateDialog, mounted once at MainPage level) regardless of which
+  // tab triggered it -- this screen only needs to check/kick off the update.
+  const { currentVersion, latestVersion, updateAvailable, checking, checkError, stage, checkForUpdate, startUpdate } = useYtdlpUpdater();
+  const isUpdating = IN_PROGRESS_STAGES.has(stage);
   const [cookieLoaded, setCookieLoaded] = useState(false);
   const [cookieCount, setCookieCount] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -95,7 +110,30 @@ export default function OptionsScreen() {
         </Typography>
       </Stack>
 
-      <Typography variant="h6" gutterBottom>Personal Cookie</Typography>
+      <Typography variant="h6" gutterBottom>yt-dlp Version</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
+        yt-dlp needs to change whenever YouTube does. Updating rebuilds it locally on this
+        machine, which can take a minute or two the first time.
+      </Typography>
+      <Stack direction="row" spacing={2} alignItems="center">
+        <Button variant="outlined" onClick={() => checkForUpdate()} disabled={checking || isUpdating}>
+          Check for updates
+        </Button>
+        {updateAvailable &&
+          <Button variant="contained" onClick={() => startUpdate()} disabled={isUpdating}>
+            Update to {latestVersion}
+          </Button>}
+        <Chip
+          label={currentVersion ? `Current: ${currentVersion}` : 'Version unknown'}
+          variant="outlined"
+        />
+        {!checking && !updateAvailable && !!currentVersion &&
+          <Chip label="Up to date" color="success" variant="outlined" />}
+      </Stack>
+      {checkError &&
+        <Typography variant="body2" color="error" sx={{ mt: 1 }}>{checkError}</Typography>}
+
+      <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>Personal Cookie</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
         Loading a personal YouTube cookie lets requests authenticate as you, which can help avoid
         "Sign in to confirm you're not a bot" errors. Paste either a Netscape-format cookies.txt

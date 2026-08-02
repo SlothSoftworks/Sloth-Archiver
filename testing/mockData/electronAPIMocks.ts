@@ -13,6 +13,11 @@ export const electronAPIMock = {
     getDownloadDir: async () => ({ downloadDir: '' }),
     setDownloadDir: async () => ({ success: true, downloadDir: '' }),
     checkFileExists: async () => false,
+    checkForYtdlpUpdate: async () => ({ current: '', latest: '', updateAvailable: false }),
+    startYtdlpUpdate: async () => ({ success: true, version: '' }),
+    onYtdlpUpdateProgress: noop,
+    removeYtdlpUpdateProgressListener: noop,
+    quitApp: noop,
 
 }
 

@@ -7,6 +7,7 @@ import MainPage from './MainPage';
 import Other from './other';
 import { electronAPIMock, electronAPIPythonDownloadMock } from '../../testing/mockData/electronAPIMocks.ts'
 import theme from './theme';
+import { YtdlpUpdaterProvider } from './hooks/useYtdlpUpdater';
 
 function App() {
 
@@ -19,10 +20,12 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Routes>
-        <Route path="/" element={<MainPage />}></Route>
-        <Route path="/other" element={<Other />}/>
-      </Routes>
+      <YtdlpUpdaterProvider>
+        <Routes>
+          <Route path="/" element={<MainPage />}></Route>
+          <Route path="/other" element={<Other />}/>
+        </Routes>
+      </YtdlpUpdaterProvider>
     </ThemeProvider>
   )
 }

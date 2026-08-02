@@ -8,11 +8,15 @@ import './App.css';
 import './MainPage.css';
 import DownloaderScreen from './screens/DownloaderScreen';
 import OptionsScreen from './screens/OptionsScreen';
+import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
 
 function MainPage() {
 
   return (
-    <BasicTabs/>
+    <>
+      <BasicTabs/>
+      <YtdlpUpdateDialog/>
+    </>
   )
 }
 

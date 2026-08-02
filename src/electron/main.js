@@ -5,6 +5,7 @@ import { spawn } from 'child_process';
 import fs from "fs";
 
 import { getSupportedVideoFilters } from './utils/constants.mjs';
+import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -20,8 +21,27 @@ const isDev = !app.isPackaged;
 
 const indexPath = path.join(__dirname, '../renderer/index.html');
 const ytdlpBinaryName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
-const ytdlpPath = isDev ? path.resolve(__dirname, '../ytdlp-bin', ytdlpBinaryName) : path.join(process.resourcesPath, 'ytdlp-bin', ytdlpBinaryName);
 const ffmpegDir = isDev ? path.resolve(__dirname, '../ffmpeg') : path.join(process.resourcesPath, 'ffmpeg');
+
+// The bundled ytdlp-bin lives under extraResources (Contents/Resources on
+// mac, the installed resources dir on Windows), which isn't reliably
+// writable without elevation -- so the updater can never swap a fresh binary
+// in there. Instead, relocate to userData (always per-user-writable) once on
+// first run, and treat that copy as the one true source of truth from then
+// on, in both dev and packaged builds, so update logic behaves identically
+// either way.
+const bundledYtdlpBinDir = isDev ? path.resolve(__dirname, '../ytdlp-bin') : path.join(process.resourcesPath, 'ytdlp-bin');
+const userDataYtdlpBinDir = path.join(app.getPath('userData'), 'ytdlp-bin');
+const pythonSrcDir = isDev ? path.resolve(__dirname, '../../src/python') : path.join(process.resourcesPath, 'python-src');
+
+function ensureYtdlpBinInUserData() {
+    if (!fs.existsSync(userDataYtdlpBinDir)) {
+        fs.cpSync(bundledYtdlpBinDir, userDataYtdlpBinDir, { recursive: true });
+    }
+}
+ensureYtdlpBinInUserData();
+
+const ytdlpPath = path.join(userDataYtdlpBinDir, ytdlpBinaryName);
 const cookiesPath = path.join(app.getPath('userData'), 'cookies.txt');
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const videoInfoCachePath = path.join(app.getPath('userData'), 'videoInfoCache.json');
@@ -397,8 +417,13 @@ function findFinalFile(outputPath) {
     }
 }
 
+// Tracked so the updater can refuse to swap the live yt-dlp binary out from
+// under a process that's actively using it.
+let activeDownloadCount = 0;
+
 ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     const script = spawn(ytdlpPath, buildDownloadArgs(options));
+    activeDownloadCount++;
 
     let error = '';
 
@@ -458,6 +483,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     }));
 
     script.on('close', (code) => {
+        activeDownloadCount--;
         if (code !== 0) {
             send({ type: 'error', payload: { message: error || `Download failed with code ${code}` } });
         } else {
@@ -465,6 +491,39 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
         }
     })
 
+});
+
+ipcMain.handle('ytdlp:checkForUpdate', async () => {
+    const [latest, current] = await Promise.all([
+        getLatestYtdlpVersionFromPyPI(),
+        getCurrentYtdlpVersion(ytdlpPath),
+    ]);
+    return { current, latest, updateAvailable: isNewerVersion(latest, current) };
+});
+
+ipcMain.handle('ytdlp:startUpdate', async () => {
+    const send = (stage) => BrowserWindow.getAllWindows()[0]?.webContents.send('ytdlpUpdateProgress', { stage });
+    try {
+        const result = await performYtdlpUpdate({
+            userDataDir: app.getPath('userData'),
+            pythonSrcDir,
+            liveYtdlpBinDir: userDataYtdlpBinDir,
+            ytdlpBinaryName,
+            isDownloadActive: () => activeDownloadCount > 0,
+            onProgress: send,
+        });
+        return { success: true, version: result.version };
+    } catch (err) {
+        send('error');
+        throw err instanceof Error ? err : new Error(String(err));
+    }
+});
+
+// yt-dlp is a vital dependency -- if the user declines a required update at
+// startup, the app can't function, so it quits rather than continuing in a
+// broken state.
+ipcMain.handle('app:quit', async () => {
+    app.quit();
 });
 
 // openDirectory

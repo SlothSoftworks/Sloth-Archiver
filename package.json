@@ -26,6 +26,14 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "src/python/",
+        "to": "python-src",
+        "filter": [
+          "ytdlp_entrypoint.py",
+          "requirements-build.txt"
+        ]
       }
     ],
     "directories": {

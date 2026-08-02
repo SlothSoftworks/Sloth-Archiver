@@ -14,6 +14,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDownloadDir: () => ipcRenderer.invoke('settings:getDownloadDir'),
     setDownloadDir: (dir) => ipcRenderer.invoke('settings:setDownloadDir', dir),
     checkFileExists: (filePath) => ipcRenderer.invoke('system:pathExists', filePath),
+    checkForYtdlpUpdate: () => ipcRenderer.invoke('ytdlp:checkForUpdate'),
+    startYtdlpUpdate: () => ipcRenderer.invoke('ytdlp:startUpdate'),
+    onYtdlpUpdateProgress: (callback) => ipcRenderer.on('ytdlpUpdateProgress', (_event, data) => callback(data)),
+    removeYtdlpUpdateProgressListener: () => ipcRenderer.removeAllListeners('ytdlpUpdateProgress'),
+    quitApp: () => ipcRenderer.invoke('app:quit'),
 });
 
 contextBridge.exposeInMainWorld('electronAPIPythonDownload', {
