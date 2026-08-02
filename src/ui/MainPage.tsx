@@ -58,7 +58,7 @@ export function BasicTabs() {
 
   return (
     <Box className="mainTabs" sx={{ width: '100%' }}>
-      <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
         <Tabs value={value} onChange={handleChange} aria-label="basic tabs example">
           <Tab label="Downloader" {...a11yProps(0)} />
           <Tab label="Library" {...a11yProps(1)} />

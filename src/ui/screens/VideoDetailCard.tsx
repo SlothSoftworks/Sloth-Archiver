@@ -14,6 +14,8 @@ import {
   Select,
   FormGroup,
   Tooltip,
+  IconButton,
+  Collapse,
   LinearProgress,
   Dialog,
   DialogActions,
@@ -27,6 +29,7 @@ import {
 import InfoOutlineIcon from '@mui/icons-material/InfoOutline';
 import FileOpenIcon from '@mui/icons-material/FileOpen';
 import BugReportIcon from '@mui/icons-material/BugReport';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 import type { LinearProgressProps } from '@mui/material/LinearProgress';
 
@@ -81,6 +84,7 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
   const [currentDownloadFinalPath, setCurrentDownloadFinalPath] = useState<string>('');
 
   const [openBugDialog, setOpenBugDialog] = useState(false);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(true);
 
   const { finalFilePath, downloadStatus, downloadProgress, isDone, isError, downloadError, startDownload } = useDownloadVideo();
 
@@ -91,7 +95,7 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
     if (!selectedFile.canceled) {
       startDownload({ videoUrl: videoMetaData.originalUrl, outputPath: selectedFile.filePath, format: selectedFormat, resolution});
     }
-    
+
   }
 
   if(downloadError) {
@@ -107,115 +111,143 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
   return (
     <>
       <Card elevation={3} sx={{ display: 'flex', p: 2, borderRadius: 4 }}>
-        <Stack>
-          <Stack direction="row">
-            <Box sx={{ width: '50%', pr: 2}}>
-              <CardMedia
-                component="div"
-                image={videoMetaData.thumbnail}
-                sx={{
-                  height: 240,
-                  border: '2px solid black',
-                  borderRadius: 2,
-                  position: 'relative',
-                  overflow: 'hidden',
-                  mb: 2,
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center'
-                }}
-              >
-                <Typography variant="h2" sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
-                  <Link target="_blank" rel="noopener noreferrer" href={videoMetaData.originalUrl}>▶</Link>
-                </Typography>
-                <Typography
-                  variant='body1'
-                  sx={{ position: 'absolute', bottom: 8, right: 8, backgroundColor: 'grey.800', borderRadius: 2, px: 1, py: 0.25 }}
-                >
-                  {videoMetaData.durationString}
-                </Typography>
-              </CardMedia>
-
-              <Paper sx={{ p: 1, border: '2px solid black', borderRadius: 2, height: '50%' }}>
-                <Grid container
-                spacing={{xs:1, sm:1 }}
-                columns={{xs: 2, sm: 9,md: 12}}>
-                  {displayedResolutions?.map((res, idx) => (
-                    <Grid size={{xs: 1, sm: 3}} key={idx}>
-                      <Button onClick={() => handleDownloadOperationFromResolution(res.resolution)}
-                      sx={{whiteSpace: "pre-line"}}
-                      color={res.resolution === 'MP3' ? 'secondary' : 'primary'}
-                      fullWidth
-                      variant={res.resolution === 'MP3' ? 'contained' : 'outlined'}>
-                        <Stack 
-                            spacing={0}
-                            direction="column"
-                            divider={<Divider flexItem sx={{mx:1}} orientation='horizontal'/>}>
-                            <Typography variant="button" textTransform='none'>{res.resolution}{res.resolution === 'MP3' ? '' : 'p'}</Typography>
-                            <Typography variant="caption">{res.filesizeMb}Mb</Typography>
-                        </Stack>
-                      </Button>
-                    </Grid>
-                  ))}
-                </Grid>
-                <Divider flexItem sx={{pt:1}} orientation='horizontal'/>
-                <Box sx={{display: 'flex', alignItems: 'center'}}>
-                  <Typography variant="button">Post-Processing</Typography>
-                  <Tooltip placement="top" title="The postprocessing steps will add some extra processing after the download is done, for a quicker downloa select the Default option" arrow>
-                    <InfoOutlineIcon sx={{fontSize: 'medium', textAlign:'center', pl: 2}}/>
-                  </Tooltip>
+        <Stack spacing={2} direction={{ xs: 'column', md: 'row' }} sx={{ width: '100%' }}>
+        <Stack spacing={2} sx={{ width: { xs: '100%', md: '70%' } }}>
+          <Box sx={{ px: 1.5, py: 1, borderBottom: 2, borderColor: 'primary.main', order: 1 }}>
+            <Stack spacing={2} direction="row" justifyContent="space-between" alignItems="flex-start">
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography variant="h5" fontWeight="bold">
+                      <Link target="_blank" rel="noopener noreferrer" href={videoMetaData.originalUrl}>{videoMetaData.fullTitle}</Link>
+                    </Typography>
                 </Box>
-                <Grid container spacing={2} sx={{pt: '3%'}}>
-                  <FormGroup>
-                    <Stack direction="row" spacing={10}>
-                    <Select
-                          labelId="format-selector"
-                          id="format-selector"
-                          value={selectedFormat}
-                          label="Format"
-                          onChange={(e) => setSelectedFormat(e.target.value)}
-                          variant='standard'>
-                            <MenuItem value={"dflt"}>{"Default (keep origin format)"}</MenuItem>
-                            <MenuItem value={"mp4"}>MP4</MenuItem>
-                            <MenuItem value={"webm"}>WEBM</MenuItem>
-                            <MenuItem value={"mkv"}>MKV</MenuItem>
-                        </Select>
-                    </Stack>
-                  </FormGroup>
-                </Grid>
-              </Paper>
-            </Box>
-            <Box sx={{ width: '50%' }}>
-              <Stack spacing={2} direction="row" justifyContent="space-between" alignItems="flex-start" mb={1}>
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography variant="h6">
-                        <Link target="_blank" rel="noopener noreferrer" href={videoMetaData.originalUrl}>{videoMetaData.fullTitle}</Link>
-                      </Typography>
-                  </Box>
-                  <Box sx={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
-                      <Typography variant="body2" gutterBottom textAlign="right" sx={{color: 'info.main', fontWeight: 'bolder'}}>
-                      {convertYYYYMMDDStringToDate(videoMetaData.uploadDate)}
-                      </Typography>
-                  </Box>
-              </Stack>
-              <Card sx={{backgroundColor: 'primary.contrastText'}} >
-                  <Stack sx={{backgroundColor: 'primary.main'}} spacing={1} direction="row" justifyContent="left">
-                      <Typography variant="subtitle1" gutterBottom sx={{ color: 'primary.contrastText' }}>
-                      Description
-                      </Typography>
-                  </Stack>
-                  <Typography sx={{textAlign: 'justify', overflowY: 'scroll', maxHeight: '45vh', p:1}} variant="body2">
-                  {formatComment(videoMetaData.description)}
+                <Box sx={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
+                    <Typography variant="body2" gutterBottom textAlign="right" sx={{color: 'info.main', fontWeight: 'bolder'}}>
+                    {convertYYYYMMDDStringToDate(videoMetaData.uploadDate)}
+                    </Typography>
+                </Box>
+            </Stack>
+          </Box>
+
+          <CardMedia
+            component="div"
+            image={videoMetaData.thumbnail}
+            sx={{
+              height: 320,
+              border: '2px solid black',
+              borderRadius: 2,
+              position: 'relative',
+              overflow: 'hidden',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              order: 0
+            }}
+          >
+            <Typography variant="h2" sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+              <Link target="_blank" rel="noopener noreferrer" href={videoMetaData.originalUrl}>▶</Link>
+            </Typography>
+            <Typography
+              variant='body1'
+              sx={{ position: 'absolute', bottom: 8, right: 8, backgroundColor: 'grey.800', borderRadius: 2, px: 1, py: 0.25 }}
+            >
+              {videoMetaData.durationString}
+            </Typography>
+          </CardMedia>
+
+          <Card sx={{backgroundColor: 'primary.contrastText', order: 2}} >
+              <Stack
+                sx={{backgroundColor: 'primary.main', px: 2, py: 1, cursor: 'pointer'}}
+                spacing={1}
+                direction="row"
+                justifyContent="space-between"
+                alignItems="center"
+                onClick={() => setDescriptionExpanded((prev) => !prev)}
+              >
+                  <Typography variant="subtitle1" sx={{ color: 'primary.contrastText', m: 0 }}>
+                  Description
                   </Typography>
-              </Card>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => { e.stopPropagation(); setDescriptionExpanded((prev) => !prev); }}
+                    aria-label={descriptionExpanded ? 'Collapse description' : 'Expand description'}
+                    sx={{
+                      color: 'primary.contrastText',
+                      transform: descriptionExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.2s',
+                    }}
+                  >
+                    <ExpandMoreIcon/>
+                  </IconButton>
+              </Stack>
+              <Collapse in={descriptionExpanded}>
+                <Typography sx={{textAlign: 'justify', overflowY: 'scroll', maxHeight: '35vh', p:1}} variant="body2">
+                {formatComment(videoMetaData.description)}
+                </Typography>
+              </Collapse>
+          </Card>
+        </Stack>
+
+        <Stack spacing={2} sx={{ width: { xs: '100%', md: '30%' } }}>
+          <Paper sx={{ p: 1, border: '2px solid black', borderRadius: 2 }}>
+            <Grid container
+            spacing={{xs:1, sm:1 }}
+            columns={{xs: 2, sm: 9,md: 12}}>
+              {displayedResolutions?.map((res, idx) => (
+                <Grid size={{xs: 1, sm: 3}} key={idx}>
+                  <Button onClick={() => handleDownloadOperationFromResolution(res.resolution)}
+                  sx={{whiteSpace: "pre-line"}}
+                  color={res.resolution === 'MP3' ? 'secondary' : 'primary'}
+                  fullWidth
+                  variant={res.resolution === 'MP3' ? 'contained' : 'outlined'}>
+                    <Stack
+                        spacing={0}
+                        direction="column"
+                        divider={<Divider flexItem sx={{mx:1}} orientation='horizontal'/>}>
+                        <Typography variant="button" textTransform='none'>{res.resolution}{res.resolution === 'MP3' ? '' : 'p'}</Typography>
+                        <Typography variant="caption">{res.filesizeMb}Mb</Typography>
+                    </Stack>
+                  </Button>
+                </Grid>
+              ))}
+            </Grid>
+            <Divider flexItem sx={{pt:1}} orientation='horizontal'/>
+            <Box sx={{display: 'flex', alignItems: 'center'}}>
+              <Typography variant="button">Post-Processing</Typography>
+              <Tooltip placement="top" title="The postprocessing steps will add some extra processing after the download is done, for a quicker downloa select the Default option" arrow>
+                <InfoOutlineIcon sx={{fontSize: 'medium', textAlign:'center', pl: 2}}/>
+              </Tooltip>
             </Box>
-          </Stack>
+            <Grid container spacing={2} sx={{pt: '3%'}}>
+              <FormGroup>
+                <Stack direction="row" spacing={10}>
+                <Select
+                      labelId="format-selector"
+                      id="format-selector"
+                      value={selectedFormat}
+                      label="Format"
+                      onChange={(e) => setSelectedFormat(e.target.value)}
+                      variant='standard'>
+                        <MenuItem value={"dflt"}>{"Default (keep origin format)"}</MenuItem>
+                        <MenuItem value={"mp4"}>MP4</MenuItem>
+                        <MenuItem value={"webm"}>WEBM</MenuItem>
+                        <MenuItem value={"mkv"}>MKV</MenuItem>
+                    </Select>
+                </Stack>
+              </FormGroup>
+            </Grid>
+          </Paper>
+
           <Box sx={{p:2}}>
           <Divider flexItem sx={{mx: 3}} orientation='horizontal'/>
-            <Grid container sx={{width: '100%'}} spacing={1}>            
-                  <Stack direction={"row"}>
+            <Grid container sx={{width: '100%'}} spacing={1}>
+                  <Stack direction="row" spacing={1.5} alignItems="center" sx={{ px: 1, py: 0.5 }}>
                   <Typography variant="subtitle1">Download</Typography>
                   <Typography variant="subtitle1">{`(${downloadStatus})`}</Typography>
-                  {isDone && <Button onClick={() => handleOpenFileLocation(currentDownloadFinalPath)} variant="contained">Open File Location<FileOpenIcon/></Button>}
+                  {isDone &&
+                    <Tooltip title="Open file location">
+                      <IconButton onClick={() => handleOpenFileLocation(currentDownloadFinalPath)} color="primary">
+                        <FileOpenIcon/>
+                      </IconButton>
+                    </Tooltip>}
                   {isError && <Button onClick={() => setOpenBugDialog(true)} color='error' variant="contained">Error encountered<BugReportIcon/></Button>}
                   </Stack>
                   <Box sx={{ width: '100%' }}>
@@ -224,6 +256,7 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
                   {isError && <Typography>VALIO VERGAAAA</Typography>}
             </Grid>
           </Box>
+        </Stack>
         </Stack>
       </Card>
       <Dialog

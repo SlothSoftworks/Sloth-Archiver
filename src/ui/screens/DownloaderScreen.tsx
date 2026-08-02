@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Box, CircularProgress, Grid, InputAdornment, Stack, IconButton, Tooltip, Typography } from '@mui/material';
+import { Box, CircularProgress, InputAdornment, Stack, IconButton, Tooltip, Typography } from '@mui/material';
 import './screens.css'
 import TextField from '@mui/material/TextField';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
@@ -103,18 +103,14 @@ export default function DownloaderScreen() {
         </Stack>
         {videoInfoError &&
           <Typography color="error" sx={{ mt: 2 }}>{videoInfoError}</Typography>}
-        <Grid container spacing={2} sx={{ mt: 1 }}>
-            {
-              loadingVideoData &&
-              <Grid size={10}>
-                <VideoDetailCardSkeleton/>
-              </Grid>
-            }
-            {videoInfo &&
-              <Grid size={10}>
-                <VideoDetailCard videoMetaData={videoInfo}/>
-              </Grid>}
-        </Grid>
+        {loadingVideoData &&
+          <Box sx={{ mt: 2 }}>
+            <VideoDetailCardSkeleton/>
+          </Box>}
+        {videoInfo &&
+          <Box sx={{ mt: 2 }}>
+            <VideoDetailCard videoMetaData={videoInfo}/>
+          </Box>}
         </Box>
     </Box>
     </>
