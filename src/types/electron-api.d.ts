@@ -5,10 +5,18 @@ type FolderPickerResult = {
     canceled: boolean;
 };
 
+// dialog.showOpenDialog (used by pickFolder) resolves with filePaths (plural, an
+// array), unlike showSaveDialog's singular filePath -- these are genuinely
+// different shapes, not the same result reused.
+type OpenFolderResult = {
+    filePaths: string[];
+    canceled: boolean;
+};
+
 declare global {
     interface Window {
         electronAPI: {
-            pickFolder: (options: T) => Promise <FolderPickerResult>;
+            pickFolder: (options: T) => Promise <OpenFolderResult>;
             saveVideoFile: (defaultName?: string) => Promise <FolderPickerResult>;
             getVideoInfoPython: (url: string, options?: T) => Promise <T>
             openDirectory: (path: string) => Promise<T>
@@ -16,6 +24,9 @@ declare global {
             saveCookie: (cookieText: string) => Promise<{ success: boolean; cookieCount: number; skipped: number }>
             deleteCookie: () => Promise<{ success: boolean }>
             getCookieStatus: () => Promise<{ loaded: boolean; cookieCount: number }>
+            getDownloadDir: () => Promise<{ downloadDir: string }>
+            setDownloadDir: (dir: string) => Promise<{ success: boolean; downloadDir: string }>
+            checkFileExists: (filePath: string) => Promise<boolean>
         };
         electronAPIPythonDownload: {
             startDownloadPython: (options: T) => Promise<T>;

@@ -31,5 +31,6 @@ export type DownloadProgressMessage = {
     outputPath: string;
     format?: string;
     resolution: string;
+    overwriteMode?: 'overwrite' | 'resume';
     additionalOptions?: object;
   }

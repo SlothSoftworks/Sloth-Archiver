@@ -25,6 +25,7 @@ import {
   TextareaAutosize,
   Link
 } from '@mui/material';
+import type { DownloadVideoParams } from '../../types';
 
 import InfoOutlineIcon from '@mui/icons-material/InfoOutline';
 import FileOpenIcon from '@mui/icons-material/FileOpen';
@@ -44,17 +45,23 @@ async function handleOpenFileLocation(filePath: string) {
   await window.electronAPI.openFileInDirectory(filePath);
 }
 
-function LinearProgressWithLabel(props: LinearProgressProps & { value: number }) {
+// value = postprocessing progress, valueBuffer = download progress. Postprocessing
+// only starts once the download is fully buffered, so this reads left-to-right as
+// "how much has loaded" (the lighter buffer fill) vs. "how much is truly finished"
+// (the solid value fill) -- the same visual metaphor as a video player's seek bar.
+function LinearProgressWithLabel(props: LinearProgressProps & { value: number; valueBuffer: number }) {
+  const { value, valueBuffer } = props;
+  const displayValue = value > 0 ? value : valueBuffer;
   return (
     <Box sx={{ display: 'flex', alignItems: 'center' }}>
       <Box sx={{ width: '100%', mr: 1 }}>
-        <LinearProgress variant="determinate" {...props} />
+        <LinearProgress variant="buffer" {...props} />
       </Box>
       <Box sx={{ minWidth: 35 }}>
         <Typography
           variant="body2"
           sx={{ color: 'text.secondary' }}
-        >{`${Math.round(props.value)}%`}</Typography>
+        >{`${Math.round(displayValue)}%`}</Typography>
       </Box>
     </Box>
   );
@@ -85,17 +92,37 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
 
   const [openBugDialog, setOpenBugDialog] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(true);
+  const [selectedResolution, setSelectedResolution] = useState('');
+  const [overwriteDialogOpen, setOverwriteDialogOpen] = useState(false);
+  const [pendingDownload, setPendingDownload] = useState<{ outputPath: string; resolution: string } | null>(null);
 
-  const { finalFilePath, downloadStatus, downloadProgress, isDone, isError, downloadError, startDownload } = useDownloadVideo();
+  const { finalFilePath, downloadStatus, downloadProgress, postprocessProgress, isDone, isError, downloadError, startDownload } = useDownloadVideo();
+
+  const beginDownload = (outputPath: string, resolution: string, overwriteMode?: DownloadVideoParams['overwriteMode']) => {
+    setSelectedResolution(resolution);
+    startDownload({ videoUrl: videoMetaData.originalUrl, outputPath, format: selectedFormat, resolution, overwriteMode });
+  }
 
   const handleDownloadOperationFromResolution = async (resolution: string) => {
-    console.log('resolution:', resolution, 'format:', selectedFormat)
     const selectedFile = await window.electronAPI.saveVideoFile(videoMetaData.fullTitle);
+    if (selectedFile.canceled) return;
 
-    if (!selectedFile.canceled) {
-      startDownload({ videoUrl: videoMetaData.originalUrl, outputPath: selectedFile.filePath, format: selectedFormat, resolution});
+    const exists = await window.electronAPI.checkFileExists(selectedFile.filePath);
+    if (exists) {
+      setPendingDownload({ outputPath: selectedFile.filePath, resolution });
+      setOverwriteDialogOpen(true);
+      return;
     }
 
+    beginDownload(selectedFile.filePath, resolution);
+  }
+
+  const handleOverwriteChoice = (mode: 'overwrite' | 'resume') => {
+    setOverwriteDialogOpen(false);
+    if (pendingDownload) {
+      beginDownload(pendingDownload.outputPath, pendingDownload.resolution, mode);
+    }
+    setPendingDownload(null);
   }
 
   if(downloadError) {
@@ -188,77 +215,95 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
 
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '30%' } }}>
           <Paper sx={{ p: 1, border: '2px solid black', borderRadius: 2 }}>
-            <Grid container
-            spacing={{xs:1, sm:1 }}
-            columns={{xs: 2, sm: 9,md: 12}}>
-              {displayedResolutions?.map((res, idx) => (
-                <Grid size={{xs: 1, sm: 3}} key={idx}>
-                  <Button onClick={() => handleDownloadOperationFromResolution(res.resolution)}
-                  sx={{whiteSpace: "pre-line"}}
-                  color={res.resolution === 'MP3' ? 'secondary' : 'primary'}
-                  fullWidth
-                  variant={res.resolution === 'MP3' ? 'contained' : 'outlined'}>
-                    <Stack
-                        spacing={0}
-                        direction="column"
-                        divider={<Divider flexItem sx={{mx:1}} orientation='horizontal'/>}>
-                        <Typography variant="button" textTransform='none'>{res.resolution}{res.resolution === 'MP3' ? '' : 'p'}</Typography>
-                        <Typography variant="caption">{res.filesizeMb}Mb</Typography>
-                    </Stack>
-                  </Button>
-                </Grid>
-              ))}
-            </Grid>
-            <Divider flexItem sx={{pt:1}} orientation='horizontal'/>
-            <Box sx={{display: 'flex', alignItems: 'center'}}>
-              <Typography variant="button">Post-Processing</Typography>
-              <Tooltip placement="top" title="The postprocessing steps will add some extra processing after the download is done, for a quicker downloa select the Default option" arrow>
-                <InfoOutlineIcon sx={{fontSize: 'medium', textAlign:'center', pl: 2}}/>
-              </Tooltip>
-            </Box>
-            <Grid container spacing={2} sx={{pt: '3%'}}>
-              <FormGroup>
-                <Stack direction="row" spacing={10}>
-                <Select
-                      labelId="format-selector"
-                      id="format-selector"
-                      value={selectedFormat}
-                      label="Format"
-                      onChange={(e) => setSelectedFormat(e.target.value)}
-                      variant='standard'>
-                        <MenuItem value={"dflt"}>{"Default (keep origin format)"}</MenuItem>
-                        <MenuItem value={"mp4"}>MP4</MenuItem>
-                        <MenuItem value={"webm"}>WEBM</MenuItem>
-                        <MenuItem value={"mkv"}>MKV</MenuItem>
-                    </Select>
-                </Stack>
-              </FormGroup>
-            </Grid>
-          </Paper>
-
-          <Box sx={{p:2}}>
-          <Divider flexItem sx={{mx: 3}} orientation='horizontal'/>
-            <Grid container sx={{width: '100%'}} spacing={1}>
-                  <Stack direction="row" spacing={1.5} alignItems="center" sx={{ px: 1, py: 0.5 }}>
-                  <Typography variant="subtitle1">Download</Typography>
-                  <Typography variant="subtitle1">{`(${downloadStatus})`}</Typography>
+            {selectedResolution && !isError ? (
+              <Stack spacing={1} sx={{ p: 1 }}>
+                <Stack direction="row" spacing={0.5} justifyContent="center" alignItems="center">
+                  <Typography variant="subtitle1" textAlign="center">
+                    {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : isDone ? 'Downloaded' : 'Downloading'}
+                    {selectedResolution && ` (${selectedResolution}${selectedResolution.toLowerCase() === 'mp3' ? '' : 'p'})`}
+                  </Typography>
                   {isDone &&
                     <Tooltip title="Open file location">
-                      <IconButton onClick={() => handleOpenFileLocation(currentDownloadFinalPath)} color="primary">
-                        <FileOpenIcon/>
+                      <IconButton size="small" onClick={() => handleOpenFileLocation(currentDownloadFinalPath)} color="primary">
+                        <FileOpenIcon fontSize="small"/>
                       </IconButton>
                     </Tooltip>}
-                  {isError && <Button onClick={() => setOpenBugDialog(true)} color='error' variant="contained">Error encountered<BugReportIcon/></Button>}
-                  </Stack>
-                  <Box sx={{ width: '100%' }}>
-                    <LinearProgressWithLabel value={downloadProgress} />
-                  </Box>
-                  {isError && <Typography>VALIO VERGAAAA</Typography>}
-            </Grid>
-          </Box>
+                </Stack>
+                <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
+              </Stack>
+            ) : (
+              <>
+                {isError &&
+                  <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1 }}>
+                    <Typography color="error" variant="subtitle2">Download failed</Typography>
+                    <Button size="small" onClick={() => setOpenBugDialog(true)} color="error" variant="outlined">Details<BugReportIcon fontSize="small"/></Button>
+                  </Stack>}
+                <Grid container
+                spacing={{xs:1, sm:1 }}
+                columns={{xs: 2, sm: 9,md: 12}}>
+                  {displayedResolutions?.map((res, idx) => (
+                    <Grid size={{xs: 1, sm: 3}} key={idx}>
+                      <Button onClick={() => handleDownloadOperationFromResolution(res.resolution)}
+                      sx={{whiteSpace: "pre-line"}}
+                      color={res.resolution === 'MP3' ? 'secondary' : 'primary'}
+                      fullWidth
+                      variant={res.resolution === 'MP3' ? 'contained' : 'outlined'}>
+                        <Stack
+                            spacing={0}
+                            direction="column"
+                            divider={<Divider flexItem sx={{mx:1}} orientation='horizontal'/>}>
+                            <Typography variant="button" textTransform='none'>{res.resolution}{res.resolution === 'MP3' ? '' : 'p'}</Typography>
+                            <Typography variant="caption">{res.filesizeMb}Mb</Typography>
+                        </Stack>
+                      </Button>
+                    </Grid>
+                  ))}
+                </Grid>
+                <Divider flexItem sx={{pt:1}} orientation='horizontal'/>
+                <Box sx={{display: 'flex', alignItems: 'center'}}>
+                  <Typography variant="button">Post-Processing</Typography>
+                  <Tooltip placement="top" title="The postprocessing steps will add some extra processing after the download is done, for a quicker downloa select the Default option" arrow>
+                    <InfoOutlineIcon sx={{fontSize: 'medium', textAlign:'center', pl: 2}}/>
+                  </Tooltip>
+                </Box>
+                <Grid container spacing={2} sx={{pt: '3%'}}>
+                  <FormGroup>
+                    <Stack direction="row" spacing={10}>
+                    <Select
+                          labelId="format-selector"
+                          id="format-selector"
+                          value={selectedFormat}
+                          label="Format"
+                          onChange={(e) => setSelectedFormat(e.target.value)}
+                          variant='standard'>
+                            <MenuItem value={"dflt"}>{"Default (keep origin format)"}</MenuItem>
+                            <MenuItem value={"mp4"}>MP4</MenuItem>
+                            <MenuItem value={"webm"}>WEBM</MenuItem>
+                            <MenuItem value={"mkv"}>MKV</MenuItem>
+                        </Select>
+                    </Stack>
+                  </FormGroup>
+                </Grid>
+              </>
+            )}
+          </Paper>
         </Stack>
         </Stack>
       </Card>
+      <Dialog open={overwriteDialogOpen} onClose={() => setOverwriteDialogOpen(false)}>
+        <DialogTitle>File already exists</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            A file already exists at that location. Resume will continue a partial download
+            (or skip if it's already complete); Overwrite will start over from scratch.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOverwriteDialogOpen(false)}>Cancel</Button>
+          <Button onClick={() => handleOverwriteChoice('resume')}>Resume</Button>
+          <Button onClick={() => handleOverwriteChoice('overwrite')} color="error" variant="contained">Overwrite</Button>
+        </DialogActions>
+      </Dialog>
       <Dialog
         open={openBugDialog}
         onClose={() => setOpenBugDialog(false)}

@@ -20,6 +20,7 @@ export default function OptionsScreen() {
   const [cookieText, setCookieText] = useState('');
   const [error, setError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
+  const [downloadDir, setDownloadDirState] = useState('');
 
   const refreshStatus = async () => {
     const status = await window.electronAPI.getCookieStatus();
@@ -27,9 +28,25 @@ export default function OptionsScreen() {
     setCookieCount(status.cookieCount);
   };
 
+  const refreshDownloadDir = async () => {
+    const { downloadDir } = await window.electronAPI.getDownloadDir();
+    setDownloadDirState(downloadDir);
+  };
+
   useEffect(() => {
     refreshStatus();
+    refreshDownloadDir();
   }, []);
+
+  const handleChooseDownloadDir = async () => {
+    const result = await window.electronAPI.pickFolder({
+      title: 'Select Default Download Folder',
+      buttonLabel: 'Select',
+    });
+    if (result.canceled || !result.filePaths?.[0]) return;
+    await window.electronAPI.setDownloadDir(result.filePaths[0]);
+    await refreshDownloadDir();
+  };
 
   const handleOpenDialog = () => {
     setCookieText('');
@@ -64,6 +81,20 @@ export default function OptionsScreen() {
 
   return (
     <Box>
+      <Typography variant="h6" gutterBottom>Default Download Folder</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
+        This folder is suggested as the starting location whenever the save dialog opens
+        for a new download.
+      </Typography>
+      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 3 }}>
+        <Button variant="contained" onClick={handleChooseDownloadDir}>
+          Choose folder
+        </Button>
+        <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
+          {downloadDir || 'Using system default'}
+        </Typography>
+      </Stack>
+
       <Typography variant="h6" gutterBottom>Personal Cookie</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
         Loading a personal YouTube cookie lets requests authenticate as you, which can help avoid

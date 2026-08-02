@@ -7,12 +7,10 @@ const SUPPORTED_FORMATS = [
 const allVideoFilter = [{ name: 'All Files', extensions: ['*']}];
 
 const getSupportedVideoFilters = () => {
-    const result = [{ name: 'Video Files', extensions: ['*']}];
-
-    for(let format in SUPPORTED_FORMATS) {
-        result[0].extensions.push(format);
-    }
-    return result;
+    return [
+        { name: 'Video Files', extensions: [...SUPPORTED_FORMATS] },
+        ...allVideoFilter,
+    ];
 }
 
 

@@ -10,6 +10,9 @@ export const electronAPIMock = {
     saveCookie: async () => ({ success: true, cookieCount: 0, skipped: 0 }),
     deleteCookie: async () => ({ success: true }),
     getCookieStatus: async () => ({ loaded: false, cookieCount: 0 }),
+    getDownloadDir: async () => ({ downloadDir: '' }),
+    setDownloadDir: async () => ({ success: true, downloadDir: '' }),
+    checkFileExists: async () => false,
 
 }
 

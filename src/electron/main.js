@@ -23,10 +23,69 @@ const ytdlpBinaryName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
 const ytdlpPath = isDev ? path.resolve(__dirname, '../ytdlp-bin', ytdlpBinaryName) : path.join(process.resourcesPath, 'ytdlp-bin', ytdlpBinaryName);
 const ffmpegDir = isDev ? path.resolve(__dirname, '../ffmpeg') : path.join(process.resourcesPath, 'ffmpeg');
 const cookiesPath = path.join(app.getPath('userData'), 'cookies.txt');
+const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+const videoInfoCachePath = path.join(app.getPath('userData'), 'videoInfoCache.json');
+const VIDEO_INFO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function cookiesArgs() {
     return fs.existsSync(cookiesPath) ? ['--cookies', cookiesPath] : [];
 }
+
+function readSettings() {
+    try {
+        return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    } catch {
+        return {};
+    }
+}
+
+function writeSettings(settings) {
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+}
+
+// Keyed by the raw input URL. Different URL forms for the same video (a
+// youtu.be link vs. the canonical watch?v= form, extra query params, etc.)
+// won't match each other -- that's an acceptable cache miss (falls through to
+// a real fetch), not a correctness problem.
+function readVideoInfoCache() {
+    try {
+        return JSON.parse(fs.readFileSync(videoInfoCachePath, 'utf-8'));
+    } catch {
+        return {};
+    }
+}
+
+function writeVideoInfoCache(cache) {
+    fs.writeFileSync(videoInfoCachePath, JSON.stringify(cache, null, 2), 'utf-8');
+}
+
+ipcMain.handle('settings:getDownloadDir', async () => {
+    const { downloadDir } = readSettings();
+    return { downloadDir: downloadDir || app.getPath('downloads') };
+});
+
+ipcMain.handle('settings:setDownloadDir', async (e, dir) => {
+    const settings = readSettings();
+    settings.downloadDir = dir;
+    writeSettings(settings);
+    return { success: true, downloadDir: dir };
+});
+
+// A literal fs.existsSync(filePath) isn't enough here: postprocessors (MP3
+// extraction, format recode) don't write to the exact chosen path, they
+// append their target extension onto it (see findFinalFile() below, which
+// exists for the same reason) -- so a real prior download under one of those
+// modes would silently fail an exact-match check and never surface this
+// existing-file prompt at all. Match by prefix instead, same as findFinalFile.
+ipcMain.handle('system:pathExists', async (e, filePath) => {
+    const dir = path.dirname(filePath);
+    const base = path.basename(filePath);
+    try {
+        return fs.readdirSync(dir).some((f) => f.startsWith(base));
+    } catch {
+        return false;
+    }
+});
 
 // Accepts either a real Netscape cookies.txt export (the format yt-dlp's own
 // docs recommend, produced by browser extensions like "Get cookies.txt"), or
@@ -146,17 +205,23 @@ app.on("ready", () => {
 })
 
 ipcMain.handle('dialog:openFolder', async (e, options) => dialog.showOpenDialog({
-    properties: ['openDirectory'],
+    // createDirectory only affects macOS (shows a "New Folder" button in the
+    // panel); Windows' native folder picker already always allows this.
+    properties: ['openDirectory', 'createDirectory'],
     ...options
 }));
 
-ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options) => dialog.showSaveDialog({
-    title: 'Save Video',
-    buttonLabel: 'Save',
-    defaultPath: `${app.getPath('downloads')}/${defaultName}`,
-    filters: getSupportedVideoFilters(),
-    ...options
-}))
+ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options) => {
+    const { downloadDir } = readSettings();
+    const baseDir = downloadDir || app.getPath('downloads');
+    return dialog.showSaveDialog({
+        title: 'Save Video',
+        buttonLabel: 'Save',
+        defaultPath: path.join(baseDir, defaultName),
+        filters: getSupportedVideoFilters(),
+        ...options
+    });
+})
 
 function buildResolutions(info) {
     const seen = new Set();
@@ -216,6 +281,11 @@ function reshapeVideoInfo(info) {
 }
 
 ipcMain.handle('getVideoInfoPython', async (event, url) => {
+    const cached = readVideoInfoCache()[url];
+    if (cached && Date.now() - cached.savedEpoch < VIDEO_INFO_CACHE_TTL_MS) {
+        return { success: true, data: { response: cached.response, fromCache: true } };
+    }
+
     return new Promise((resolve, reject) => {
         // --ignore-no-formats-error matters here specifically: -J alone does NOT
         // put yt-dlp into a formats-only mode that skips format-selector
@@ -250,7 +320,11 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
             } else {
                 try {
                     const info = JSON.parse(data);
-                    resolve({ success: true, data: { response: reshapeVideoInfo(info) } });
+                    const response = reshapeVideoInfo(info);
+                    const cache = readVideoInfoCache();
+                    cache[url] = { savedEpoch: Date.now(), response };
+                    writeVideoInfoCache(cache);
+                    resolve({ success: true, data: { response, fromCache: false } });
                 } catch (e) {
                     reject(new Error('Failed to parse video data'));
                 }
@@ -259,7 +333,7 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
     });
 });
 
-function buildDownloadArgs({ videoUrl, outputPath, format, resolution }) {
+function buildDownloadArgs({ videoUrl, outputPath, format, resolution, overwriteMode }) {
     // Note: --print (even "after_move:...") makes yt-dlp buffer ALL stdout/stderr
     // until the process is about to exit, defeating live progress reporting entirely.
     // The final file is instead located on disk after the process closes (see findFinalFile).
@@ -272,10 +346,6 @@ function buildDownloadArgs({ videoUrl, outputPath, format, resolution }) {
     const args = [
         '--newline',
         '--no-warnings',
-        // The user explicitly chose to download via a save dialog; always perform a
-        // real download rather than silently skipping if a same-named file already
-        // exists at that path (yt-dlp's default), which looks identical to a frozen UI.
-        '--force-overwrites',
         '--progress-template', 'download:PROGRESS|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress._percent_str)s|%(progress.eta)s|%(progress._speed_str)s',
         '--progress-template', 'postprocess:POSTPROCESS|%(progress.status)s|%(progress.postprocessor)s',
         '--ffmpeg-location', ffmpegDir,
@@ -291,6 +361,15 @@ function buildDownloadArgs({ videoUrl, outputPath, format, resolution }) {
         if (format && !['undefined', 'dflt'].includes(format)) {
             args.push('--recode-video', format);
         }
+    }
+
+    // Overwrite behavior is a real user choice now (see the renderer's existing-file
+    // dialog), not a hardcoded flag: "overwrite" forces a full re-download, anything
+    // else (no existing file, or the user chose "resume") leaves yt-dlp's own default
+    // behavior in place -- which already resumes a partial file via range requests and
+    // skips re-downloading a file that's already complete.
+    if (overwriteMode === 'overwrite') {
+        args.push('--force-overwrites');
     }
 
     args.push(videoUrl);

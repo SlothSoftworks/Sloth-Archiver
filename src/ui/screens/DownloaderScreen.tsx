@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Box, CircularProgress, InputAdornment, Stack, IconButton, Tooltip, Typography } from '@mui/material';
+import { Box, Chip, CircularProgress, InputAdornment, Stack, IconButton, Tooltip, Typography } from '@mui/material';
 import './screens.css'
 import TextField from '@mui/material/TextField';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
@@ -20,6 +20,7 @@ export default function DownloaderScreen() {
   const debouncedVideoUrl = useDebounce(videoUrl);
   const [videoInfo, setVideoInfo] = useState(window.mockingElectron !== "yes" ? null : videoResponseMock.data.response); // TODO change this after testing
   const [videoInfoError, setVideoInfoError] = useState<string | null>(null);
+  const [videoInfoFromCache, setVideoInfoFromCache] = useState(false);
 
 
   useEffect(() => {
@@ -46,10 +47,12 @@ export default function DownloaderScreen() {
   const handleGetVideoInfo = async (url: string) => {
     setLoadingVideoData(true);
     setVideoInfoError(null);
+    setVideoInfoFromCache(false);
     try {
       const result = await window.electronAPI.getVideoInfoPython(url);
       if (result.success) {
         setVideoInfo(result.data.response);
+        setVideoInfoFromCache(!!result.data.fromCache);
       }
     } catch (err) {
       setVideoInfo(null);
@@ -103,6 +106,8 @@ export default function DownloaderScreen() {
         </Stack>
         {videoInfoError &&
           <Typography color="error" sx={{ mt: 2 }}>{videoInfoError}</Typography>}
+        {videoInfoFromCache && videoInfo && !loadingVideoData &&
+          <Chip label="Loaded from cache" color="info" variant="outlined" size="small" sx={{ mt: 1 }} />}
         {loadingVideoData &&
           <Box sx={{ mt: 2 }}>
             <VideoDetailCardSkeleton/>
