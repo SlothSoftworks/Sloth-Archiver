@@ -38,6 +38,7 @@ export default function OptionsScreen() {
   const [savedMessage, setSavedMessage] = useState('');
   const [downloadDir, setDownloadDirState] = useState('');
   const [libraryDir, setLibraryDirState] = useState('');
+  const [errorLogExists, setErrorLogExists] = useState(false);
 
   const refreshStatus = async () => {
     const status = await window.electronAPI.getCookieStatus();
@@ -55,10 +56,16 @@ export default function OptionsScreen() {
     setLibraryDirState(libraryDir);
   };
 
+  const refreshErrorLogInfo = async () => {
+    const { exists } = await window.electronAPI.getErrorLogInfo();
+    setErrorLogExists(exists);
+  };
+
   useEffect(() => {
     refreshStatus();
     refreshDownloadDir();
     refreshLibraryDir();
+    refreshErrorLogInfo();
   }, []);
 
   const handleChooseDownloadDir = async () => {
@@ -193,6 +200,28 @@ export default function OptionsScreen() {
       </Stack>
       {savedMessage &&
         <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>{savedMessage}</Typography>}
+
+      <Divider sx={{ my: 3 }} />
+
+      <Typography variant="h6" gutterBottom>Error Log</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
+        If something crashes or behaves unexpectedly, this file has the details -- useful to
+        check yourself or attach when reporting a bug.
+      </Typography>
+      <Stack direction="row" spacing={2} alignItems="center">
+        <Button
+          variant="outlined"
+          onClick={() => window.electronAPI.openErrorLog()}
+          disabled={!errorLogExists}
+        >
+          Open error log
+        </Button>
+        <Chip
+          label={errorLogExists ? 'Errors have been logged' : 'No errors logged yet'}
+          color={errorLogExists ? 'warning' : 'default'}
+          variant="outlined"
+        />
+      </Stack>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Load personal cookie</DialogTitle>

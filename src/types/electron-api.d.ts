@@ -27,6 +27,7 @@ type LibraryVideoMetadata = {
     durationString: string | null;
     uploadDate: string | null;
     addedEpoch: number;
+    resolutions: { resolution: string; filesizeMb: string }[];
     downloadedFilePath: string | null;
     downloadedResolution: string | null;
     downloadedFormat: string | null;
@@ -72,6 +73,11 @@ declare global {
             addLibraryEntry: (videoMetaData: T) => Promise<{ success: boolean; videoDir: string }>
             overrideLibraryEntry: (videoMetaData: T, existingVideoDir: string) => Promise<{ success: boolean; videoDir: string }>
             findLibraryVideo: (videoId: string) => Promise<{ found: boolean; channelDisplayName?: string; videoDir?: string }>
+            recordLibraryDownload: (payload: { videoDir: string; epoch: string; filePath: string; resolution: string; format?: string }) => Promise<{ success: boolean }>
+            deleteLibraryEntry: (videoDir: string) => Promise<{ success: boolean }>
+            reportRendererError: (payload: { message: string; stack?: string }) => Promise<void>
+            getErrorLogInfo: () => Promise<{ exists: boolean; path: string }>
+            openErrorLog: () => Promise<void>
         };
         electronAPIPythonDownload: {
             startDownloadPython: (options: T) => Promise<T>;

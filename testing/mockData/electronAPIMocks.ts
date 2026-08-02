@@ -26,6 +26,11 @@ export const electronAPIMock = {
     addLibraryEntry: async () => ({ success: true, videoDir: '' }),
     overrideLibraryEntry: async () => ({ success: true, videoDir: '' }),
     findLibraryVideo: async () => ({ found: false }),
+    recordLibraryDownload: async () => ({ success: true }),
+    deleteLibraryEntry: async () => ({ success: true }),
+    reportRendererError: noop,
+    getErrorLogInfo: async () => ({ exists: false, path: '' }),
+    openErrorLog: noop,
 
 }
 

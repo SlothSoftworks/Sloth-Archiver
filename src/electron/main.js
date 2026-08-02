@@ -7,7 +7,7 @@ import crypto from 'crypto';
 
 import { getSupportedVideoFilters } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, getLibraryIndex, refreshLibraryIndex, findVideoInIndex } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, deleteLibraryEntry } from './library.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -15,6 +15,17 @@ function log(...args) {
     fs.appendFileSync(logFile, msg + "\n");
     console.log(msg);
 }
+
+// Catches crashes that would otherwise only ever show up in a terminal the
+// packaged app doesn't have -- writes to the same main.log a user can open
+// from the Options tab (see errorLog:* handlers below) instead of silently
+// dying or spamming an invisible console.
+process.on('uncaughtException', (err) => {
+    log('[uncaughtException]', new Date().toISOString(), err && err.stack ? err.stack : String(err));
+});
+process.on('unhandledRejection', (reason) => {
+    log('[unhandledRejection]', new Date().toISOString(), reason && reason.stack ? reason.stack : String(reason));
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -165,6 +176,20 @@ ipcMain.handle('library:findVideo', async (e, videoId) => {
         return { found: false };
     }
     return { found: true, channelDisplayName: match.channel.displayName, videoDir: match.video.videoDir };
+});
+
+ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, resolution, format }) => {
+    recordLibraryDownload({ videoDir, epoch, filePath, resolution, format });
+    const { libraryDir } = readSettings();
+    await refreshLibraryIndex(libraryDir);
+    return { success: true };
+});
+
+ipcMain.handle('library:deleteEntry', async (e, videoDir) => {
+    const { libraryDir } = readSettings();
+    deleteLibraryEntry({ libraryDir, videoDir });
+    await refreshLibraryIndex(libraryDir);
+    return { success: true };
 });
 
 // Kick off the initial scan in the background at startup -- deliberately not
@@ -786,4 +811,20 @@ ipcMain.handle('system:openFileInDirectory', async (e, filepath) => {
 // shell.openPath opens the given folder's own contents directly.
 ipcMain.handle('system:openDirectory', async (e, dirPath) => {
     shell.openPath(dirPath);
+});
+
+// Renderer-side errors (window.onerror/unhandledrejection, see App.tsx)
+// can't write to main.log directly -- the renderer has no fs access under
+// contextIsolation/sandbox -- so they're forwarded here to share the same
+// log file main-process crashes already go to.
+ipcMain.handle('errorLog:report', async (e, { message, stack }) => {
+    log('[rendererError]', new Date().toISOString(), stack || message || 'Unknown renderer error');
+});
+
+ipcMain.handle('errorLog:getInfo', async () => {
+    return { exists: fs.existsSync(logFile), path: logFile };
+});
+
+ipcMain.handle('errorLog:open', async () => {
+    shell.openPath(logFile);
 });

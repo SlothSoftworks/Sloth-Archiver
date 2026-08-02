@@ -54,7 +54,7 @@ export function videoFolderName(title, videoId) {
 }
 
 export function writeLibraryEntry({ libraryDir, videoMetaData }) {
-    const { id, title, fullTitle, description, thumbnail, originalUrl, duration, durationString, uploadDate, channelId, uploader } = videoMetaData;
+    const { id, title, fullTitle, description, thumbnail, originalUrl, duration, durationString, uploadDate, channelId, uploader, resolutions } = videoMetaData;
     if (!id) {
         throw new Error('videoMetaData.id is required to add a library entry');
     }
@@ -69,7 +69,7 @@ export function writeLibraryEntry({ libraryDir, videoMetaData }) {
     fs.mkdirSync(epochDir, { recursive: true });
 
     const metadata = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         videoId: id,
         channelId: channelId || null,
         channel: uploader || null,
@@ -82,9 +82,16 @@ export function writeLibraryEntry({ libraryDir, videoMetaData }) {
         durationString: durationString || null,
         uploadDate: uploadDate || null,
         addedEpoch,
+        // Captured at add-time rather than fetched live when the user wants to
+        // download -- keeps "what can I download" simple and self-contained
+        // per entry, at the cost of the list going stale if YouTube changes
+        // available qualities later. Entries written before this field existed
+        // (schemaVersion 1) just won't have it -- the download UI handles that
+        // as "no quality info saved," not a silent live-fetch fallback.
+        resolutions: resolutions || [],
         // Never set by this bare-bones trigger -- adding a video to the
-        // library and downloading its file are separate actions. A later
-        // pass fills these in once an actual download completes.
+        // library and downloading its file are separate actions. Filled in by
+        // recordLibraryDownload() once an actual download completes.
         downloadedFilePath: null,
         downloadedResolution: null,
         downloadedFormat: null,
@@ -92,6 +99,33 @@ export function writeLibraryEntry({ libraryDir, videoMetaData }) {
 
     fs.writeFileSync(path.join(epochDir, 'metadata.json'), JSON.stringify(metadata, null, 2), 'utf-8');
     return { channelDir, videoDir, epochDir, metadata };
+}
+
+// Called after a download into the library completes -- updates the specific
+// epoch's metadata.json in place rather than writing a new epoch, since
+// fulfilling an already-tracked entry isn't itself a new version (unlike the
+// still-deferred "Download new version" flow).
+export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, format }) {
+    const metadataPath = path.join(videoDir, epoch, 'metadata.json');
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    metadata.downloadedFilePath = filePath;
+    metadata.downloadedResolution = resolution || null;
+    metadata.downloadedFormat = format || null;
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    return metadata;
+}
+
+// Guard-railed even though videoDir always originates from our own index in
+// practice -- deleting is destructive enough to be worth defense in depth
+// against ever operating outside the configured library folder.
+export function deleteLibraryEntry({ libraryDir, videoDir }) {
+    const resolvedLibraryDir = path.resolve(libraryDir || '');
+    const resolvedVideoDir = path.resolve(videoDir || '');
+    const relative = path.relative(resolvedLibraryDir, resolvedVideoDir);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('Refusing to delete a path outside the configured library folder.');
+    }
+    fs.rmSync(resolvedVideoDir, { recursive: true, force: true });
 }
 
 // "Override" means replace the tracked entry, not add another version --

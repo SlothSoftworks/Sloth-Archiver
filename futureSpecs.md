@@ -36,6 +36,16 @@ you point it here.
     - A feature that detects that a new version of yt-dlp was detected in their repo and informs the user that an update is needed for the app to function in a pop up dialog when the app starts.
     - When the user clicks update the app will fetch the new data and do whatever is needed for yt-dlp to update itself (We will decide how to approach this but it's vital that the app can auto-update yt-dlp since it updates constantly)
 
+3. (Dependent on full library sub-system being implemented) Robust library detection
+    - A feature in the library view that allows the user to add full playlists the function will recieve a youtube playlist link and it will attempt to fetch all the videos inside it.
+    - This feature will be heavier and might find frequent blocking by the youtube API while fetching the video data so we'll have to add some kind of background job functionality to do the data fetching while the user works. This could be a side panel in the library view with the list of videos pending to download
+    - This feature will  work like this. The user clicks on the add playlist button -> a dialog appears asking for the link -> apart from the link the user will have some options like "download videos on load"
+        - When the user click ons download videos on load another obligatory element will appear asking the preferred quality. This will be a hardcoded list of all the available quaities on youtube and the automated process will attempt to download in the closes to that quality while working
+    - Oncce the user fills the playlost form and clicks on the submit button (labeled Add to Library) the scan and yt-dlp fetches will begin and this worker will act accordingly in the background
+    - The sidepanel will indicate with loading bars which video the working is downloading right now and it will have a button on top to stop the entire worker process
+    - If the user stops the worker it should keep track of what folder he was working with and the program will ask if the user wants to delete all files related to the process. The program will delete all the directories it created if the user selects yes
+    - Once the worker completes the job it should send a system notification to the user to le them know the background process is done
+
 
 ### Small features and corrections
 1. A field in the options menu that introduces a "base download directory" which will be taken as the suggested directory when opening the file selector system dialog when a video is about to be downloaded
@@ -43,6 +53,8 @@ you point it here.
 3. Detection and dialogue asking for whether to replace the file or not and adjust the yt-dlp request accordingly
 4. Improved download buttons/bar. Instead of separating the download buttons and bar once the download is confirmed have the download buttons dissapear and turn into a download indicator with the resolution selected and have the bar get filled in the same area. Include error detection that would make the original download buttons and postprcessing menu reappear in case of an error
 5. Local cache for videos data fetched: To improve usage and even testing let's add a local cache that saves all of the video data that the app requires to begin a download. If the link matches the cached data avoid calling the actual app. This will help with load times and prevent the client from getting flagged as a bot. The cache should have a TTL of a week just in case anything about the video changes. For TTL just do a simple save epoch property on save cache compared to when it's trying to re-fetch it.
+6. Feature that dumps any error log into a file that the user can read in case of an uncaught error happens.
+7. After the add to library button effectievely adds a new item ot the library a notification number should be added on the library tab. This should increase for every new video that the user adds and once the user clicks into the library tab the notification will reset to 0 and dissapear
 
 
 ### Nice to haves depending on the features of our tech

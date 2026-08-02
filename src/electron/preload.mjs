@@ -27,6 +27,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     addLibraryEntry: (videoMetaData) => ipcRenderer.invoke('library:addEntry', videoMetaData),
     overrideLibraryEntry: (videoMetaData, existingVideoDir) => ipcRenderer.invoke('library:overrideEntry', { videoMetaData, existingVideoDir }),
     findLibraryVideo: (videoId) => ipcRenderer.invoke('library:findVideo', videoId),
+    recordLibraryDownload: (payload) => ipcRenderer.invoke('library:recordDownload', payload),
+    deleteLibraryEntry: (videoDir) => ipcRenderer.invoke('library:deleteEntry', videoDir),
+    reportRendererError: (payload) => ipcRenderer.invoke('errorLog:report', payload),
+    getErrorLogInfo: () => ipcRenderer.invoke('errorLog:getInfo'),
+    openErrorLog: () => ipcRenderer.invoke('errorLog:open'),
 });
 
 contextBridge.exposeInMainWorld('electronAPIPythonDownload', {

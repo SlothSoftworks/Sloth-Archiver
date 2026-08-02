@@ -4,12 +4,16 @@ import Button from '@mui/material/Button';
 import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
 import Box from '@mui/material/Box';
+import Badge from '@mui/material/Badge';
 import './App.css';
 import './MainPage.css';
 import DownloaderScreen from './screens/DownloaderScreen';
 import OptionsScreen from './screens/OptionsScreen';
 import LibraryScreen from './screens/LibraryScreen';
 import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
+import { useLibraryNotification } from './hooks/useLibraryNotifications';
+
+const LIBRARY_TAB_INDEX = 1;
 
 function MainPage() {
 
@@ -56,9 +60,13 @@ function a11yProps(index: number) {
 
 export function BasicTabs() {
   const [value, setValue] = React.useState(0);
+  const { count: libraryNotificationCount, reset: resetLibraryNotifications } = useLibraryNotification();
 
   const handleChange = (event: React.SyntheticEvent, newValue: number) => {
     setValue(newValue);
+    if (newValue === LIBRARY_TAB_INDEX) {
+      resetLibraryNotifications();
+    }
   };
 
   return (
@@ -66,7 +74,14 @@ export function BasicTabs() {
       <Box sx={{ borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
         <Tabs value={value} onChange={handleChange} aria-label="basic tabs example">
           <Tab label="Downloader" {...a11yProps(0)} />
-          <Tab label="Library" {...a11yProps(1)} />
+          <Tab
+            label={
+              <Badge badgeContent={libraryNotificationCount} color="error" max={99} sx={{ px: libraryNotificationCount > 0 ? 1 : 0 }}>
+                Library
+              </Badge>
+            }
+            {...a11yProps(LIBRARY_TAB_INDEX)}
+          />
           <Tab label="Options" {...a11yProps(2)} />
         </Tabs>
       </Box>

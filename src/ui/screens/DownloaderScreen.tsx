@@ -28,10 +28,12 @@ import { useDebounce } from '../../utils/useDebounce';
 
 import { videoResponseMock } from '../../../testing/mockData/pythonResponseMocks.ts';
 import VideoDetailCardSkeleton from './VideoDetailCardSkeleton.tsx';
+import { useLibraryNotification } from '../hooks/useLibraryNotifications';
 
 
 export default function DownloaderScreen() {
 
+  const { increment: incrementLibraryNotifications } = useLibraryNotification();
   const [videoUrl, setVideoUrl] = useState("");
   const [loadingVideoData, setLoadingVideoData] = useState(false);
   const [isUrlError, setIsUrlError] = useState(false);
@@ -66,6 +68,7 @@ export default function DownloaderScreen() {
     setLibraryAddStatus('saving');
     try {
       await window.electronAPI.addLibraryEntry(videoInfo);
+      incrementLibraryNotifications();
       setLibrarySuccessSnackbarOpen(true);
       // Clear the search result now that it's been added -- a placeholder for
       // a more refined post-add flow later.
@@ -112,6 +115,7 @@ export default function DownloaderScreen() {
     setLibraryAddStatus('saving');
     try {
       await window.electronAPI.overrideLibraryEntry(videoInfo, existingVideoDir);
+      incrementLibraryNotifications();
       setLibrarySuccessSnackbarOpen(true);
       setVideoUrl('');
       setVideoInfo(null);

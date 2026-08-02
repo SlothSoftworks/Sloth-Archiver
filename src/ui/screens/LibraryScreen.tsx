@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
   Box,
-  Button,
   Card,
   CardActionArea,
   CardMedia,
+  Chip,
   CircularProgress,
   Grid,
   IconButton,
@@ -17,7 +17,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import FolderIcon from '@mui/icons-material/Folder';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
-import { formatComment } from '../components/componentUtils';
+import LibraryVideoDetail from './LibraryVideoDetail';
 
 // Mirrors the shape returned by window.electronAPI.getLibraryIndex() -- kept
 // local rather than imported, matching how video-metadata shapes are already
@@ -32,13 +32,16 @@ type LibraryVideoMetadata = {
   originalUrl: string | null;
   durationString: string | null;
   uploadDate: string | null;
+  resolutions?: { resolution: string; filesizeMb: string }[];
   downloadedFilePath: string | null;
   downloadedResolution: string | null;
+  downloadedFormat: string | null;
 };
 
 type LibraryVideo = {
   videoFolderName: string;
   videoDir: string;
+  latestEpoch: string | null;
   metadata: LibraryVideoMetadata;
 };
 
@@ -77,6 +80,27 @@ export default function LibraryScreen() {
     setLoading(false);
   };
 
+  // No loading-spinner toggle -- used after a download/delete completes while
+  // already viewing a video's detail, where swapping the whole screen to a
+  // spinner would be a jarring regression rather than a background update.
+  const refreshChannelsSilently = async () => {
+    const index = await window.electronAPI.refreshLibraryIndex();
+    setChannels(index.channels);
+  };
+
+  // Resets both selectedChannel and selectedVideo, not just the latter --
+  // selectedChannel is a stale snapshot taken when the user first navigated
+  // into it, and refreshChannelsSilently (already called by LibraryVideoDetail
+  // via onLibraryChanged before this fires) only updates the root `channels`
+  // list, not that snapshot. Without this, deleting a channel's only video
+  // left VideoGrid rendering a "ghost" of the just-deleted entry until the
+  // user manually round-tripped through the channel list. Simplest fix for
+  // now: always land back at the root after a delete, no in-place refresh.
+  const handleVideoDeleted = () => {
+    setSelectedVideo(null);
+    setSelectedChannel(null);
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 6 }}>
@@ -97,7 +121,14 @@ export default function LibraryScreen() {
   }
 
   if (selectedVideo) {
-    return <VideoDetail video={selectedVideo} onBack={() => setSelectedVideo(null)} />;
+    return (
+      <LibraryVideoDetail
+        video={selectedVideo}
+        onBack={() => setSelectedVideo(null)}
+        onLibraryChanged={refreshChannelsSilently}
+        onDeleted={handleVideoDeleted}
+      />
+    );
   }
 
   if (selectedChannel) {
@@ -194,7 +225,18 @@ function VideoGrid({ channel, onBack, onSelectVideo }: {
                   sx={{ height: 140, backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 />
                 <Box sx={{ p: 1.5 }}>
-                  <Typography variant="body1" noWrap>{video.metadata.title || video.videoFolderName}</Typography>
+                  <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+                    <Typography variant="body1" noWrap sx={{ minWidth: 0 }}>{video.metadata.title || video.videoFolderName}</Typography>
+                    {video.metadata.downloadedFilePath ? (
+                      <Chip
+                        size="small"
+                        color="success"
+                        label={video.metadata.downloadedResolution === 'MP3' ? 'MP3' : `${video.metadata.downloadedResolution}p`}
+                      />
+                    ) : (
+                      <Chip size="small" variant="outlined" label="Not downloaded" />
+                    )}
+                  </Stack>
                   <Typography variant="body2" color="text.secondary">
                     {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
                   </Typography>
@@ -204,47 +246,6 @@ function VideoGrid({ channel, onBack, onSelectVideo }: {
           </Grid>
         ))}
       </Grid>
-    </Box>
-  );
-}
-
-function VideoDetail({ video, onBack }: { video: LibraryVideo; onBack: () => void }) {
-  const { metadata } = video;
-
-  const handleOpenFileLocation = () => {
-    if (metadata.downloadedFilePath) {
-      window.electronAPI.openFileInDirectory(metadata.downloadedFilePath);
-    }
-  };
-
-  return (
-    <Box>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
-        <IconButton onClick={onBack} size="small" aria-label="Back to videos">
-          <ArrowBackIcon fontSize="small" />
-        </IconButton>
-        <Typography variant="h6" noWrap>{metadata.title || video.videoFolderName}</Typography>
-      </Stack>
-      <CardMedia
-        component="div"
-        image={metadata.thumbnail || undefined}
-        sx={{ height: 320, backgroundColor: 'grey.800', borderRadius: 2, mb: 2, backgroundSize: 'cover', backgroundPosition: 'center' }}
-      />
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-        <Typography variant="body2" color="info.main" fontWeight="bolder">
-          {convertYYYYMMDDStringToDate(metadata.uploadDate || '') || metadata.uploadDate}
-        </Typography>
-        {metadata.downloadedFilePath ? (
-          <Button size="small" startIcon={<FolderOpenIcon />} onClick={handleOpenFileLocation}>
-            Open file location
-          </Button>
-        ) : (
-          <Typography variant="body2" color="text.secondary">Not downloaded yet</Typography>
-        )}
-      </Stack>
-      <Typography variant="body2" sx={{ textAlign: 'justify' }}>
-        {formatComment(metadata.description || '')}
-      </Typography>
     </Box>
   );
 }
