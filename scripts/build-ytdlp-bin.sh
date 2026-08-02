@@ -7,12 +7,17 @@ RAW_DIST="$ROOT_DIR/dist/ytdlp-bin-raw"
 FINAL_DIST="$ROOT_DIR/dist/ytdlp-bin"
 
 if [ ! -d "$VENV_DIR" ]; then
-    python3 -m venv "$VENV_DIR"
+    python3 -m venv "$VENV_DIR" 2>/dev/null || python -m venv "$VENV_DIR"
 fi
 
-source "$VENV_DIR/bin/activate"
-pip install --quiet --upgrade pip
-pip install --quiet -r "$ROOT_DIR/src/python/requirements-build.txt"
+# venv layout differs by platform: POSIX uses bin/, Windows uses Scripts/.
+if [ -f "$VENV_DIR/Scripts/activate" ]; then
+    source "$VENV_DIR/Scripts/activate"
+else
+    source "$VENV_DIR/bin/activate"
+fi
+python -m pip install --quiet --upgrade pip
+python -m pip install --quiet -r "$ROOT_DIR/src/python/requirements-build.txt"
 
 rm -rf "$RAW_DIST" "$FINAL_DIST" "$ROOT_DIR/build/pyinstaller"
 
@@ -26,9 +31,16 @@ pyinstaller \
     --noconfirm \
     "$ROOT_DIR/src/python/ytdlp_entrypoint.py"
 
+# PyInstaller names the executable yt-dlp.exe on Windows, yt-dlp elsewhere.
+if [ -f "$RAW_DIST/yt-dlp/yt-dlp.exe" ]; then
+    BIN_NAME="yt-dlp.exe"
+else
+    BIN_NAME="yt-dlp"
+fi
+
 mkdir -p "$FINAL_DIST"
 cp -R "$RAW_DIST/yt-dlp/." "$FINAL_DIST/"
-chmod +x "$FINAL_DIST/yt-dlp"
+chmod +x "$FINAL_DIST/$BIN_NAME" 2>/dev/null || true
 rm -rf "$RAW_DIST"
 
-echo "Built yt-dlp onedir binary -> $FINAL_DIST/yt-dlp"
+echo "Built yt-dlp onedir binary -> $FINAL_DIST/$BIN_NAME"

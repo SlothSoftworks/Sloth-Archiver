@@ -19,7 +19,8 @@ const __dirname = path.dirname(__filename);
 const isDev = !app.isPackaged;
 
 const indexPath = path.join(__dirname, '../renderer/index.html');
-const ytdlpPath = isDev ? path.resolve(__dirname, '../ytdlp-bin/yt-dlp') : path.join(process.resourcesPath, 'ytdlp-bin', 'yt-dlp');
+const ytdlpBinaryName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+const ytdlpPath = isDev ? path.resolve(__dirname, '../ytdlp-bin', ytdlpBinaryName) : path.join(process.resourcesPath, 'ytdlp-bin', ytdlpBinaryName);
 const ffmpegDir = isDev ? path.resolve(__dirname, '../ffmpeg') : path.join(process.resourcesPath, 'ffmpeg');
 const cookiesPath = path.join(app.getPath('userData'), 'cookies.txt');
 

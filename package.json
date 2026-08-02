@@ -51,7 +51,7 @@
     "dist": "npm run build:all && npm run electron-build",
     "build:renderer": "vite build",
     "build:copy:electron": "cpx \"src/electron/**/*\" dist/electron",
-    "build:ytdlp:bin": "bash scripts/build-ytdlp-bin.sh",
+    "build:ytdlp:bin": "node scripts/build-ytdlp-bin.mjs",
     "build:copy:ffmpeg": "node scripts/copy-ffmpeg.mjs",
     "build:electron": "npm run build:copy:electron && npm run build:ytdlp:bin && npm run build:copy:ffmpeg",
     "build:all": "npm run build:renderer && npm run build:electron"
