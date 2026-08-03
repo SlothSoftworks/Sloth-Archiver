@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
-import { fileURLToPath } from 'url';
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron';
+import { fileURLToPath, pathToFileURL } from 'url';
 import path from 'path'
 import { spawn } from 'child_process';
 import fs from "fs";
 import crypto from 'crypto';
+import http from 'node:http';
 
 import { getSupportedVideoFilters } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
@@ -32,7 +33,7 @@ const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
 
-const indexPath = path.join(__dirname, '../renderer/index.html');
+const rendererDir = path.join(__dirname, '../renderer');
 const ytdlpBinaryName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
 const ffmpegDir = isDev ? path.resolve(__dirname, '../ffmpeg') : path.join(process.resourcesPath, 'ffmpeg');
 // Still passed to yt-dlp via --ffmpeg-location for the merge step (combining
@@ -83,6 +84,161 @@ function readSettings() {
 
 function writeSettings(settings) {
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+}
+
+// Registers app-video:// as a privileged scheme so the Library tab's player
+// can point <video>/<audio> at an arbitrary downloaded file without loading
+// the whole thing into renderer memory (the alternative, an IPC-read-to-blob
+// bridge, doesn't scale to large video files and can't support real
+// seeking). Must run at module-evaluation time, before the app is ready.
+// `stream`+`supportFetchAPI` are required for net.fetch delegation below to
+// work; `bypassCSP`/`secure`/`standard` are part of the documented working
+// recipe for this exact net.fetch-based handler (see handleAppVideoRequest) --
+// this app has no CSP today so bypassCSP is a no-op either way, revisit if a
+// CSP is ever added.
+protocol.registerSchemesAsPrivileged([
+    { scheme: 'app-video', privileges: { standard: true, secure: true, stream: true, bypassCSP: true, corsEnabled: true, supportFetchAPI: true } },
+]);
+
+function mimeTypeForPath(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext === '.html') return 'text/html';
+    if (ext === '.js') return 'text/javascript';
+    if (ext === '.css') return 'text/css';
+    return 'application/octet-stream';
+}
+
+// Serves the renderer bundle (index.html + assets) over a real loopback
+// HTTP origin, replacing mainWindow.loadFile()'s file:// origin. Tried a
+// custom app:// protocol first (standard: true, secure: true) -- that does
+// NOT work: Chromium's Referer-generation gate checks the document's scheme
+// against a hardcoded http(s)-family allowlist, entirely separate from the
+// privileged-scheme flags, so custom schemes never produce a Referer no
+// matter how they're registered (confirmed both by precedent -- Tauri apps
+// hit the identical issue serving from tauri://, electron/electron#38749-
+// adjacent territory -- and empirically here via a captured Network request
+// showing no referer header at all under app://). file://'s missing Referer
+// is what breaks the YouTube iframe embed elsewhere in the app (YouTube's
+// embed player has required one since late 2025); only a genuine http://
+// origin clears that gate. 127.0.0.1-only (not 0.0.0.0) and port 0 (OS
+// picks an unused ephemeral port) keep this unreachable from the network.
+function startRendererServer() {
+    return new Promise((resolve) => {
+        const server = http.createServer((req, res) => {
+            const { pathname } = new URL(req.url, 'http://localhost');
+            const resolvedPath = path.join(rendererDir, pathname === '/' ? '/index.html' : pathname);
+            const relative = path.relative(rendererDir, resolvedPath);
+            if (relative.startsWith('..') || path.isAbsolute(relative)) {
+                res.writeHead(403);
+                res.end('Forbidden');
+                return;
+            }
+            fs.readFile(resolvedPath, (err, data) => {
+                if (err) {
+                    res.writeHead(404);
+                    res.end('Not Found');
+                    return;
+                }
+                res.writeHead(200, { 'Content-Type': mimeTypeForPath(resolvedPath) });
+                res.end(data);
+            });
+        });
+        server.listen(0, '127.0.0.1', () => resolve(server));
+    });
+}
+
+// Handles app-video://local/<encodeURIComponent(absolutePath)> requests.
+// Guard-railed against the configured libraryDir with the exact same
+// path.relative check deleteLibraryEntry (library.mjs) already uses --
+// defense in depth, since the renderer only ever constructs these URLs
+// itself from data it already has, never from arbitrary input.
+//
+// Uses net.fetch() against a file:// URL as the byte-stream source (that's
+// what fixed an earlier "AbortError: The operation was aborted" bug from
+// hand-rolling a Node fs.ReadStream-to-Response conversion), but does NOT
+// trust net.fetch's own status/headers for the response we hand back.
+// Chromium treats a protocol.handle response as a genuine network response,
+// not the same trusted path as a real file:// navigation -- it needs
+// Accept-Ranges/Content-Range/206 spelled out explicitly on every response,
+// including the very first un-ranged one, or video.seekable.end() stays 0
+// and clicking the scrub bar silently does nothing (playback still works,
+// only seeking is affected -- that's the exact, documented symptom of this
+// gap). So the Range math is done here, ourselves, same as the guard-rail
+// above; net.fetch is only ever asked for the exact byte range already
+// decided, purely as a stream source.
+async function handleAppVideoRequest(request) {
+    const url = new URL(request.url);
+    const filePath = decodeURIComponent(url.pathname.slice(1));
+
+    const { libraryDir } = readSettings();
+    const resolvedLibraryDir = path.resolve(libraryDir || '');
+    const resolvedFilePath = path.resolve(filePath);
+    const relative = path.relative(resolvedLibraryDir, resolvedFilePath);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        return new Response('Forbidden', { status: 403 });
+    }
+
+    let stat;
+    try {
+        stat = fs.statSync(resolvedFilePath);
+    } catch {
+        return new Response('Not Found', { status: 404 });
+    }
+    const fileSize = stat.size;
+
+    let start = 0;
+    let end = fileSize - 1;
+    let status = 200;
+    const range = request.headers.get('Range');
+    if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+        const hasStart = match && match[1] !== '';
+        const hasEnd = match && match[2] !== '';
+        if (!match || (!hasStart && !hasEnd)) {
+            return new Response('Range Not Satisfiable', {
+                status: 416,
+                headers: { 'Content-Range': `bytes */${fileSize}` },
+            });
+        }
+        if (hasStart) {
+            start = parseInt(match[1], 10);
+            end = hasEnd ? parseInt(match[2], 10) : fileSize - 1;
+        } else {
+            // Suffix form (bytes=-500): the number is a length counted from
+            // the end of the file, not an absolute end offset.
+            const suffixLength = parseInt(match[2], 10);
+            start = Math.max(fileSize - suffixLength, 0);
+            end = fileSize - 1;
+        }
+        if (start > end || start < 0 || end >= fileSize) {
+            return new Response('Range Not Satisfiable', {
+                status: 416,
+                headers: { 'Content-Range': `bytes */${fileSize}` },
+            });
+        }
+        status = 206;
+    }
+
+    try {
+        const innerResponse = await net.fetch(pathToFileURL(resolvedFilePath).toString(), {
+            headers: { Range: `bytes=${start}-${end}` },
+            signal: request.signal,
+        });
+
+        const headers = {
+            'Content-Type': innerResponse.headers.get('Content-Type') || 'application/octet-stream',
+            'Accept-Ranges': 'bytes',
+            'Content-Length': String(end - start + 1),
+        };
+        if (status === 206) {
+            headers['Content-Range'] = `bytes ${start}-${end}/${fileSize}`;
+        }
+
+        return new Response(innerResponse.body, { status, headers });
+    } catch (err) {
+        log('[app-video] fetch error', String(err));
+        return new Response('Internal Error', { status: 500 });
+    }
 }
 
 // Keyed by the raw input URL. Different URL forms for the same video (a
@@ -317,7 +473,12 @@ ipcMain.handle('cookies:status', async () => {
     return { loaded: true, cookieCount: valid };
 });
 
-app.on("ready", () => {
+app.on("ready", async () => {
+    protocol.handle('app-video', handleAppVideoRequest);
+
+    const rendererServer = await startRendererServer();
+    const { port } = rendererServer.address();
+
     const mainWindow = new BrowserWindow({
         width: 1280,
         height: 720,
@@ -328,7 +489,7 @@ app.on("ready", () => {
             sandbox: false,
         },
     });
-    mainWindow.loadFile(indexPath);
+    mainWindow.loadURL(`http://127.0.0.1:${port}/index.html`);
     if (isDev) mainWindow.webContents.openDevTools();
 })
 
@@ -811,6 +972,16 @@ ipcMain.handle('system:openFileInDirectory', async (e, filepath) => {
 // shell.openPath opens the given folder's own contents directly.
 ipcMain.handle('system:openDirectory', async (e, dirPath) => {
     shell.openPath(dirPath);
+});
+
+// Opens a file in the OS's default app for it (e.g. QuickTime/VLC for a
+// video) -- shell.openPath works for files just as well as directories.
+// Deliberately unconditional on file type: it's a generically useful escape
+// hatch (different codec/hardware support, a bigger window) even for
+// formats the in-app player already handles, not just the MKV case
+// Chromium's <video> element can't play at all.
+ipcMain.handle('system:openFileExternally', async (e, filepath) => {
+    shell.openPath(filepath);
 });
 
 // Renderer-side errors (window.onerror/unhandledrejection, see App.tsx)

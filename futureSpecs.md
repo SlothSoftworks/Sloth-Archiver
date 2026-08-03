@@ -27,6 +27,9 @@ you point it here.
     - Now that FFMPEG is implemented separately (as of August 2nd 2026) add also small ffmpeg funcionalities that are useful for the user some examples are:
         - Extract mp3 audio
         - Convert to different format
+        - Embed the thumbnail to the mp3 file
+        - Embed metadata to the video/audio file
+        - "Extract clip" option that lets you extract a shorter version of the video recieving a start and stop point in time
         - We'll come up with more later.
         
 

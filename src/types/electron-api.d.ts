@@ -54,6 +54,7 @@ declare global {
             getVideoInfoPython: (url: string, options?: T) => Promise <T>
             openDirectory: (path: string) => Promise<T>
             openFileInDirectory: (filePath: string) => Promise<T>
+            openFileExternally: (filePath: string) => Promise<void>
             saveCookie: (cookieText: string) => Promise<{ success: boolean; cookieCount: number; skipped: number }>
             deleteCookie: () => Promise<{ success: boolean }>
             getCookieStatus: () => Promise<{ loaded: boolean; cookieCount: number }>

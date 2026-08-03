@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Card,
-  CardMedia,
   Typography,
   Grid,
   Stack,
@@ -38,6 +37,8 @@ import { convertYYYYMMDDStringToDate, getEstimateFileSizeMbForMP3 } from '../../
 import { formatComment } from '../components/componentUtils';
 
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
+import YouTubeEmbed from '../components/YouTubeEmbed';
+import ResizableMediaContainer from '../components/ResizableMediaContainer';
 
 
 
@@ -74,6 +75,7 @@ interface Resolution {
 
 interface VideoDataProps {
     videoMetaData: {
+        id: string;
         fullTitle: string;
         description: string;
         thumbnail: string;
@@ -155,30 +157,9 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
             </Stack>
           </Box>
 
-          <CardMedia
-            component="div"
-            image={videoMetaData.thumbnail}
-            sx={{
-              height: 320,
-              border: '2px solid black',
-              borderRadius: 2,
-              position: 'relative',
-              overflow: 'hidden',
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              order: 0
-            }}
-          >
-            <Typography variant="h2" sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
-              <Link target="_blank" rel="noopener noreferrer" href={videoMetaData.originalUrl}>▶</Link>
-            </Typography>
-            <Typography
-              variant='body1'
-              sx={{ position: 'absolute', bottom: 8, right: 8, backgroundColor: 'grey.800', borderRadius: 2, px: 1, py: 0.25 }}
-            >
-              {videoMetaData.durationString}
-            </Typography>
-          </CardMedia>
+          <ResizableMediaContainer sx={{ border: '2px solid black', borderRadius: 2, order: 0 }}>
+            <YouTubeEmbed videoId={videoMetaData.id} sx={{ width: '100%', height: '100%' }} />
+          </ResizableMediaContainer>
 
           <Card sx={{backgroundColor: 'primary.contrastText', order: 2}} >
               <Stack

@@ -22,8 +22,8 @@ Breaking the spec into its actual sub-problems and ranking those individually
 | Channel-folder browsing UI (list → mini cards → full card) | **Medium** — ✅ done | Channel list → video grid → full detail view, all rendering off the in-memory index rather than doing their own filesystem reads. |
 | Cross-tab "add to library" wiring | **Medium** — ✅ done | Add-to-library button on the Downloader tab, with a duplicate-detection dialog (Cancel / Override / "Add as new version" — the last one still disabled, versioning isn't built) when the video's already tracked. **Auto-navigate to the newly added video is still not built** — today a successful add just clears the Downloader form and shows a success toast; the notification badge (small-feature #7 below) is the interim substitute for "you should go check the Library tab," not a replacement for actually jumping there. |
 | Download video from the Library tab | **Medium** *(not in the original table — this is the piece that turns "browse-only" into "actually usable")* — ✅ done | Reuses the existing download pipeline (`useDownloadVideo`) unchanged, writing into the video's own deterministic folder instead of a Save-dialog path. Required persisting a `resolutions` array into `metadata.json` at add-time (schema bumped to v2, non-breaking for older entries — they just show a "no quality info saved, re-add it" message instead of offering downloads). |
-| Local file playback (`<video>` pointed at a downloaded file) | **Medium-High** | Still not built. Electron renderers can't just point `<video src>` at an arbitrary local path under `contextIsolation`/sandbox — needs either a registered custom protocol or an IPC-read-to-blob bridge. Real Electron-specific plumbing, not a UI problem. |
-| Embedded YouTube fallback player (not-yet-downloaded case) | **Low-Medium** | Still not built. A YouTube `<iframe>` embed is well-trodden, but double-check there's no CSP in place that blocks iframing youtube.com before assuming it's a 10-minute job. |
+| Local file playback (`<video>` pointed at a downloaded file) | **Medium-High** — ✅ done *(2026-08-02)* | Turned out considerably harder than "register a custom protocol" — three real attempts before landing on a working one. First (manual `fs.createReadStream` + `Readable.toWeb()` Range-parsing) produced unfixable `AbortError`s, a known open Electron bug (`electron/electron#38749`). Second (delegate everything to `net.fetch(pathToFileURL(...))`) fixed playback but broke seeking — Chromium treats a `protocol.handle` response as a genuine network response and needs `Accept-Ranges`/`Content-Range`/206 spelled out explicitly on *every* response (including the first, un-ranged one) or `video.seekable.end()` stays 0. Final, working version: Range math done explicitly in `handleAppVideoRequest` (`main.js`), `net.fetch` used only as the byte-stream source for the exact range already decided. MP3-only downloads also get an `<audio>` element via the same protocol, and MKV downloads (which Chromium's `<video>` element can't play in any container regardless of delivery mechanism) fall back to the static thumbnail — see "Open in default player" below, which exists specifically to cover that gap. |
+| Embedded YouTube fallback player (not-yet-downloaded case) | **Low-Medium** — ✅ done *(2026-08-02)* | Also harder than expected: the raw `<iframe>` hit Error 153 ("Video player configuration error") because this app's renderer loaded via `file://`, which sends no `Referer` header at all, and YouTube's embed player has required one since late 2025. A custom `app://` protocol (tried first, since it gives the renderer a "real" origin) turned out **not** to fix this either — confirmed both by precedent (Tauri apps hit the identical issue serving from `tauri://`) and empirically here via a captured Network request showing no `referer` header even under `app://`. Chromium's Referer-generation gate checks the document's scheme against a hardcoded http(s)-family allowlist, entirely separate from the `standard`/`secure` privileged-scheme flags — custom schemes never clear it. The fix that actually works: the renderer now loads from a genuine loopback `http://127.0.0.1:<ephemeral-port>` server (`startRendererServer()` in `main.js`, plain Node `http`, no new dependency) plus `youtube-nocookie.com` + an explicit `referrerPolicy` on the iframe. Extracted into a shared `YouTubeEmbed` component, reused in both the Library tab and the Downloader tab's own preview card (which previously just had a hyperlink to view on YouTube externally). |
 | Download-status/quality badge on cards | **Low** — ✅ done | Pure rendering off persisted metadata (`downloadedResolution`/`downloadedFormat`), shown on both the mini grid cards and the full detail view. |
 | Burger menu shell | **Low** | Still not built as its own menu — download and delete are currently just inline buttons/icons in the detail view rather than grouped behind a burger menu. Only matters once "download different quality" and "download new version" exist and the detail view actually needs somewhere to put multiple destructive/secondary actions. |
 | "Download different quality" (safe swap: download-as-temp → verify → delete old → rename) | **High** | Still not built. This is production file-safety logic: sequencing the temp download, confirming the process actually succeeded (reusing `findFinalFile`), then delete+rename, with a rollback path if the download fails partway so the old file is never lost. Easy to get subtly wrong under interruption/failure. |
@@ -35,13 +35,21 @@ Breaking the spec into its actual sub-problems and ranking those individually
 
 **Build order followed so far** (base-directory setting → metadata persistence → mapping
 function → browsing UI → add-to-library wiring → download-from-library → status badges →
-delete) matches the order originally suggested here, with one substitution: **local/YouTube
-playback was skipped over** in favor of small-features #6/#7 (error log, notification badge)
-at your explicit request, since those were quick, self-contained, and closed out "phase 2."
-**Still remaining, in the order originally suggested:** local/YouTube playback → burger menu
-shell → safe quality-swap → new-version/hotswap → the two deferred items last, exactly where
-you already put them. The ffmpeg-utilities item doesn't depend on anything else in this list
-and could be slotted in wherever it's convenient.
+delete → error log/notification badge → local/YouTube playback) matches the order originally
+suggested here, with local/YouTube playback deliberately pushed to last (after small-features
+#6/#7) at your explicit request, since those were quick, self-contained, and closed out
+"phase 2" first. With playback now done ("phase 3"), plus a follow-on pass fixing widescreen
+aspect-ratio/resizable player containers (not in the original spec text, added after you
+noticed the fixed-height container looked wrong at wide window sizes) and matching the Library
+detail view's responsive layout to `VideoDetailCard.tsx`'s 70/30 split — **the core single-video
+loop (browse → add → download → play → delete) is feature-complete.**
+
+**Still remaining, in the order originally suggested:** burger menu shell → safe quality-swap →
+new-version/hotswap → the two deferred items last, exactly where you already put them. The
+ffmpeg-utilities item doesn't depend on anything else in this list and could be slotted in
+wherever it's convenient. One small gap inside an already-"done" row, not yet closed: auto-
+navigate to the newly added video after a successful "add to library" (see the cross-tab
+wiring row above) — the notification badge remains an interim substitute, not a replacement.
 
 **On your open question** (files vs. something else for metadata): given this project has
 zero infra for a database today and archival/portability is a stated goal, one JSON file

@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getVideoInfoPython: (url, options) => ipcRenderer.invoke('getVideoInfoPython', url, options),
     openDirectory: (path) => ipcRenderer.invoke('system:openDirectory', path),
     openFileInDirectory: (filePath) => ipcRenderer.invoke('system:openFileInDirectory', filePath),
+    openFileExternally: (filePath) => ipcRenderer.invoke('system:openFileExternally', filePath),
     saveCookie: (cookieText) => ipcRenderer.invoke('cookies:save', cookieText),
     deleteCookie: () => ipcRenderer.invoke('cookies:delete'),
     getCookieStatus: () => ipcRenderer.invoke('cookies:status'),
