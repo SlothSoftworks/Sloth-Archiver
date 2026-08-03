@@ -106,8 +106,8 @@ export default function DownloaderScreen() {
   };
 
   // Replaces the existing tracked entry rather than adding another one --
-  // deletes its old epoch data first, then writes fresh. "Add as new
-  // version" (additive, keeps the old data) is the not-yet-built alternative.
+  // deletes its old epoch data first, then writes fresh. handleAddVersion
+  // below is the additive alternative (keeps the old data as a version).
   const handleOverrideAdd = async () => {
     if (!videoInfo || !duplicateMatch) return;
     const existingVideoDir = duplicateMatch.videoDir;
@@ -125,6 +125,30 @@ export default function DownloaderScreen() {
       setLibraryAddStatus('idle');
     } catch (err) {
       console.error('Failed to override library entry', err);
+      setLibraryAddStatus('error');
+      setLibraryErrorMessage(err instanceof Error ? err.message : 'Failed to add video to the library.');
+    }
+  };
+
+  // Additive counterpart to handleOverrideAdd -- adds a new epoch under the
+  // existing videoDir instead of deleting its history first.
+  const handleAddVersion = async () => {
+    if (!videoInfo || !duplicateMatch) return;
+    const existingVideoDir = duplicateMatch.videoDir;
+    setDuplicateMatch(null);
+    setLibraryAddStatus('saving');
+    try {
+      await window.electronAPI.addLibraryVersion(videoInfo, existingVideoDir);
+      incrementLibraryNotifications();
+      setLibrarySuccessSnackbarOpen(true);
+      setVideoUrl('');
+      setVideoInfo(null);
+      setVideoInfoError(null);
+      setVideoInfoFromCache(false);
+      setIsUrlError(false);
+      setLibraryAddStatus('idle');
+    } catch (err) {
+      console.error('Failed to add library version', err);
       setLibraryAddStatus('error');
       setLibraryErrorMessage(err instanceof Error ? err.message : 'Failed to add video to the library.');
     }
@@ -253,11 +277,7 @@ export default function DownloaderScreen() {
       </DialogContent>
       <DialogActions>
         <Button onClick={() => setDuplicateMatch(null)}>Cancel</Button>
-        <Tooltip title="Versioning isn't built yet -- coming in a later pass">
-          <span>
-            <Button disabled>Add as new version</Button>
-          </span>
-        </Tooltip>
+        <Button onClick={handleAddVersion}>Add as new version</Button>
         <Button variant="contained" onClick={handleOverrideAdd}>Override</Button>
       </DialogActions>
     </Dialog>

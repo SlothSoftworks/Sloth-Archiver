@@ -9,7 +9,7 @@ import https from 'node:https';
 
 import { getSupportedVideoFilters } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry } from './library.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -435,6 +435,18 @@ ipcMain.handle('library:overrideEntry', async (e, { videoMetaData, existingVideo
     return { success: true, videoDir: result.videoDir };
 });
 
+// Additive counterpart to overrideEntry -- adds a new epoch under an
+// already-tracked video's existing videoDir instead of replacing it. Used by
+// both "Add as new version" (Downloader tab's duplicate dialog) and
+// "Download new version" (Library tab's video detail view).
+ipcMain.handle('library:addVersion', async (e, { videoDir, videoMetaData }) => {
+    const { libraryDir } = readSettings();
+    const result = addLibraryVersion({ libraryDir, videoDir, videoMetaData });
+    await refreshLibraryIndex(libraryDir);
+    ensureChannelIcon(path.dirname(result.videoDir), videoMetaData.channelId).then(() => refreshLibraryIndex(libraryDir));
+    return { success: true, videoDir: result.videoDir, epoch: result.epoch, metadata: result.metadata };
+});
+
 // Checked by the renderer before calling addEntry, so a duplicate can be
 // caught with a warning dialog instead of silently piling up a redundant
 // epoch folder for a video that's already tracked.
@@ -462,11 +474,11 @@ ipcMain.handle('library:swapDownload', async (e, { videoDir, epoch, tempFilePath
     return metadata;
 });
 
-ipcMain.handle('library:deleteEntry', async (e, videoDir) => {
+ipcMain.handle('library:deleteEntry', async (e, { videoDir, epoch }) => {
     const { libraryDir } = readSettings();
-    deleteLibraryEntry({ libraryDir, videoDir });
+    const { videoDeleted } = deleteLibraryEntry({ libraryDir, videoDir, epoch });
     await refreshLibraryIndex(libraryDir);
-    return { success: true };
+    return { success: true, videoDeleted };
 });
 
 // Kick off the initial scan in the background at startup -- deliberately not

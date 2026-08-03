@@ -36,39 +36,26 @@ export function channelFolderName(channel) {
     return sanitizeForFilesystem(channel || 'Unknown Channel');
 }
 
-// Title alone isn't a safe folder key -- two different videos can share an
-// identical title (a re-upload, or coincidence), which would otherwise merge
-// their download histories into one folder. Appending the video ID matches a
-// de-facto yt-dlp convention (%(title)s [%(id)s]) used for the same reason.
-//
-// Total folder name (title + " [videoId]") is capped at 50 chars, not just the
-// title -- narrows the Windows MAX_PATH=260 edge case logged as TD-005
-// (reports/TechnicalDebt.md); doesn't eliminate it (an extreme libraryDir
-// depth could still overflow), deliberately not solved further than this for now.
-export function videoFolderName(title, videoId) {
-    const MAX_TOTAL_LENGTH = 50;
-    const suffix = ` [${videoId}]`;
-    const maxTitleLength = Math.max(1, MAX_TOTAL_LENGTH - suffix.length);
-    const safeTitle = sanitizeForFilesystem(title || 'Untitled', maxTitleLength);
-    return `${safeTitle}${suffix}`;
+// Keyed purely on videoId, not title -- YouTube titles can (and often do)
+// change after upload, and a folder name derived from title would go
+// cosmetically stale relative to the video's current title over time.
+// videoId is stable for the life of the video and already guarantees
+// uniqueness on its own (two videos can never share one), stronger than the
+// old title+suffix trick this used to need. Also shrinks the Windows
+// MAX_PATH=260 worst case further (TD-005, reports/TechnicalDebt.md) --
+// videoIds are far shorter than the 50-char title+suffix budget this
+// replaced, though channel-folder length and libraryDir depth are still
+// unbounded, so that entry isn't fully resolved by this alone.
+export function videoFolderName(videoId) {
+    return sanitizeForFilesystem(videoId);
 }
 
-export function writeLibraryEntry({ libraryDir, videoMetaData }) {
+// Shared by writeLibraryEntry (new video) and addLibraryVersion (new version
+// of an existing video) so both ever build exactly one metadata shape --
+// two independent inline copies would be free to drift apart over time.
+function buildEpochMetadata(videoMetaData, addedEpoch) {
     const { id, title, fullTitle, description, thumbnail, originalUrl, duration, durationString, uploadDate, channelId, uploader, resolutions } = videoMetaData;
-    if (!id) {
-        throw new Error('videoMetaData.id is required to add a library entry');
-    }
-    if (!libraryDir) {
-        throw new Error('No library folder is configured -- set one in Options first.');
-    }
-
-    const channelDir = path.join(libraryDir, channelFolderName(uploader));
-    const videoDir = path.join(channelDir, videoFolderName(title, id));
-    const addedEpoch = Date.now();
-    const epochDir = path.join(videoDir, String(addedEpoch));
-    fs.mkdirSync(epochDir, { recursive: true });
-
-    const metadata = {
+    return {
         schemaVersion: 2,
         videoId: id,
         channelId: channelId || null,
@@ -89,16 +76,57 @@ export function writeLibraryEntry({ libraryDir, videoMetaData }) {
         // (schemaVersion 1) just won't have it -- the download UI handles that
         // as "no quality info saved," not a silent live-fetch fallback.
         resolutions: resolutions || [],
-        // Never set by this bare-bones trigger -- adding a video to the
-        // library and downloading its file are separate actions. Filled in by
+        // Never set at write-time -- adding a video/version to the library and
+        // downloading its file are separate actions. Filled in by
         // recordLibraryDownload() once an actual download completes.
         downloadedFilePath: null,
         downloadedResolution: null,
         downloadedFormat: null,
     };
+}
 
+export function writeLibraryEntry({ libraryDir, videoMetaData }) {
+    const { id, uploader } = videoMetaData;
+    if (!id) {
+        throw new Error('videoMetaData.id is required to add a library entry');
+    }
+    if (!libraryDir) {
+        throw new Error('No library folder is configured -- set one in Options first.');
+    }
+
+    const channelDir = path.join(libraryDir, channelFolderName(uploader));
+    const videoDir = path.join(channelDir, videoFolderName(id));
+    const addedEpoch = Date.now();
+    const epochDir = path.join(videoDir, String(addedEpoch));
+    fs.mkdirSync(epochDir, { recursive: true });
+
+    const metadata = buildEpochMetadata(videoMetaData, addedEpoch);
     fs.writeFileSync(path.join(epochDir, 'metadata.json'), JSON.stringify(metadata, null, 2), 'utf-8');
     return { channelDir, videoDir, epochDir, metadata };
+}
+
+// "Add new version" -- additive counterpart to overrideLibraryEntry. Adds a
+// new epoch directly under an already-known videoDir (from an earlier
+// findVideoInIndex/findLibraryVideo lookup) rather than re-deriving
+// channelDir/videoDir from videoMetaData the way writeLibraryEntry does --
+// if the channel/title drifted since the video was first tracked,
+// re-deriving could land the "new version" in a different folder entirely
+// instead of alongside its own history.
+export function addLibraryVersion({ libraryDir, videoDir, videoMetaData }) {
+    const resolvedLibraryDir = path.resolve(libraryDir || '');
+    const resolvedVideoDir = path.resolve(videoDir || '');
+    const relative = path.relative(resolvedLibraryDir, resolvedVideoDir);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('Refusing to add a version outside the configured library folder.');
+    }
+
+    const addedEpoch = Date.now();
+    const epochDir = path.join(resolvedVideoDir, String(addedEpoch));
+    fs.mkdirSync(epochDir, { recursive: true });
+
+    const metadata = buildEpochMetadata(videoMetaData, addedEpoch);
+    fs.writeFileSync(path.join(epochDir, 'metadata.json'), JSON.stringify(metadata, null, 2), 'utf-8');
+    return { videoDir: resolvedVideoDir, epochDir, epoch: String(addedEpoch), metadata };
 }
 
 // Called after a download into the library completes -- updates the specific
@@ -162,14 +190,37 @@ export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath,
 // Guard-railed even though videoDir always originates from our own index in
 // practice -- deleting is destructive enough to be worth defense in depth
 // against ever operating outside the configured library folder.
-export function deleteLibraryEntry({ libraryDir, videoDir }) {
+//
+// epoch, when given, deletes just that one version instead of the whole
+// video -- the version-control UI always passes whichever epoch is
+// currently displayed. Deliberately does NOT try to compute "the new latest
+// remaining version" itself: scanLibrary()'s existing tolerant newest-valid-
+// epoch logic already does exactly that on the next refresh, and
+// re-implementing the same rule here a second time would risk the two
+// drifting apart later. Callers just need to know whether the whole video
+// is now gone (videoDeleted) so they can decide whether to navigate back to
+// the library root or stay and let a refresh pick the video's new latest.
+export function deleteLibraryEntry({ libraryDir, videoDir, epoch }) {
     const resolvedLibraryDir = path.resolve(libraryDir || '');
     const resolvedVideoDir = path.resolve(videoDir || '');
     const relative = path.relative(resolvedLibraryDir, resolvedVideoDir);
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
         throw new Error('Refusing to delete a path outside the configured library folder.');
     }
-    fs.rmSync(resolvedVideoDir, { recursive: true, force: true });
+
+    if (!epoch) {
+        fs.rmSync(resolvedVideoDir, { recursive: true, force: true });
+        return { videoDeleted: true };
+    }
+
+    fs.rmSync(path.join(resolvedVideoDir, epoch), { recursive: true, force: true });
+    const anyEpochsRemain = fs.existsSync(resolvedVideoDir)
+        && fs.readdirSync(resolvedVideoDir, { withFileTypes: true }).some((e) => e.isDirectory());
+    if (!anyEpochsRemain) {
+        fs.rmSync(resolvedVideoDir, { recursive: true, force: true });
+        return { videoDeleted: true };
+    }
+    return { videoDeleted: false };
 }
 
 // "Override" means replace the tracked entry, not add another version --
@@ -190,9 +241,11 @@ export function overrideLibraryEntry({ libraryDir, videoMetaData, existingVideoD
 // Bounded 3-level walk (channel/video/epoch), tolerant of partial or corrupt
 // folders -- a missing or unparseable metadata.json is skipped rather than
 // failing the whole scan, since an interrupted write is always conceivable.
-// Single-version only for this pass: if a video folder has multiple epoch
-// subfolders, the most recent one with a valid metadata.json wins; full
-// version history is an explicitly later, deferred step.
+// Collects every valid epoch into `epochs` (newest first) for the
+// version-control UI, while `latestEpoch`/`metadata` stay pointed at the
+// newest valid one exactly as before -- every existing consumer (grid
+// cards, channel display name, channel-icon lookup) reads only those two
+// fields and is completely unaffected by this.
 export async function scanLibrary(libraryDir) {
     const index = { channels: [] };
     if (!libraryDir || !fs.existsSync(libraryDir)) {
@@ -238,12 +291,16 @@ export async function scanLibrary(libraryDir) {
 
             let metadata = null;
             let latestEpoch = null;
+            const epochs = [];
             for (const epochName of epochNames) {
                 try {
                     const raw = await fsp.readFile(path.join(videoPath, epochName, 'metadata.json'), 'utf-8');
-                    metadata = JSON.parse(raw);
-                    latestEpoch = epochName;
-                    break;
+                    const epochMetadata = JSON.parse(raw);
+                    epochs.push({ epoch: epochName, metadata: epochMetadata });
+                    if (!metadata) {
+                        metadata = epochMetadata;
+                        latestEpoch = epochName;
+                    }
                 } catch {
                     continue;
                 }
@@ -256,6 +313,7 @@ export async function scanLibrary(libraryDir) {
                 videoDir: videoPath,
                 latestEpoch,
                 metadata,
+                epochs,
             });
         }
 

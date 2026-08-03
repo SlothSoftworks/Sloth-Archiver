@@ -46,6 +46,7 @@ type LibraryVideo = {
   videoDir: string;
   latestEpoch: string | null;
   metadata: LibraryVideoMetadata;
+  epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
 };
 
 type LibraryChannel = {
@@ -54,6 +55,21 @@ type LibraryChannel = {
   channelIconPath: string | null;
   videos: LibraryVideo[];
 };
+
+// Reflects the best quality captured across ALL versions, not just the
+// video's latest one -- a newer version might not be downloaded yet while
+// an older one already has a real file, and showing "Not downloaded" in
+// that case would misrepresent what's actually archived.
+function getBestDownloadedQuality(epochs: { metadata: LibraryVideoMetadata }[]): { resolution: string; format: string | null } | null {
+  const downloaded = epochs.filter((e) => e.metadata.downloadedFilePath);
+  if (downloaded.length === 0) return null;
+  // Prefer an actual video resolution over an MP3-only capture when both
+  // exist -- a real video is generally the more "complete" archive of the two.
+  const videoOnly = downloaded.filter((e) => e.metadata.downloadedResolution !== 'MP3');
+  const pool = videoOnly.length > 0 ? videoOnly : downloaded;
+  const best = pool.reduce((a, b) => (Number(b.metadata.downloadedResolution) > Number(a.metadata.downloadedResolution) ? b : a));
+  return { resolution: best.metadata.downloadedResolution as string, format: best.metadata.downloadedFormat };
+}
 
 export default function LibraryScreen() {
   const [libraryDir, setLibraryDir] = useState('');
@@ -105,6 +121,29 @@ export default function LibraryScreen() {
     setSelectedChannel((prev) => (prev && updatedChannels.find((c) => c.channelFolderName === prev.channelFolderName)) || prev);
   };
 
+  // Any action that adds or removes a *version* (not just updates a field on
+  // the one already displayed, like a normal download/quality-swap) needs
+  // this instead of the plain onLibraryChanged/refreshChannelsSilently --
+  // the version-selector's option list is read straight from the `video`
+  // prop's `epochs` array, so if only the root `channels` list gets
+  // refreshed (leaving `selectedVideo` stale), the selector never grows a
+  // new option after "download new version," or never shrinks one after
+  // deleting a version. Same staleness fix as handleChannelsUpdated above,
+  // applied to `selectedVideo`/`selectedChannel` instead of just `channels`.
+  const handleVersionsChanged = async () => {
+    const index = await window.electronAPI.refreshLibraryIndex();
+    setChannels(index.channels);
+    setSelectedChannel((prev) => (prev && index.channels.find((c) => c.channelFolderName === prev.channelFolderName)) || prev);
+    setSelectedVideo((prev) => {
+      if (!prev) return prev;
+      for (const channel of index.channels) {
+        const found = channel.videos.find((v) => v.videoDir === prev.videoDir);
+        if (found) return found;
+      }
+      return prev;
+    });
+  };
+
   // Resets both selectedChannel and selectedVideo, not just the latter --
   // selectedChannel is a stale snapshot taken when the user first navigated
   // into it, and refreshChannelsSilently (already called by LibraryVideoDetail
@@ -144,6 +183,7 @@ export default function LibraryScreen() {
         onBack={() => setSelectedVideo(null)}
         onLibraryChanged={refreshChannelsSilently}
         onDeleted={handleVideoDeleted}
+        onVersionsChanged={handleVersionsChanged}
       />
     );
   }
@@ -265,36 +305,43 @@ function VideoGrid({ channel, onBack, onSelectVideo, onChannelsUpdated }: {
         </Tooltip>
       </Stack>
       <Grid container spacing={2}>
-        {channel.videos.map((video) => (
-          <Grid size={{ xs: 12, sm: 6, md: 4 }} key={video.videoFolderName}>
-            <Card variant="outlined">
-              <CardActionArea onClick={() => onSelectVideo(video)}>
-                <CardMedia
-                  component="div"
-                  image={video.metadata.thumbnail || undefined}
-                  sx={{ aspectRatio: '16 / 9', backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                />
-                <Box sx={{ p: 1.5 }}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
-                    <Typography variant="body1" noWrap sx={{ minWidth: 0 }}>{video.metadata.title || video.videoFolderName}</Typography>
-                    {video.metadata.downloadedFilePath ? (
-                      <Chip
-                        size="small"
-                        color="success"
-                        label={video.metadata.downloadedResolution === 'MP3' ? 'MP3' : `${video.metadata.downloadedResolution}p`}
-                      />
-                    ) : (
-                      <Chip size="small" variant="outlined" label="Not downloaded" />
-                    )}
-                  </Stack>
-                  <Typography variant="body2" color="text.secondary">
-                    {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
-                  </Typography>
-                </Box>
-              </CardActionArea>
-            </Card>
-          </Grid>
-        ))}
+        {channel.videos.map((video) => {
+          const bestQuality = getBestDownloadedQuality(video.epochs);
+          return (
+            <Grid size={{ xs: 12, sm: 6, md: 4 }} key={video.videoFolderName}>
+              <Card variant="outlined">
+                <CardActionArea onClick={() => onSelectVideo(video)}>
+                  <CardMedia
+                    component="div"
+                    image={video.metadata.thumbnail || undefined}
+                    sx={{ aspectRatio: '16 / 9', backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                  />
+                  <Box sx={{ p: 1.5 }}>
+                    <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+                      <Typography variant="body1" noWrap sx={{ minWidth: 0 }}>{video.metadata.title || video.videoFolderName}</Typography>
+                      {bestQuality ? (
+                        <Chip
+                          size="small"
+                          color="success"
+                          label={bestQuality.resolution === 'MP3' ? 'MP3' : `${bestQuality.resolution}p`}
+                        />
+                      ) : (
+                        <Chip size="small" variant="outlined" label="Not downloaded" />
+                      )}
+                    </Stack>
+                    <Stack direction="row" justifyContent="space-between" alignItems="center">
+                      <Typography variant="body2" color="text.secondary">
+                        {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
+                      </Typography>
+                      {video.epochs.length > 1 &&
+                        <Typography variant="caption" color="text.secondary">{video.epochs.length} versions</Typography>}
+                    </Stack>
+                  </Box>
+                </CardActionArea>
+              </Card>
+            </Grid>
+          );
+        })}
       </Grid>
     </Box>
   );

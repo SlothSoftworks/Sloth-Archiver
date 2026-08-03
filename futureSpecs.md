@@ -64,6 +64,7 @@ you point it here.
 7. After the add to library button effectievely adds a new item ot the library a notification number should be added on the library tab. This should increase for every new video that the user adds and once the user clicks into the library tab the notification will reset to 0 and dissapear
 8. Change the icon in the channel level of the library view into the actual channel icon
 9. Video merger (requires video versioning first): Sometimes videos get re-edited and reuploaded and this causes them to have a different link. This feature would add an option to add the new link in the video library view and the metadata will replace the main link to the video (to keep updating and downloading if he wants to) but keep the original video data in a version marked (legacy/deleted from youtube)
+10. Local file video thumbnail replaced with the youtube video thumbnail to keep a consistent and more presentable UX (if we'ren ot savign the thubmnail yet start saving it to keep it working on offline mode)
 
 
 

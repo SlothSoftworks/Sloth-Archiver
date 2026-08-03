@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Chip,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -25,6 +26,8 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
+import DownloadDoneIcon from '@mui/icons-material/DownloadDone';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
 import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
@@ -53,7 +56,14 @@ type LibraryVideo = {
   videoDir: string;
   latestEpoch: string | null;
   metadata: LibraryVideoMetadata;
+  epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
 };
+
+// Epoch folder names are Date.now() ms timestamps -- no existing formatter
+// anywhere in the renderer turns one into something readable.
+function formatEpochLabel(epoch: string): string {
+  return new Date(Number(epoch)).toLocaleString();
+}
 
 // Same visual pattern as VideoDetailCard.tsx's buffer bar -- kept as a
 // separate copy rather than a shared import since this file has no other
@@ -128,12 +138,14 @@ function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFo
   );
 }
 
-export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, onDeleted }: {
+export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, onDeleted, onVersionsChanged }: {
   video: LibraryVideo;
   onBack: () => void;
   onLibraryChanged: () => Promise<void> | void;
   onDeleted: () => void;
+  onVersionsChanged: () => Promise<void> | void;
 }) {
+  const [selectedEpoch, setSelectedEpoch] = useState(video.latestEpoch);
   const [metadata, setMetadata] = useState(video.metadata);
   const [selectedFormat, setSelectedFormat] = useState('dflt');
   const [selectedResolution, setSelectedResolution] = useState('');
@@ -141,6 +153,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [swappingQuality, setSwappingQuality] = useState(false);
+  const [creatingVersion, setCreatingVersion] = useState(false);
+  const [createVersionError, setCreateVersionError] = useState<string | null>(null);
   // 'initial' vs 'swap' decides which backend call the isDone effect below
   // makes -- both flows reuse the same useDownloadVideo() instance below
   // (startDownload resets isDone/isError/progress at the start of every
@@ -154,17 +168,82 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
 
   const { downloadProgress, postprocessProgress, downloadStatus, finalFilePath, isDone, isError, startDownload } = useDownloadVideo();
 
+  // A genuinely different video was selected (not just a data refresh of the
+  // same one, e.g. after a download/swap/version-add) -- jump to its latest.
+  useEffect(() => {
+    setSelectedEpoch(video.latestEpoch);
+    setMetadata(video.metadata);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video.videoDir]);
+
+  // The epoch currently being viewed may have just been deleted (this
+  // component's own version-scoped delete) -- if a refresh comes through and
+  // it's no longer in the list, fall back to whatever's now latest rather
+  // than silently pointing at a version that no longer exists.
+  useEffect(() => {
+    if (selectedEpoch && !video.epochs.some((e) => e.epoch === selectedEpoch)) {
+      setSelectedEpoch(video.latestEpoch);
+      setMetadata(video.metadata);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video.epochs]);
+
+  const handleSelectEpoch = (epoch: string) => {
+    const found = video.epochs.find((e) => e.epoch === epoch);
+    if (!found) return;
+    setSelectedEpoch(epoch);
+    setMetadata(found.metadata);
+    // Reset transient per-epoch UI state -- these reflect the previous
+    // version's in-progress state and don't apply to the newly selected one.
+    setSelectedResolution('');
+    setSwappingQuality(false);
+  };
+
+  // "Download new version" -- re-fetches live data (never the cache, since
+  // the whole point is capturing what may have actually changed since this
+  // video was first tracked) and adds it as a new epoch under this same
+  // video, then swaps the view to it.
+  const handleDownloadNewVersion = async () => {
+    if (!metadata.originalUrl) return;
+    setCreatingVersion(true);
+    setCreateVersionError(null);
+    try {
+      await window.electronAPI.deleteVideoInfoCacheEntry(metadata.originalUrl);
+      const result = await window.electronAPI.getVideoInfoPython(metadata.originalUrl);
+      if (!result.success) {
+        throw new Error('Failed to fetch fresh video data.');
+      }
+      const added = await window.electronAPI.addLibraryVersion(result.data.response, video.videoDir);
+      // Needs the deeper resync (not plain onLibraryChanged) -- this just
+      // added a new epoch, so the version selector's option list (read
+      // straight from the `video` prop's `epochs` array) needs a fresh
+      // `video` prop, not just a refreshed root channel list.
+      await onVersionsChanged();
+      setSelectedEpoch(added.epoch);
+      setMetadata(added.metadata);
+      setSelectedResolution('');
+      setSwappingQuality(false);
+    } catch (err) {
+      setCreateVersionError(err instanceof Error ? err.message : 'Failed to create a new version.');
+    } finally {
+      setCreatingVersion(false);
+    }
+  };
+
   const handleDownload = (resolution: string) => {
-    if (!video.latestEpoch) return;
+    if (!selectedEpoch) return;
     setDownloadMode('initial');
     setSelectedResolution(resolution);
     // Deterministic path inside the video's own storage -- no Save dialog,
     // no overwrite/resume prompt needed (this folder is ours, not a
-    // user-picked location with pre-existing files to worry about). A fixed
-    // base filename avoids any need to sanitize the title again for the
-    // renderer side; yt-dlp/ffmpeg fill in the right extension, same
+    // user-picked location with pre-existing files to worry about). Keyed
+    // off whichever version is currently selected, not always the newest --
+    // a "download new version" that hasn't been downloaded yet is still
+    // browsable and downloadable like any other version. A fixed base
+    // filename avoids any need to sanitize the title again for the renderer
+    // side; yt-dlp/ffmpeg fill in the right extension, same
     // findFinalFile-style resolution used everywhere else in this app.
-    const outputPath = `${video.videoDir}/${video.latestEpoch}/video`;
+    const outputPath = `${video.videoDir}/${selectedEpoch}/video`;
     startDownload({ videoUrl: metadata.originalUrl || '', outputPath, format: selectedFormat, resolution });
   };
 
@@ -174,20 +253,20 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // was specced with). The actual delete-old/rename-new swap only happens in
   // the isDone effect below, once the new file is confirmed complete.
   const handleSwapDownload = (resolution: string) => {
-    if (!video.latestEpoch) return;
+    if (!selectedEpoch) return;
     setDownloadMode('swap');
     setSelectedResolution(resolution);
-    const outputPath = `${video.videoDir}/${video.latestEpoch}/video.new`;
+    const outputPath = `${video.videoDir}/${selectedEpoch}/video.new`;
     startDownload({ videoUrl: metadata.originalUrl || '', outputPath, format: selectedFormat, resolution });
   };
 
   useEffect(() => {
-    if (!isDone || !video.latestEpoch) return;
+    if (!isDone || !selectedEpoch) return;
     (async () => {
       if (downloadMode === 'swap') {
         const updated = await window.electronAPI.swapLibraryDownload({
           videoDir: video.videoDir,
-          epoch: video.latestEpoch as string,
+          epoch: selectedEpoch,
           tempFilePath: finalFilePath,
           oldFilePath: metadata.downloadedFilePath,
           resolution: selectedResolution,
@@ -200,7 +279,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
       } else {
         await window.electronAPI.recordLibraryDownload({
           videoDir: video.videoDir,
-          epoch: video.latestEpoch as string,
+          epoch: selectedEpoch,
           filePath: finalFilePath,
           resolution: selectedResolution,
           format: selectedFormat,
@@ -212,7 +291,15 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           downloadedFormat: selectedFormat,
         }));
       }
-      await onLibraryChanged();
+      // Deep resync, not the shallow onLibraryChanged -- a regular download
+      // or quality-swap only touches the currently-selected epoch's own
+      // fields, but handleSelectEpoch re-reads straight from the `video`
+      // prop's `epochs` array on every switch. Without this, switching away
+      // from this epoch and back would silently revert to whatever
+      // downloadedFilePath the prop had *before* this download completed,
+      // showing the YouTube embed again for a version that's actually
+      // already downloaded.
+      await onVersionsChanged();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDone]);
@@ -233,9 +320,19 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setDeleting(true);
     setDeleteError(null);
     try {
-      await window.electronAPI.deleteLibraryEntry(video.videoDir);
-      await onLibraryChanged();
-      onDeleted();
+      // Deletes only the currently-displayed version -- if that was the
+      // last one, the whole video (now-empty folder) goes with it and we
+      // land back at the library root, same as delete always worked before
+      // versioning existed. Otherwise the video survives and the parent
+      // needs to refresh both the root channel list and this stale
+      // `video` prop snapshot so the view swaps to whatever's now latest.
+      const { videoDeleted } = await window.electronAPI.deleteLibraryEntry(video.videoDir, selectedEpoch || undefined);
+      if (videoDeleted) {
+        await onLibraryChanged();
+        onDeleted();
+      } else {
+        await onVersionsChanged();
+      }
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete this entry.');
     } finally {
@@ -258,6 +355,18 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           <Typography variant="h6" noWrap>{metadata.title || video.videoFolderName}</Typography>
         </Stack>
         <Stack direction="row" spacing={0.5}>
+          <Tooltip title="Download new version (re-fetches live data)">
+            <span>
+              <IconButton
+                size="small"
+                onClick={handleDownloadNewVersion}
+                disabled={creatingVersion || !metadata.originalUrl}
+                aria-label="Download new version"
+              >
+                {creatingVersion ? <CircularProgress size={18} /> : <AddCircleOutlineIcon fontSize="small" />}
+              </IconButton>
+            </span>
+          </Tooltip>
           {metadata.downloadedFilePath && resolutions.length > 0 &&
             <Tooltip title="Download a different quality">
               <IconButton
@@ -275,15 +384,45 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           </Tooltip>
         </Stack>
       </Stack>
+      {createVersionError &&
+        <Typography color="error" variant="body2" sx={{ mb: 2 }}>{createVersionError}</Typography>}
 
-      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+      {/* Keyed on the selected version so switching versions always forces a
+          full remount of the player + download panel below, instead of
+          relying on every branch inside them to correctly react to a props
+          change -- a plain data refresh alone wasn't reliably enough to get
+          the player to swap between the local-file and YouTube-embed
+          branches when switching to a version with different download
+          status than the one just displayed. */}
+      <Stack key={selectedEpoch || 'no-epoch'} direction={{ xs: 'column', md: 'row' }} spacing={2}>
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '70%' } }}>
           <LibraryVideoPlayer metadata={metadata} cacheBustKey={cacheBustKey} />
 
           <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Typography variant="body2" color="info.main" fontWeight="bolder">
-              {convertYYYYMMDDStringToDate(metadata.uploadDate || '') || metadata.uploadDate}
-            </Typography>
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Typography variant="body2" color="info.main" fontWeight="bolder">
+                {convertYYYYMMDDStringToDate(metadata.uploadDate || '') || metadata.uploadDate}
+              </Typography>
+              {video.epochs.length > 1 &&
+                <Select
+                  size="small"
+                  variant="standard"
+                  value={selectedEpoch || ''}
+                  onChange={(e) => handleSelectEpoch(e.target.value)}
+                >
+                  {video.epochs.map(({ epoch, metadata: epochMetadata }) => (
+                    <MenuItem key={epoch} value={epoch}>
+                      <Stack direction="row" spacing={0.5} alignItems="center">
+                        {epochMetadata.downloadedFilePath &&
+                          <DownloadDoneIcon fontSize="small" color="success" />}
+                        <span>
+                          {formatEpochLabel(epoch)}{epoch === video.latestEpoch ? ' (latest)' : ''}
+                        </span>
+                      </Stack>
+                    </MenuItem>
+                  ))}
+                </Select>}
+            </Stack>
             {metadata.downloadedFilePath &&
               <Chip
                 color="success"
