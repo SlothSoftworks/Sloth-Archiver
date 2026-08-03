@@ -115,6 +115,50 @@ export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, f
     return metadata;
 }
 
+// "Download different quality" -- the safety rule from the original spec is
+// "don't replace on download, download with an alternative name and once the
+// download is fine delete the old one and rename the new one." tempFilePath
+// is wherever the just-completed download actually landed (a distinct
+// "video.new.<ext>" path the caller downloads to, never the live file's own
+// path), so a failed/interrupted download never touches the working file --
+// this function is only ever called after startDownload's own isDone/isError
+// signal confirms the new file is real and complete. Guard-railed against
+// libraryDir with the same path.relative check deleteLibraryEntry uses.
+export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format }) {
+    const resolvedLibraryDir = path.resolve(libraryDir || '');
+    const resolvedTempFilePath = path.resolve(tempFilePath || '');
+    const relative = path.relative(resolvedLibraryDir, resolvedTempFilePath);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('Refusing to swap in a file outside the configured library folder.');
+    }
+
+    const resolvedVideoDir = path.resolve(videoDir);
+    // The deterministic "video.<ext>" slot this video's downloads always live
+    // at (see LibraryVideoDetail.tsx's outputPath) -- re-derived from the
+    // temp file's own resolved extension rather than reusing oldFilePath's
+    // name verbatim, since a quality swap can also change format/extension.
+    const targetPath = path.join(resolvedVideoDir, epoch, `video${path.extname(resolvedTempFilePath)}`);
+
+    if (oldFilePath) {
+        const resolvedOldFilePath = path.resolve(oldFilePath);
+        if (resolvedOldFilePath !== resolvedTempFilePath && fs.existsSync(resolvedOldFilePath)) {
+            fs.rmSync(resolvedOldFilePath, { force: true });
+        }
+    }
+    if (targetPath !== resolvedTempFilePath && fs.existsSync(targetPath)) {
+        fs.rmSync(targetPath, { force: true });
+    }
+    fs.renameSync(resolvedTempFilePath, targetPath);
+
+    const metadataPath = path.join(resolvedVideoDir, epoch, 'metadata.json');
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    metadata.downloadedFilePath = targetPath;
+    metadata.downloadedResolution = resolution || null;
+    metadata.downloadedFormat = format || null;
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    return metadata;
+}
+
 // Guard-railed even though videoDir always originates from our own index in
 // practice -- deleting is destructive enough to be worth defense in depth
 // against ever operating outside the configured library folder.

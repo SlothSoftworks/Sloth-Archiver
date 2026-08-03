@@ -24,6 +24,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
 import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
@@ -72,6 +73,61 @@ function LinearProgressWithLabel({ value, valueBuffer }: { value: number; valueB
   );
 }
 
+// Shared between the first-download and "download different quality" flows --
+// excludeResolution blocks re-picking whatever's already downloaded (that's
+// not a "different" quality) rather than hiding it, so it's clear why one
+// button is greyed out instead of it just silently not being there.
+function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFormat, onFormatChange, isError }: {
+  resolutions: LibraryResolution[];
+  excludeResolution?: string | null;
+  onSelect: (resolution: string) => void;
+  selectedFormat: string;
+  onFormatChange: (format: string) => void;
+  isError: boolean;
+}) {
+  return (
+    <>
+      {isError &&
+        <Typography color="error" variant="body2" sx={{ mb: 1 }}>Download failed -- try again.</Typography>}
+      <Grid container spacing={1} columns={{ xs: 2, sm: 9, md: 12 }}>
+        {resolutions.map((res, idx) => (
+          <Grid size={{ xs: 1, sm: 3 }} key={idx}>
+            <Button
+              onClick={() => onSelect(res.resolution)}
+              disabled={res.resolution === excludeResolution}
+              sx={{ whiteSpace: 'pre-line' }}
+              color={res.resolution === 'MP3' ? 'secondary' : 'primary'}
+              fullWidth
+              variant={res.resolution === 'MP3' ? 'contained' : 'outlined'}
+            >
+              <Stack spacing={0} direction="column" divider={<Divider flexItem sx={{ mx: 1 }} orientation="horizontal" />}>
+                <Typography variant="button" textTransform="none">
+                  {res.resolution}{res.resolution === 'MP3' ? '' : 'p'}{res.resolution === excludeResolution ? ' (current)' : ''}
+                </Typography>
+                <Typography variant="caption">{res.filesizeMb}Mb</Typography>
+              </Stack>
+            </Button>
+          </Grid>
+        ))}
+      </Grid>
+      <Divider sx={{ my: 1 }} />
+      <FormGroup>
+        <Select
+          size="small"
+          value={selectedFormat}
+          onChange={(e) => onFormatChange(e.target.value)}
+          variant="standard"
+        >
+          <MenuItem value="dflt">Default (keep origin format)</MenuItem>
+          <MenuItem value="mp4">MP4</MenuItem>
+          <MenuItem value="webm">WEBM</MenuItem>
+          <MenuItem value="mkv">MKV</MenuItem>
+        </Select>
+      </FormGroup>
+    </>
+  );
+}
+
 export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, onDeleted }: {
   video: LibraryVideo;
   onBack: () => void;
@@ -84,11 +140,23 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [swappingQuality, setSwappingQuality] = useState(false);
+  // 'initial' vs 'swap' decides which backend call the isDone effect below
+  // makes -- both flows reuse the same useDownloadVideo() instance below
+  // (startDownload resets isDone/isError/progress at the start of every
+  // call, so a second download through the same hook instance is safe).
+  const [downloadMode, setDownloadMode] = useState<'initial' | 'swap'>('initial');
+  // Bumped after a successful quality swap and threaded into the player's
+  // src URL -- a swap can land back on the exact same file path+extension,
+  // and without this the <video>/<audio> element has no signal that the
+  // underlying bytes changed, so it just keeps showing the old content.
+  const [cacheBustKey, setCacheBustKey] = useState(0);
 
   const { downloadProgress, postprocessProgress, downloadStatus, finalFilePath, isDone, isError, startDownload } = useDownloadVideo();
 
   const handleDownload = (resolution: string) => {
     if (!video.latestEpoch) return;
+    setDownloadMode('initial');
     setSelectedResolution(resolution);
     // Deterministic path inside the video's own storage -- no Save dialog,
     // no overwrite/resume prompt needed (this folder is ours, not a
@@ -100,22 +168,50 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     startDownload({ videoUrl: metadata.originalUrl || '', outputPath, format: selectedFormat, resolution });
   };
 
+  // "Download different quality" -- downloads to a distinct "video.new.<ext>"
+  // path rather than the live file's own path, so a failed/interrupted
+  // download never touches the working file (the safety rule this feature
+  // was specced with). The actual delete-old/rename-new swap only happens in
+  // the isDone effect below, once the new file is confirmed complete.
+  const handleSwapDownload = (resolution: string) => {
+    if (!video.latestEpoch) return;
+    setDownloadMode('swap');
+    setSelectedResolution(resolution);
+    const outputPath = `${video.videoDir}/${video.latestEpoch}/video.new`;
+    startDownload({ videoUrl: metadata.originalUrl || '', outputPath, format: selectedFormat, resolution });
+  };
+
   useEffect(() => {
     if (!isDone || !video.latestEpoch) return;
     (async () => {
-      await window.electronAPI.recordLibraryDownload({
-        videoDir: video.videoDir,
-        epoch: video.latestEpoch as string,
-        filePath: finalFilePath,
-        resolution: selectedResolution,
-        format: selectedFormat,
-      });
-      setMetadata((prev) => ({
-        ...prev,
-        downloadedFilePath: finalFilePath,
-        downloadedResolution: selectedResolution,
-        downloadedFormat: selectedFormat,
-      }));
+      if (downloadMode === 'swap') {
+        const updated = await window.electronAPI.swapLibraryDownload({
+          videoDir: video.videoDir,
+          epoch: video.latestEpoch as string,
+          tempFilePath: finalFilePath,
+          oldFilePath: metadata.downloadedFilePath,
+          resolution: selectedResolution,
+          format: selectedFormat,
+        });
+        setMetadata(updated);
+        setCacheBustKey((prev) => prev + 1);
+        setSwappingQuality(false);
+        setSelectedResolution('');
+      } else {
+        await window.electronAPI.recordLibraryDownload({
+          videoDir: video.videoDir,
+          epoch: video.latestEpoch as string,
+          filePath: finalFilePath,
+          resolution: selectedResolution,
+          format: selectedFormat,
+        });
+        setMetadata((prev) => ({
+          ...prev,
+          downloadedFilePath: finalFilePath,
+          downloadedResolution: selectedResolution,
+          downloadedFormat: selectedFormat,
+        }));
+      }
       await onLibraryChanged();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -148,7 +244,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     }
   };
 
-  const isDownloading = !!selectedResolution && !isError && !metadata.downloadedFilePath;
+  const isDownloading = !!selectedResolution && !isError && !metadata.downloadedFilePath && !swappingQuality;
+  const isSwapDownloading = !!selectedResolution && !isError && swappingQuality;
   const resolutions = metadata.resolutions || [];
 
   return (
@@ -160,16 +257,28 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           </IconButton>
           <Typography variant="h6" noWrap>{metadata.title || video.videoFolderName}</Typography>
         </Stack>
-        <Tooltip title="Delete this video from the library">
-          <IconButton size="small" color="error" onClick={() => setDeleteDialogOpen(true)} aria-label="Delete video">
-            <DeleteOutlineIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+        <Stack direction="row" spacing={0.5}>
+          {metadata.downloadedFilePath && resolutions.length > 0 &&
+            <Tooltip title="Download a different quality">
+              <IconButton
+                size="small"
+                onClick={() => { setSwappingQuality(true); setSelectedResolution(''); }}
+                aria-label="Download a different quality"
+              >
+                <CloudDownloadIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>}
+          <Tooltip title="Delete this video from the library">
+            <IconButton size="small" color="error" onClick={() => setDeleteDialogOpen(true)} aria-label="Delete video">
+              <DeleteOutlineIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Stack>
       </Stack>
 
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '70%' } }}>
-          <LibraryVideoPlayer metadata={metadata} />
+          <LibraryVideoPlayer metadata={metadata} cacheBustKey={cacheBustKey} />
 
           <Stack direction="row" justifyContent="space-between" alignItems="center">
             <Typography variant="body2" color="info.main" fontWeight="bolder">
@@ -189,7 +298,31 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
 
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '30%' } }}>
           <Card sx={{ p: 1 }} variant="outlined">
-            {metadata.downloadedFilePath ? (
+            {swappingQuality ? (
+              isSwapDownloading ? (
+                <Stack spacing={1} sx={{ p: 1 }}>
+                  <Typography variant="subtitle1" textAlign="center">
+                    {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : 'Downloading'}
+                    {selectedResolution && ` (${selectedResolution}${selectedResolution.toLowerCase() === 'mp3' ? '' : 'p'})`}
+                  </Typography>
+                  <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
+                </Stack>
+              ) : (
+                <>
+                  <ResolutionPicker
+                    resolutions={resolutions}
+                    excludeResolution={metadata.downloadedResolution}
+                    onSelect={handleSwapDownload}
+                    selectedFormat={selectedFormat}
+                    onFormatChange={setSelectedFormat}
+                    isError={isError}
+                  />
+                  <Button size="small" onClick={() => setSwappingQuality(false)} sx={{ mt: 1 }}>
+                    Cancel
+                  </Button>
+                </>
+              )
+            ) : metadata.downloadedFilePath ? (
               <Stack direction="row" spacing={1}>
                 <Button size="small" startIcon={<FolderOpenIcon />} onClick={handleOpenFileLocation}>
                   Open file location
@@ -212,42 +345,13 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 re-add it from the Downloader tab to enable downloading here.
               </Typography>
             ) : (
-              <>
-                {isError &&
-                  <Typography color="error" variant="body2" sx={{ mb: 1 }}>Download failed -- try again.</Typography>}
-                <Grid container spacing={1} columns={{ xs: 2, sm: 9, md: 12 }}>
-                  {resolutions.map((res, idx) => (
-                    <Grid size={{ xs: 1, sm: 3 }} key={idx}>
-                      <Button
-                        onClick={() => handleDownload(res.resolution)}
-                        sx={{ whiteSpace: 'pre-line' }}
-                        color={res.resolution === 'MP3' ? 'secondary' : 'primary'}
-                        fullWidth
-                        variant={res.resolution === 'MP3' ? 'contained' : 'outlined'}
-                      >
-                        <Stack spacing={0} direction="column" divider={<Divider flexItem sx={{ mx: 1 }} orientation="horizontal" />}>
-                          <Typography variant="button" textTransform="none">{res.resolution}{res.resolution === 'MP3' ? '' : 'p'}</Typography>
-                          <Typography variant="caption">{res.filesizeMb}Mb</Typography>
-                        </Stack>
-                      </Button>
-                    </Grid>
-                  ))}
-                </Grid>
-                <Divider sx={{ my: 1 }} />
-                <FormGroup>
-                  <Select
-                    size="small"
-                    value={selectedFormat}
-                    onChange={(e) => setSelectedFormat(e.target.value)}
-                    variant="standard"
-                  >
-                    <MenuItem value="dflt">Default (keep origin format)</MenuItem>
-                    <MenuItem value="mp4">MP4</MenuItem>
-                    <MenuItem value="webm">WEBM</MenuItem>
-                    <MenuItem value="mkv">MKV</MenuItem>
-                  </Select>
-                </FormGroup>
-              </>
+              <ResolutionPicker
+                resolutions={resolutions}
+                onSelect={handleDownload}
+                selectedFormat={selectedFormat}
+                onFormatChange={setSelectedFormat}
+                isError={isError}
+              />
             )}
           </Card>
         </Stack>

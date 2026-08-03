@@ -19,15 +19,20 @@ function getExtension(filePath: string): string {
 
 // filePath is a full absolute path already resolved server-side (see
 // findFinalFile in main.js) -- this URL is only ever built from that trusted
-// value, never from arbitrary/user-typed input.
-function buildAppVideoUrl(filePath: string): string {
-  return `app-video://local/${encodeURIComponent(filePath)}`;
+// value, never from arbitrary/user-typed input. cacheBustKey is appended as
+// a query param (ignored by the protocol handler, which only reads the
+// pathname) so a "download different quality" swap that lands back on the
+// exact same path+extension still forces a real reload instead of the
+// <video> element silently continuing to show the old cached bytes under an
+// unchanged src string.
+function buildAppVideoUrl(filePath: string, cacheBustKey: number): string {
+  return `app-video://local/${encodeURIComponent(filePath)}?v=${cacheBustKey}`;
 }
 
 const containerSx = { borderRadius: 2 };
 const fillSx = { width: '100%', height: '100%', display: 'block' };
 
-export default function LibraryVideoPlayer({ metadata }: { metadata: LibraryVideoMetadata }) {
+export default function LibraryVideoPlayer({ metadata, cacheBustKey = 0 }: { metadata: LibraryVideoMetadata; cacheBustKey?: number }) {
   const { downloadedFilePath, downloadedResolution, thumbnail, videoId } = metadata;
 
   if (!downloadedFilePath) {
@@ -47,7 +52,7 @@ export default function LibraryVideoPlayer({ metadata }: { metadata: LibraryVide
           sx={{ height: '100%', backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
         />
         <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, p: 1, backgroundColor: 'rgba(0,0,0,0.6)' }}>
-          <Box component="audio" controls src={buildAppVideoUrl(downloadedFilePath)} sx={{ width: '100%' }} />
+          <Box component="audio" controls src={buildAppVideoUrl(downloadedFilePath, cacheBustKey)} sx={{ width: '100%' }} />
         </Box>
       </ResizableMediaContainer>
     );
@@ -59,7 +64,7 @@ export default function LibraryVideoPlayer({ metadata }: { metadata: LibraryVide
         <Box
           component="video"
           controls
-          src={buildAppVideoUrl(downloadedFilePath)}
+          src={buildAppVideoUrl(downloadedFilePath, cacheBustKey)}
           sx={{ ...fillSx, backgroundColor: 'black', objectFit: 'contain' }}
         />
       </ResizableMediaContainer>

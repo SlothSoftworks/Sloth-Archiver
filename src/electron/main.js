@@ -8,7 +8,7 @@ import http from 'node:http';
 
 import { getSupportedVideoFilters } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, deleteLibraryEntry } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry } from './library.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -339,6 +339,13 @@ ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, 
     const { libraryDir } = readSettings();
     await refreshLibraryIndex(libraryDir);
     return { success: true };
+});
+
+ipcMain.handle('library:swapDownload', async (e, { videoDir, epoch, tempFilePath, oldFilePath, resolution, format }) => {
+    const { libraryDir } = readSettings();
+    const metadata = swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format });
+    await refreshLibraryIndex(libraryDir);
+    return metadata;
 });
 
 ipcMain.handle('library:deleteEntry', async (e, videoDir) => {

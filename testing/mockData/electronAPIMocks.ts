@@ -28,6 +28,7 @@ export const electronAPIMock = {
     overrideLibraryEntry: async () => ({ success: true, videoDir: '' }),
     findLibraryVideo: async () => ({ found: false }),
     recordLibraryDownload: async () => ({ success: true }),
+    swapLibraryDownload: async () => ({}),
     deleteLibraryEntry: async () => ({ success: true }),
     reportRendererError: noop,
     getErrorLogInfo: async () => ({ exists: false, path: '' }),

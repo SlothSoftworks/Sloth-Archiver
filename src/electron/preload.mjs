@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     overrideLibraryEntry: (videoMetaData, existingVideoDir) => ipcRenderer.invoke('library:overrideEntry', { videoMetaData, existingVideoDir }),
     findLibraryVideo: (videoId) => ipcRenderer.invoke('library:findVideo', videoId),
     recordLibraryDownload: (payload) => ipcRenderer.invoke('library:recordDownload', payload),
+    swapLibraryDownload: (payload) => ipcRenderer.invoke('library:swapDownload', payload),
     deleteLibraryEntry: (videoDir) => ipcRenderer.invoke('library:deleteEntry', videoDir),
     reportRendererError: (payload) => ipcRenderer.invoke('errorLog:report', payload),
     getErrorLogInfo: () => ipcRenderer.invoke('errorLog:getInfo'),

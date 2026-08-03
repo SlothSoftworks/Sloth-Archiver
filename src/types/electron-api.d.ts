@@ -75,6 +75,7 @@ declare global {
             overrideLibraryEntry: (videoMetaData: T, existingVideoDir: string) => Promise<{ success: boolean; videoDir: string }>
             findLibraryVideo: (videoId: string) => Promise<{ found: boolean; channelDisplayName?: string; videoDir?: string }>
             recordLibraryDownload: (payload: { videoDir: string; epoch: string; filePath: string; resolution: string; format?: string }) => Promise<{ success: boolean }>
+            swapLibraryDownload: (payload: { videoDir: string; epoch: string; tempFilePath: string; oldFilePath: string | null; resolution: string; format?: string }) => Promise<LibraryVideoMetadata>
             deleteLibraryEntry: (videoDir: string) => Promise<{ success: boolean }>
             reportRendererError: (payload: { message: string; stack?: string }) => Promise<void>
             getErrorLogInfo: () => Promise<{ exists: boolean; path: string }>
