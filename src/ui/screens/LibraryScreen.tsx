@@ -222,7 +222,7 @@ function VideoGrid({ channel, onBack, onSelectVideo }: {
                 <CardMedia
                   component="div"
                   image={video.metadata.thumbnail || undefined}
-                  sx={{ height: 140, backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                  sx={{ aspectRatio: '16 / 9', backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 />
                 <Box sx={{ p: 1.5 }}>
                   <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
