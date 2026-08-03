@@ -69,9 +69,14 @@ export default function OptionsScreen() {
   }, []);
 
   const handleChooseDownloadDir = async () => {
+    // Electron 43+ opens unset-defaultPath dialogs at Downloads instead of
+    // remembering the last-picked folder -- pass the current setting
+    // explicitly so re-opening this picker still starts where it's already
+    // pointed, rather than silently regressing to always-Downloads.
     const result = await window.electronAPI.pickFolder({
       title: 'Select Default Download Folder',
       buttonLabel: 'Select',
+      defaultPath: downloadDir || undefined,
     });
     if (result.canceled || !result.filePaths?.[0]) return;
     await window.electronAPI.setDownloadDir(result.filePaths[0]);
@@ -82,6 +87,7 @@ export default function OptionsScreen() {
     const result = await window.electronAPI.pickFolder({
       title: 'Select Library Folder',
       buttonLabel: 'Select',
+      defaultPath: libraryDir || undefined,
     });
     if (result.canceled || !result.filePaths?.[0]) return;
     await window.electronAPI.setLibraryDir(result.filePaths[0]);
