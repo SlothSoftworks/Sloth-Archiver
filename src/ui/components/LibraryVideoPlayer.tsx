@@ -2,6 +2,7 @@ import { Box, CardMedia } from '@mui/material';
 import type { LibraryVideoMetadata } from '../screens/LibraryVideoDetail';
 import YouTubeEmbed from './YouTubeEmbed';
 import ResizableMediaContainer from './ResizableMediaContainer';
+import { buildAppVideoUrl } from '../../utils/utils.ts';
 
 // Only mp4/webm play reliably in Chromium's <video> element -- MKV is a
 // Chromium container-parsing limitation that no delivery mechanism (custom
@@ -15,18 +16,6 @@ const PLAYABLE_VIDEO_EXTENSIONS = new Set(['mp4', 'webm']);
 function getExtension(filePath: string): string {
   const lastDot = filePath.lastIndexOf('.');
   return lastDot === -1 ? '' : filePath.slice(lastDot + 1).toLowerCase();
-}
-
-// filePath is a full absolute path already resolved server-side (see
-// findFinalFile in main.js) -- this URL is only ever built from that trusted
-// value, never from arbitrary/user-typed input. cacheBustKey is appended as
-// a query param (ignored by the protocol handler, which only reads the
-// pathname) so a "download different quality" swap that lands back on the
-// exact same path+extension still forces a real reload instead of the
-// <video> element silently continuing to show the old cached bytes under an
-// unchanged src string.
-function buildAppVideoUrl(filePath: string, cacheBustKey: number): string {
-  return `app-video://local/${encodeURIComponent(filePath)}?v=${cacheBustKey}`;
 }
 
 const containerSx = { borderRadius: 2 };

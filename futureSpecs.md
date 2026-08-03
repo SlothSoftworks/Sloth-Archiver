@@ -6,6 +6,10 @@ you point it here.
 
 ## Ideas / Backlog
 
+### Long shot ideas/Need planning
+1. Video diff/comparator: a feture that lets users compare the difference between versions of videos (we can think of how to do this. For example we coun try to fetch the video transcript or maybe look up if there's any algorithmic way to search through video content to compare it.) the diff should show as a report with timestamps
+2. Support for download from other video/media platforms: soundcloud/tiktok/instagram/twitter
+
 ### Big features
 1. Library view
     - The library view in the second tab of the main menu of the archiver. This will contain a deeper download and tracking of the videos. When a video es added to the library it will be added to a local storage that will keep track of all the videos tracked by this library feature. 
@@ -58,20 +62,13 @@ you point it here.
 5. Local cache for videos data fetched: To improve usage and even testing let's add a local cache that saves all of the video data that the app requires to begin a download. If the link matches the cached data avoid calling the actual app. This will help with load times and prevent the client from getting flagged as a bot. The cache should have a TTL of a week just in case anything about the video changes. For TTL just do a simple save epoch property on save cache compared to when it's trying to re-fetch it.
 6. Feature that dumps any error log into a file that the user can read in case of an uncaught error happens.
 7. After the add to library button effectievely adds a new item ot the library a notification number should be added on the library tab. This should increase for every new video that the user adds and once the user clicks into the library tab the notification will reset to 0 and dissapear
+8. Change the icon in the channel level of the library view into the actual channel icon
+9. Video merger (requires video versioning first): Sometimes videos get re-edited and reuploaded and this causes them to have a different link. This feature would add an option to add the new link in the video library view and the metadata will replace the main link to the video (to keep updating and downloading if he wants to) but keep the original video data in a version marked (legacy/deleted from youtube)
+
 
 
 ### Nice to haves depending on the features of our tech
 1. Resume download detection and logic: When a big download fails for any reason and the user chooses to re-download the file detect the previous files and resume instead of redownloading everything (I think yt-dlp supports hits already)
 
 
-## Planned
 
--
-
-## In Progress
-
--
-
-## Done
-
--

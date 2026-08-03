@@ -5,6 +5,7 @@ import { spawn } from 'child_process';
 import fs from "fs";
 import crypto from 'crypto';
 import http from 'node:http';
+import https from 'node:https';
 
 import { getSupportedVideoFilters } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
@@ -307,10 +308,122 @@ ipcMain.handle('library:refreshIndex', async () => {
     return refreshLibraryIndex(libraryDir);
 });
 
+// A channel's avatar isn't in a single video's own info dict -- it only
+// shows up when yt-dlp extracts the *channel page* itself (a separate code
+// path in yt-dlp's own YouTube extractor, confirmed directly against its
+// source: channel/tab metadata -- title, channel_id, and a `thumbnails`
+// array carrying the avatar -- is parsed once from the channel header,
+// independently of resolving any individual video entries). So this is a
+// genuinely separate yt-dlp call, once per channel, not something that can
+// be piggybacked on the per-video fetch already happening elsewhere.
+// --flat-playlist avoids resolving every video in the channel into a full
+// info-dict (this app only wants the header), and --playlist-end 1 caps it
+// to looking at just one entry rather than flat-listing the whole channel.
+function fetchChannelAvatarUrl(channelId) {
+    return new Promise((resolve) => {
+        const channelUrl = `https://www.youtube.com/channel/${channelId}`;
+        const script = spawn(ytdlpPath, [
+            '-J', '--no-warnings', '--flat-playlist', '--playlist-end', '1',
+            '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), channelUrl,
+        ]);
+        let data = '';
+        script.on('error', () => resolve(null));
+        script.stdout.on('data', (chunk) => { data += chunk.toString(); });
+        script.stderr.on('data', () => {});
+        script.on('close', (code) => {
+            if (code !== 0) {
+                resolve(null);
+                return;
+            }
+            try {
+                const thumbnails = JSON.parse(data).thumbnails || [];
+                // 'avatar_uncropped' is the full-resolution synthetic entry
+                // yt-dlp's own extractor derives from whatever raw avatar
+                // thumbnail the channel page embeds -- falls back to a raw
+                // 'avatar'-id entry if that's ever missing (a resilience
+                // margin against yt-dlp/YouTube changes, not a confirmed
+                // real-world case).
+                const avatar = thumbnails.find((t) => t.id === 'avatar_uncropped') || thumbnails.find((t) => t.id === 'avatar');
+                resolve(avatar ? avatar.url : null);
+            } catch {
+                resolve(null);
+            }
+        });
+    });
+}
+
+// Plain HTTPS GET, no new dependency -- avatar URLs are already fully-formed
+// CDN links, not something yt-dlp needs to fetch for us. Follows redirects
+// manually since Node's https module doesn't.
+function downloadImageToFile(url, destDir, baseName, redirectsLeft = 5) {
+    return new Promise((resolve, reject) => {
+        https.get(url, (res) => {
+            if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectsLeft > 0) {
+                res.resume();
+                downloadImageToFile(res.headers.location, destDir, baseName, redirectsLeft - 1).then(resolve, reject);
+                return;
+            }
+            if (res.statusCode !== 200) {
+                res.resume();
+                reject(new Error(`Failed to download image: HTTP ${res.statusCode}`));
+                return;
+            }
+            const contentType = res.headers['content-type'] || '';
+            const ext = contentType.includes('png') ? '.png' : contentType.includes('webp') ? '.webp' : '.jpg';
+
+            // Clear out any previous icon first -- a re-fetch could land on a
+            // different extension than last time, and this keeps exactly one
+            // channel-icon.* file around rather than accumulating stale ones.
+            for (const existing of fs.readdirSync(destDir).filter((f) => f.startsWith('channel-icon.'))) {
+                fs.rmSync(path.join(destDir, existing), { force: true });
+            }
+
+            const destPath = path.join(destDir, `${baseName}${ext}`);
+            const fileStream = fs.createWriteStream(destPath);
+            res.pipe(fileStream);
+            fileStream.on('finish', () => resolve(destPath));
+            fileStream.on('error', reject);
+        }).on('error', reject);
+    });
+}
+
+// Best-effort, never throws -- a missing channel icon just means the UI
+// falls back to the generic folder icon, not a broken add-to-library action.
+// force skips the "already have one" check -- used by the user-facing
+// "refresh channel icon" button, since the whole point there is to re-fetch
+// even though one already exists (the channel's avatar may have changed).
+async function ensureChannelIcon(channelDir, channelId, { force = false } = {}) {
+    if (!channelId) return;
+    try {
+        const hasIcon = !force && fs.existsSync(channelDir) && fs.readdirSync(channelDir).some((f) => f.startsWith('channel-icon.'));
+        if (hasIcon) return;
+        const avatarUrl = await fetchChannelAvatarUrl(channelId);
+        if (!avatarUrl) return;
+        await downloadImageToFile(avatarUrl, channelDir, 'channel-icon');
+    } catch (err) {
+        log('[channel-icon] fetch failed', String(err));
+    }
+}
+
+// User-triggered from the Library tab's channel view -- unlike the
+// fire-and-forget calls below, this one is awaited so the button can show a
+// loading state and the caller gets back a fresh index once it's done.
+ipcMain.handle('library:refreshChannelIcon', async (e, { channelFolderName, channelId }) => {
+    const { libraryDir } = readSettings();
+    const channelDir = path.join(libraryDir, channelFolderName);
+    await ensureChannelIcon(channelDir, channelId, { force: true });
+    return refreshLibraryIndex(libraryDir);
+});
+
 ipcMain.handle('library:addEntry', async (e, videoMetaData) => {
     const { libraryDir } = readSettings();
     const result = writeLibraryEntry({ libraryDir, videoMetaData });
     await refreshLibraryIndex(libraryDir);
+    // Fire-and-forget: fetches+caches the channel's avatar in the background
+    // so it works offline, without making the user wait on an extra yt-dlp
+    // call before "add to library" reports success. Picked up on the next
+    // index refresh (manual refresh, or navigating back into the channel).
+    ensureChannelIcon(result.channelDir, videoMetaData.channelId).then(() => refreshLibraryIndex(libraryDir));
     return { success: true, videoDir: result.videoDir };
 });
 
@@ -318,6 +431,7 @@ ipcMain.handle('library:overrideEntry', async (e, { videoMetaData, existingVideo
     const { libraryDir } = readSettings();
     const result = overrideLibraryEntry({ libraryDir, videoMetaData, existingVideoDir });
     await refreshLibraryIndex(libraryDir);
+    ensureChannelIcon(result.channelDir, videoMetaData.channelId).then(() => refreshLibraryIndex(libraryDir));
     return { success: true, videoDir: result.videoDir };
 });
 

@@ -262,9 +262,16 @@ export async function scanLibrary(libraryDir) {
         if (videos.length === 0) continue;
         videos.sort((a, b) => (b.metadata.addedEpoch || 0) - (a.metadata.addedEpoch || 0));
 
+        // Cached by ensureChannelIcon (main.js) the first time a video from
+        // this channel gets added -- videoEntries already lists everything
+        // directly inside channelPath (files included), so this is a free
+        // lookup rather than a second readdir.
+        const iconEntry = videoEntries.find((e) => e.isFile() && e.name.startsWith('channel-icon.'));
+
         index.channels.push({
             channelFolderName: channelEntry.name,
             displayName: videos[0]?.metadata.channel || channelEntry.name,
+            channelIconPath: iconEntry ? path.join(channelPath, iconEntry.name) : null,
             videos,
         });
     }

@@ -24,6 +24,7 @@ export const electronAPIMock = {
     setLibraryDir: async () => ({ success: true, libraryDir: '' }),
     getLibraryIndex: async () => ({ channels: [] }),
     refreshLibraryIndex: async () => ({ channels: [] }),
+    refreshChannelIcon: async () => ({ channels: [] }),
     addLibraryEntry: async () => ({ success: true, videoDir: '' }),
     overrideLibraryEntry: async () => ({ success: true, videoDir: '' }),
     findLibraryVideo: async () => ({ found: false }),

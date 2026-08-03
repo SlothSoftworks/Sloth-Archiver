@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setLibraryDir: (dir) => ipcRenderer.invoke('settings:setLibraryDir', dir),
     getLibraryIndex: () => ipcRenderer.invoke('library:getIndex'),
     refreshLibraryIndex: () => ipcRenderer.invoke('library:refreshIndex'),
+    refreshChannelIcon: (payload) => ipcRenderer.invoke('library:refreshChannelIcon', payload),
     addLibraryEntry: (videoMetaData) => ipcRenderer.invoke('library:addEntry', videoMetaData),
     overrideLibraryEntry: (videoMetaData, existingVideoDir) => ipcRenderer.invoke('library:overrideEntry', { videoMetaData, existingVideoDir }),
     findLibraryVideo: (videoId) => ipcRenderer.invoke('library:findVideo', videoId),

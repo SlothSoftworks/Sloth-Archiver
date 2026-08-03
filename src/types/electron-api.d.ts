@@ -37,6 +37,7 @@ type LibraryIndex = {
     channels: {
         channelFolderName: string;
         displayName: string;
+        channelIconPath: string | null;
         videos: {
             videoFolderName: string;
             videoDir: string;
@@ -71,6 +72,7 @@ declare global {
             setLibraryDir: (dir: string) => Promise<{ success: boolean; libraryDir: string }>
             getLibraryIndex: () => Promise<LibraryIndex>
             refreshLibraryIndex: () => Promise<LibraryIndex>
+            refreshChannelIcon: (payload: { channelFolderName: string; channelId: string | null }) => Promise<LibraryIndex>
             addLibraryEntry: (videoMetaData: T) => Promise<{ success: boolean; videoDir: string }>
             overrideLibraryEntry: (videoMetaData: T, existingVideoDir: string) => Promise<{ success: boolean; videoDir: string }>
             findLibraryVideo: (videoId: string) => Promise<{ found: boolean; channelDisplayName?: string; videoDir?: string }>

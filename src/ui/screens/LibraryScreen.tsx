@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  Avatar,
   Box,
   Card,
   CardActionArea,
@@ -14,9 +15,10 @@ import {
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import FaceRetouchingNaturalIcon from '@mui/icons-material/FaceRetouchingNatural';
 import FolderIcon from '@mui/icons-material/Folder';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
-import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
 import LibraryVideoDetail from './LibraryVideoDetail';
 
 // Mirrors the shape returned by window.electronAPI.getLibraryIndex() -- kept
@@ -24,6 +26,7 @@ import LibraryVideoDetail from './LibraryVideoDetail';
 // defined per-file elsewhere in this codebase (e.g. VideoDetailCard.tsx).
 type LibraryVideoMetadata = {
   videoId: string;
+  channelId: string | null;
   channel: string | null;
   title: string | null;
   fullTitle: string | null;
@@ -48,6 +51,7 @@ type LibraryVideo = {
 type LibraryChannel = {
   channelFolderName: string;
   displayName: string;
+  channelIconPath: string | null;
   videos: LibraryVideo[];
 };
 
@@ -86,6 +90,19 @@ export default function LibraryScreen() {
   const refreshChannelsSilently = async () => {
     const index = await window.electronAPI.refreshLibraryIndex();
     setChannels(index.channels);
+  };
+
+  // Unlike handleVideoDeleted below, this stays on the current channel page
+  // rather than bouncing back to the root -- refreshing a channel's icon
+  // should update in place so the user actually sees the new icon, not lose
+  // their spot. Updates both the root `channels` list (so the channel-list
+  // view is also current when the user navigates back) and `selectedChannel`
+  // itself (the actual prop VideoGrid renders from -- without this the new
+  // icon wouldn't show until a full re-navigation, same staleness class of
+  // bug as the one handleVideoDeleted works around below).
+  const handleChannelsUpdated = (updatedChannels: LibraryChannel[]) => {
+    setChannels(updatedChannels);
+    setSelectedChannel((prev) => (prev && updatedChannels.find((c) => c.channelFolderName === prev.channelFolderName)) || prev);
   };
 
   // Resets both selectedChannel and selectedVideo, not just the latter --
@@ -137,6 +154,7 @@ export default function LibraryScreen() {
         channel={selectedChannel}
         onBack={() => setSelectedChannel(null)}
         onSelectVideo={setSelectedVideo}
+        onChannelsUpdated={handleChannelsUpdated}
       />
     );
   }
@@ -184,7 +202,11 @@ function ChannelList({ channels, libraryDir, onSelectChannel, onRefresh }: {
             <Card variant="outlined">
               <CardActionArea onClick={() => onSelectChannel(channel)} sx={{ p: 2 }}>
                 <Stack direction="row" spacing={1.5} alignItems="center">
-                  <FolderIcon color="primary" />
+                  {channel.channelIconPath ? (
+                    <Avatar src={buildAppVideoUrl(channel.channelIconPath)} alt={channel.displayName} />
+                  ) : (
+                    <FolderIcon color="primary" />
+                  )}
                   <Box sx={{ minWidth: 0 }}>
                     <Typography variant="subtitle1" noWrap>{channel.displayName}</Typography>
                     <Typography variant="body2" color="text.secondary">
@@ -201,18 +223,46 @@ function ChannelList({ channels, libraryDir, onSelectChannel, onRefresh }: {
   );
 }
 
-function VideoGrid({ channel, onBack, onSelectVideo }: {
+function VideoGrid({ channel, onBack, onSelectVideo, onChannelsUpdated }: {
   channel: LibraryChannel;
   onBack: () => void;
   onSelectVideo: (video: LibraryVideo) => void;
+  onChannelsUpdated: (channels: LibraryChannel[]) => void;
 }) {
+  const [refreshingIcon, setRefreshingIcon] = useState(false);
+
+  const handleRefreshIcon = async () => {
+    setRefreshingIcon(true);
+    try {
+      const channelId = channel.videos[0]?.metadata.channelId ?? null;
+      const index = await window.electronAPI.refreshChannelIcon({
+        channelFolderName: channel.channelFolderName,
+        channelId,
+      });
+      onChannelsUpdated(index.channels);
+    } finally {
+      setRefreshingIcon(false);
+    }
+  };
+
   return (
     <Box>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
-        <IconButton onClick={onBack} size="small" aria-label="Back to channels">
-          <ArrowBackIcon fontSize="small" />
-        </IconButton>
-        <Typography variant="h6">{channel.displayName}</Typography>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <IconButton onClick={onBack} size="small" aria-label="Back to channels">
+            <ArrowBackIcon fontSize="small" />
+          </IconButton>
+          <Typography variant="h6">{channel.displayName}</Typography>
+          {channel.channelIconPath &&
+            <Avatar src={buildAppVideoUrl(channel.channelIconPath)} alt={channel.displayName} sx={{ width: 28, height: 28 }} />}
+        </Stack>
+        <Tooltip title="Refresh channel icon">
+          <span>
+            <IconButton onClick={handleRefreshIcon} disabled={refreshingIcon} size="small" aria-label="Refresh channel icon">
+              {refreshingIcon ? <CircularProgress size={18} /> : <FaceRetouchingNaturalIcon fontSize="small" />}
+            </IconButton>
+          </span>
+        </Tooltip>
       </Stack>
       <Grid container spacing={2}>
         {channel.videos.map((video) => (
