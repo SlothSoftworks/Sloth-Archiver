@@ -371,10 +371,10 @@ function downloadImageToFile(url, destDir, baseName, redirectsLeft = 5) {
             const contentType = res.headers['content-type'] || '';
             const ext = contentType.includes('png') ? '.png' : contentType.includes('webp') ? '.webp' : '.jpg';
 
-            // Clear out any previous icon first -- a re-fetch could land on a
+            // Clear out any previous image first -- a re-fetch could land on a
             // different extension than last time, and this keeps exactly one
-            // channel-icon.* file around rather than accumulating stale ones.
-            for (const existing of fs.readdirSync(destDir).filter((f) => f.startsWith('channel-icon.'))) {
+            // <baseName>.* file around rather than accumulating stale ones.
+            for (const existing of fs.readdirSync(destDir).filter((f) => f.startsWith(`${baseName}.`))) {
                 fs.rmSync(path.join(destDir, existing), { force: true });
             }
 
@@ -405,6 +405,25 @@ async function ensureChannelIcon(channelDir, channelId, { force = false } = {}) 
     }
 }
 
+// Video-level (not per-epoch): one thumbnail lives directly in videoDir,
+// shared across every version, since the point is a stable, offline-capable
+// preview image for the video as a whole rather than something that should
+// change on every re-download. Unlike the channel avatar, the thumbnail URL
+// is already sitting in videoMetaData (yt-dlp's per-video info dict) --
+// no extra yt-dlp call needed, just the same downloadImageToFile reuse.
+// Skips (rather than force-refetching) once a video-thumbnail.* file exists,
+// so adding a new version of an already-tracked video is a no-op here.
+async function ensureVideoThumbnail(videoDir, thumbnailUrl) {
+    if (!thumbnailUrl) return;
+    try {
+        const hasThumbnail = fs.existsSync(videoDir) && fs.readdirSync(videoDir).some((f) => f.startsWith('video-thumbnail.'));
+        if (hasThumbnail) return;
+        await downloadImageToFile(thumbnailUrl, videoDir, 'video-thumbnail');
+    } catch (err) {
+        log('[video-thumbnail] fetch failed', String(err));
+    }
+}
+
 // User-triggered from the Library tab's channel view -- unlike the
 // fire-and-forget calls below, this one is awaited so the button can show a
 // loading state and the caller gets back a fresh index once it's done.
@@ -424,6 +443,7 @@ ipcMain.handle('library:addEntry', async (e, videoMetaData) => {
     // call before "add to library" reports success. Picked up on the next
     // index refresh (manual refresh, or navigating back into the channel).
     ensureChannelIcon(result.channelDir, videoMetaData.channelId).then(() => refreshLibraryIndex(libraryDir));
+    ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail).then(() => refreshLibraryIndex(libraryDir));
     return { success: true, videoDir: result.videoDir };
 });
 
@@ -432,6 +452,7 @@ ipcMain.handle('library:overrideEntry', async (e, { videoMetaData, existingVideo
     const result = overrideLibraryEntry({ libraryDir, videoMetaData, existingVideoDir });
     await refreshLibraryIndex(libraryDir);
     ensureChannelIcon(result.channelDir, videoMetaData.channelId).then(() => refreshLibraryIndex(libraryDir));
+    ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail).then(() => refreshLibraryIndex(libraryDir));
     return { success: true, videoDir: result.videoDir };
 });
 
@@ -444,6 +465,7 @@ ipcMain.handle('library:addVersion', async (e, { videoDir, videoMetaData }) => {
     const result = addLibraryVersion({ libraryDir, videoDir, videoMetaData });
     await refreshLibraryIndex(libraryDir);
     ensureChannelIcon(path.dirname(result.videoDir), videoMetaData.channelId).then(() => refreshLibraryIndex(libraryDir));
+    ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail).then(() => refreshLibraryIndex(libraryDir));
     return { success: true, videoDir: result.videoDir, epoch: result.epoch, metadata: result.metadata };
 });
 

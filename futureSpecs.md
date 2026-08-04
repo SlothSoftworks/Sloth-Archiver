@@ -20,10 +20,6 @@ you point it here.
     - Videos added here have the option to download the video they're tracking into a local file and it will be saved in the library drectory where the metadata already lives
     - The library view should be able to call a local player and open the local file when it's downloaded and if it's not downloaded it should embed a youtube player so that the user can view in the same window
     - If the video is not downloaded the download video buttons should be displayed; If the video is already downloaded an indicator of the quality that the video is downloaded in should be displayed in the card
-    - In the full card video view the usr will have a burger menu he can click on that will have more options:
-        - "Download different quality video": Which will open a dialog with the download buttons and when selected and submited will download a new version of the video (inside the corresponding library folder), if the download is successful it will delete the older video (for this don't replace on download, for safety download with an alternative name and once the download is fine delete the old one and rename the new one with the old one's name)
-        - "Download new version": Which will download all the videwo data all over again and present it in a dialog very similar to the video detail card but once the quality of downlaod is selected it will make a new entry with the current epoch the request and save the video in that folder. Once that is done  the user will be able to swap between the version and the app will hotswap the metadata.
-        - "Delete video entry": Which deletes the video file if it exists, the metadata and the folder containing it
     - The add to library button in the first tab should add an entry of the video with the already loaded metadata into the library and open the view of the library on the newlt added video (this requires most of the logic for the library tab to be implemented so it has a dependency)
     - Future features to leave for the end: 
         - Rudimentary version control that lets user download a new version of the metadata and it will saved as a new version of the video entry, the user can swap between versions and the program will navigate the files based on the downloadEpoch directory structure
@@ -65,6 +61,15 @@ you point it here.
 8. Change the icon in the channel level of the library view into the actual channel icon
 9. Video merger (requires video versioning first): Sometimes videos get re-edited and reuploaded and this causes them to have a different link. This feature would add an option to add the new link in the video library view and the metadata will replace the main link to the video (to keep updating and downloading if he wants to) but keep the original video data in a version marked (legacy/deleted from youtube)
 10. Local file video thumbnail replaced with the youtube video thumbnail to keep a consistent and more presentable UX (if we'ren ot savign the thubmnail yet start saving it to keep it working on offline mode)
+11. Small improvements to the embedded local player:
+    - Add a "play" icon in the middle of the player to indicate the user they can begin playback
+    - remove the "download" option from the list of options that appear n the 3 dot menu on the corner. It feels redundant
+
+
+### Bugs found by testers:
+- In the video view you can't downlaod MP3. The download process fails and doesn't seem like it writes the file there is an error log with the text:  "[33239:0803/202656.407984:ERROR:components/services/storage/service_worker/service_worker_storage.cc:1814] Failed to delete the database: Database IO error" in the electron log
+- The format of the videos sometimes saves wrong for example mp3 saves as video.mp4 (seen on windows)
+- The filesizes are not right (this was done by an estimation but let's see if we can improve it to be a bit more precise)
 
 
 

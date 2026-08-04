@@ -47,6 +47,7 @@ type LibraryVideo = {
   latestEpoch: string | null;
   metadata: LibraryVideoMetadata;
   epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
+  thumbnailPath: string | null;
 };
 
 type LibraryChannel = {

@@ -11,9 +11,11 @@ import {
   DialogContentText,
   DialogTitle,
   Divider,
+  FormControl,
   FormGroup,
   Grid,
   IconButton,
+  InputLabel,
   LinearProgress,
   MenuItem,
   Select,
@@ -57,6 +59,7 @@ type LibraryVideo = {
   latestEpoch: string | null;
   metadata: LibraryVideoMetadata;
   epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
+  thumbnailPath: string | null;
 };
 
 // Epoch folder names are Date.now() ms timestamps -- no existing formatter
@@ -353,6 +356,12 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
             <ArrowBackIcon fontSize="small" />
           </IconButton>
           <Typography variant="h6" noWrap>{metadata.title || video.videoFolderName}</Typography>
+          <Chip
+            size="small"
+            color="info"
+            label={convertYYYYMMDDStringToDate(metadata.uploadDate || '') || metadata.uploadDate}
+            sx={{ flexShrink: 0, fontWeight: 'bolder' }}
+          />
         </Stack>
         <Stack direction="row" spacing={0.5}>
           <Tooltip title="Download new version (re-fetches live data)">
@@ -396,47 +405,57 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           status than the one just displayed. */}
       <Stack key={selectedEpoch || 'no-epoch'} direction={{ xs: 'column', md: 'row' }} spacing={2}>
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '70%' } }}>
-          <LibraryVideoPlayer metadata={metadata} cacheBustKey={cacheBustKey} />
+          <LibraryVideoPlayer metadata={metadata} thumbnailPath={video.thumbnailPath} cacheBustKey={cacheBustKey} />
 
-          <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Stack direction="row" spacing={1.5} alignItems="center">
-              <Typography variant="body2" color="info.main" fontWeight="bolder">
-                {convertYYYYMMDDStringToDate(metadata.uploadDate || '') || metadata.uploadDate}
-              </Typography>
-              {video.epochs.length > 1 &&
-                <Select
-                  size="small"
-                  variant="standard"
-                  value={selectedEpoch || ''}
-                  onChange={(e) => handleSelectEpoch(e.target.value)}
-                >
-                  {video.epochs.map(({ epoch, metadata: epochMetadata }) => (
-                    <MenuItem key={epoch} value={epoch}>
-                      <Stack direction="row" spacing={0.5} alignItems="center">
-                        {epochMetadata.downloadedFilePath &&
-                          <DownloadDoneIcon fontSize="small" color="success" />}
-                        <span>
-                          {formatEpochLabel(epoch)}{epoch === video.latestEpoch ? ' (latest)' : ''}
-                        </span>
-                      </Stack>
-                    </MenuItem>
-                  ))}
-                </Select>}
-            </Stack>
-            {metadata.downloadedFilePath &&
-              <Chip
-                color="success"
-                label={metadata.downloadedResolution === 'MP3' ? 'MP3' : `${metadata.downloadedResolution}p`}
-              />}
-          </Stack>
-
-          <Typography variant="body2" sx={{ textAlign: 'justify' }}>
-            {formatComment(metadata.description || '')}
-          </Typography>
+          {/* Bounded + scrollable rather than letting a long description push
+              the instrument panel below the fold -- max height picked to
+              comfortably fit a few paragraphs before scrolling kicks in. */}
+          <Card variant="outlined" sx={{ p: 1.5, maxHeight: 260, overflowY: 'auto' }}>
+            <Typography variant="body2" sx={{ textAlign: 'justify' }}>
+              {formatComment(metadata.description || '')}
+            </Typography>
+          </Card>
         </Stack>
 
+        {/* "Instrument panel" -- version selector, download status, and every
+            download/quality-swap control grouped into one Card so they read
+            as a single section rather than a loose stack of controls. */}
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '30%' } }}>
-          <Card sx={{ p: 1 }} variant="outlined">
+          <Card sx={{ p: 1.5 }} variant="outlined">
+            <Stack spacing={1.5}>
+              {(video.epochs.length > 1 || metadata.downloadedFilePath) &&
+                <Stack spacing={1.5}>
+                  {video.epochs.length > 1 &&
+                    <FormControl size="small" fullWidth>
+                      <InputLabel id="library-version-select-label">Version</InputLabel>
+                      <Select
+                        labelId="library-version-select-label"
+                        label="Version"
+                        value={selectedEpoch || ''}
+                        onChange={(e) => handleSelectEpoch(e.target.value)}
+                      >
+                        {video.epochs.map(({ epoch, metadata: epochMetadata }) => (
+                          <MenuItem key={epoch} value={epoch}>
+                            <Stack direction="row" spacing={0.5} alignItems="center">
+                              {epochMetadata.downloadedFilePath &&
+                                <DownloadDoneIcon fontSize="small" color="success" />}
+                              <span>
+                                {formatEpochLabel(epoch)}{epoch === video.latestEpoch ? ' (latest)' : ''}
+                              </span>
+                            </Stack>
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>}
+                  {metadata.downloadedFilePath &&
+                    <Chip
+                      color="success"
+                      label={metadata.downloadedResolution === 'MP3' ? 'MP3' : `${metadata.downloadedResolution}p`}
+                      sx={{ alignSelf: 'flex-start' }}
+                    />}
+                  <Divider />
+                </Stack>}
+
             {swappingQuality ? (
               isSwapDownloading ? (
                 <Stack spacing={1} sx={{ p: 1 }}>
@@ -492,6 +511,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 isError={isError}
               />
             )}
+            </Stack>
           </Card>
         </Stack>
       </Stack>

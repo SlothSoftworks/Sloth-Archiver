@@ -308,12 +308,19 @@ export async function scanLibrary(libraryDir) {
 
             if (!metadata) continue;
 
+            // Video-level, not per-epoch -- ensureVideoThumbnail (main.js)
+            // saves exactly one video-thumbnail.* file directly in videoPath,
+            // a sibling of the epoch folders, same pattern as channel-icon.*
+            // one level up.
+            const thumbnailEntry = epochEntries.find((e) => e.isFile() && e.name.startsWith('video-thumbnail.'));
+
             videos.push({
                 videoFolderName: videoEntry.name,
                 videoDir: videoPath,
                 latestEpoch,
                 metadata,
                 epochs,
+                thumbnailPath: thumbnailEntry ? path.join(videoPath, thumbnailEntry.name) : null,
             });
         }
 
