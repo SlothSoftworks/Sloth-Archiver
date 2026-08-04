@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Avatar,
   Box,
@@ -10,6 +10,8 @@ import {
   Grid,
   IconButton,
   Stack,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -18,8 +20,11 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import FaceRetouchingNaturalIcon from '@mui/icons-material/FaceRetouchingNatural';
 import FolderIcon from '@mui/icons-material/Folder';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
+import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
 import LibraryVideoDetail from './LibraryVideoDetail';
+
+type LibraryViewMode = 'channel' | 'video';
 
 // Mirrors the shape returned by window.electronAPI.getLibraryIndex() -- kept
 // local rather than imported, matching how video-metadata shapes are already
@@ -88,21 +93,33 @@ export default function LibraryScreen() {
   const [channels, setChannels] = useState<LibraryChannel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<LibraryChannel | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<LibraryVideo | null>(null);
+  const [viewMode, setViewMode] = useState<LibraryViewMode>('channel');
 
   const load = async () => {
     setLoading(true);
-    const [{ libraryDir }, index] = await Promise.all([
+    const [{ libraryDir }, index, { libraryViewMode }] = await Promise.all([
       window.electronAPI.getLibraryDir(),
       window.electronAPI.getLibraryIndex(),
+      window.electronAPI.getLibraryViewMode(),
     ]);
     setLibraryDir(libraryDir);
     setChannels(index.channels);
+    setViewMode(libraryViewMode);
     setLoading(false);
   };
 
   useEffect(() => {
     load();
   }, []);
+
+  // Fire-and-forget, same as every other settings write in this codebase
+  // (e.g. OptionsScreen's downloadDir/libraryDir handlers) -- the local state
+  // update below is what the UI actually reacts to; the write just needs to
+  // land before the next app launch reads it back.
+  const handleViewModeChange = (mode: LibraryViewMode) => {
+    setViewMode(mode);
+    window.electronAPI.setLibraryViewMode(mode);
+  };
 
   const handleRefresh = async () => {
     setLoading(true);
@@ -224,19 +241,157 @@ export default function LibraryScreen() {
     );
   }
 
-  return (
+  return viewMode === 'video' ? (
+    <FlatVideoList
+      channels={channels}
+      libraryDir={libraryDir}
+      viewMode={viewMode}
+      onViewModeChange={handleViewModeChange}
+      onSelectVideo={setSelectedVideo}
+      onRefresh={handleRefresh}
+    />
+  ) : (
     <ChannelList
       channels={channels}
       libraryDir={libraryDir}
+      viewMode={viewMode}
+      onViewModeChange={handleViewModeChange}
       onSelectChannel={setSelectedChannel}
       onRefresh={handleRefresh}
     />
   );
 }
 
-function ChannelList({ channels, libraryDir, onSelectChannel, onRefresh }: {
+// Shared root-level header control -- only shown at the top of the Library
+// tab (channel list / flat video list), not inside a channel's video grid or
+// the detail view, since it toggles which *top-level* structure is used, not
+// anything about a specific channel/video already drilled into.
+function LibraryViewModeToggle({ viewMode, onViewModeChange }: {
+  viewMode: LibraryViewMode;
+  onViewModeChange: (mode: LibraryViewMode) => void;
+}) {
+  return (
+    <ToggleButtonGroup
+      value={viewMode}
+      exclusive
+      size="small"
+      onChange={(_e, value: LibraryViewMode | null) => value && onViewModeChange(value)}
+      aria-label="Library view mode"
+    >
+      <ToggleButton value="channel" aria-label="By channel">
+        <Tooltip title="By channel">
+          <FolderIcon fontSize="small" />
+        </Tooltip>
+      </ToggleButton>
+      <ToggleButton value="video" aria-label="By video">
+        <Tooltip title="By video">
+          <VideoLibraryIcon fontSize="small" />
+        </Tooltip>
+      </ToggleButton>
+    </ToggleButtonGroup>
+  );
+}
+
+// Extracted from VideoGrid's previously-inline card markup so FlatVideoList
+// (channel-agnostic) can reuse the exact same card instead of duplicating it.
+// `channelLabel` is only passed by FlatVideoList -- VideoGrid's cards already
+// sit under a single channel's own heading, so repeating the channel name on
+// every card there would be redundant.
+function VideoCard({ video, onSelect, channelLabel }: {
+  video: LibraryVideo;
+  onSelect: (video: LibraryVideo) => void;
+  channelLabel?: string;
+}) {
+  const bestQuality = getBestDownloadedQuality(video.epochs);
+  return (
+    <Card variant="outlined">
+      <CardActionArea onClick={() => onSelect(video)}>
+        <CardMedia
+          component="div"
+          image={video.metadata.thumbnail || undefined}
+          sx={{ aspectRatio: '16 / 9', backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
+        />
+        <Box sx={{ p: 1.5 }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+            <Typography variant="body1" noWrap sx={{ minWidth: 0 }}>{video.metadata.title || video.videoFolderName}</Typography>
+            {bestQuality ? (
+              <Chip
+                size="small"
+                color="success"
+                label={bestQuality.resolution === 'MP3' ? 'MP3' : `${bestQuality.resolution}p`}
+              />
+            ) : (
+              <Chip size="small" variant="outlined" label="Not downloaded" />
+            )}
+          </Stack>
+          {channelLabel &&
+            <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>{channelLabel}</Typography>}
+          <Stack direction="row" justifyContent="space-between" alignItems="center">
+            <Typography variant="body2" color="text.secondary">
+              {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
+            </Typography>
+            {video.epochs.length > 1 &&
+              <Typography variant="caption" color="text.secondary">{video.epochs.length} versions</Typography>}
+          </Stack>
+        </Box>
+      </CardActionArea>
+    </Card>
+  );
+}
+
+function FlatVideoList({ channels, libraryDir, viewMode, onViewModeChange, onSelectVideo, onRefresh }: {
   channels: LibraryChannel[];
   libraryDir: string;
+  viewMode: LibraryViewMode;
+  onViewModeChange: (mode: LibraryViewMode) => void;
+  onSelectVideo: (video: LibraryVideo) => void;
+  onRefresh: () => void;
+}) {
+  const flatVideos = useMemo(() => {
+    return channels
+      .flatMap((channel) => channel.videos.map((video) => ({ video, channelName: channel.displayName })))
+      .sort((a, b) => (a.video.metadata.title || a.video.videoFolderName)
+        .localeCompare(b.video.metadata.title || b.video.videoFolderName, undefined, { sensitivity: 'base' }));
+  }, [channels]);
+
+  return (
+    <Box>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+        <Typography variant="h6">Library</Typography>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <LibraryViewModeToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
+          <Tooltip title="Open library folder">
+            <IconButton onClick={() => window.electronAPI.openDirectory(libraryDir)} size="small" aria-label="Open library folder">
+              <FolderOpenIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Refresh">
+            <IconButton onClick={onRefresh} size="small" aria-label="Refresh library">
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      </Stack>
+      {flatVideos.length === 0 &&
+        <Typography variant="body2" color="text.secondary">
+          Nothing in the library yet -- use the library-add button next to the URL field on the Downloader tab.
+        </Typography>}
+      <Grid container spacing={2}>
+        {flatVideos.map(({ video, channelName }) => (
+          <Grid size={{ xs: 12, sm: 6, md: 4 }} key={video.videoDir}>
+            <VideoCard video={video} onSelect={onSelectVideo} channelLabel={channelName} />
+          </Grid>
+        ))}
+      </Grid>
+    </Box>
+  );
+}
+
+function ChannelList({ channels, libraryDir, viewMode, onViewModeChange, onSelectChannel, onRefresh }: {
+  channels: LibraryChannel[];
+  libraryDir: string;
+  viewMode: LibraryViewMode;
+  onViewModeChange: (mode: LibraryViewMode) => void;
   onSelectChannel: (channel: LibraryChannel) => void;
   onRefresh: () => void;
 }) {
@@ -244,7 +399,8 @@ function ChannelList({ channels, libraryDir, onSelectChannel, onRefresh }: {
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
         <Typography variant="h6">Library</Typography>
-        <Stack direction="row" spacing={0.5}>
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <LibraryViewModeToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
           <Tooltip title="Open library folder">
             <IconButton onClick={() => window.electronAPI.openDirectory(libraryDir)} size="small" aria-label="Open library folder">
               <FolderOpenIcon fontSize="small" />
@@ -330,43 +486,11 @@ function VideoGrid({ channel, onBack, onSelectVideo, onChannelsUpdated }: {
         </Tooltip>
       </Stack>
       <Grid container spacing={2}>
-        {channel.videos.map((video) => {
-          const bestQuality = getBestDownloadedQuality(video.epochs);
-          return (
-            <Grid size={{ xs: 12, sm: 6, md: 4 }} key={video.videoFolderName}>
-              <Card variant="outlined">
-                <CardActionArea onClick={() => onSelectVideo(video)}>
-                  <CardMedia
-                    component="div"
-                    image={video.metadata.thumbnail || undefined}
-                    sx={{ aspectRatio: '16 / 9', backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                  />
-                  <Box sx={{ p: 1.5 }}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
-                      <Typography variant="body1" noWrap sx={{ minWidth: 0 }}>{video.metadata.title || video.videoFolderName}</Typography>
-                      {bestQuality ? (
-                        <Chip
-                          size="small"
-                          color="success"
-                          label={bestQuality.resolution === 'MP3' ? 'MP3' : `${bestQuality.resolution}p`}
-                        />
-                      ) : (
-                        <Chip size="small" variant="outlined" label="Not downloaded" />
-                      )}
-                    </Stack>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Typography variant="body2" color="text.secondary">
-                        {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
-                      </Typography>
-                      {video.epochs.length > 1 &&
-                        <Typography variant="caption" color="text.secondary">{video.epochs.length} versions</Typography>}
-                    </Stack>
-                  </Box>
-                </CardActionArea>
-              </Card>
-            </Grid>
-          );
-        })}
+        {channel.videos.map((video) => (
+          <Grid size={{ xs: 12, sm: 6, md: 4 }} key={video.videoFolderName}>
+            <VideoCard video={video} onSelect={onSelectVideo} />
+          </Grid>
+        ))}
       </Grid>
     </Box>
   );
