@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteVideoInfoCacheEntry: (url) => ipcRenderer.invoke('videoInfoCache:deleteEntry', url),
     getLibraryDir: () => ipcRenderer.invoke('settings:getLibraryDir'),
     setLibraryDir: (dir) => ipcRenderer.invoke('settings:setLibraryDir', dir),
+    getLibraryViewMode: () => ipcRenderer.invoke('settings:getLibraryViewMode'),
+    setLibraryViewMode: (mode) => ipcRenderer.invoke('settings:setLibraryViewMode', mode),
     getLibraryIndex: () => ipcRenderer.invoke('library:getIndex'),
     refreshLibraryIndex: () => ipcRenderer.invoke('library:refreshIndex'),
     refreshChannelIcon: (payload) => ipcRenderer.invoke('library:refreshChannelIcon', payload),

@@ -72,6 +72,8 @@ declare global {
             deleteVideoInfoCacheEntry: (url: string) => Promise<{ success: boolean; existed: boolean }>
             getLibraryDir: () => Promise<{ libraryDir: string }>
             setLibraryDir: (dir: string) => Promise<{ success: boolean; libraryDir: string }>
+            getLibraryViewMode: () => Promise<{ libraryViewMode: 'channel' | 'video' }>
+            setLibraryViewMode: (mode: 'channel' | 'video') => Promise<{ success: boolean; libraryViewMode: 'channel' | 'video' }>
             getLibraryIndex: () => Promise<LibraryIndex>
             refreshLibraryIndex: () => Promise<LibraryIndex>
             refreshChannelIcon: (payload: { channelFolderName: string; channelId: string | null }) => Promise<LibraryIndex>

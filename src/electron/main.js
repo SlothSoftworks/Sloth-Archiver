@@ -298,6 +298,18 @@ ipcMain.handle('settings:setLibraryDir', async (e, dir) => {
     return { success: true, libraryDir: dir };
 });
 
+ipcMain.handle('settings:getLibraryViewMode', async () => {
+    const { libraryViewMode } = readSettings();
+    return { libraryViewMode: libraryViewMode === 'video' ? 'video' : 'channel' };
+});
+
+ipcMain.handle('settings:setLibraryViewMode', async (e, mode) => {
+    const settings = readSettings();
+    settings.libraryViewMode = mode === 'video' ? 'video' : 'channel';
+    writeSettings(settings);
+    return { success: true, libraryViewMode: settings.libraryViewMode };
+});
+
 ipcMain.handle('library:getIndex', async () => {
     const { libraryDir } = readSettings();
     return getLibraryIndex(libraryDir);
