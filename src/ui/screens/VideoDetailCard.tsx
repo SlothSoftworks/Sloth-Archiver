@@ -33,7 +33,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 import type { LinearProgressProps } from '@mui/material/LinearProgress';
 
-import { convertYYYYMMDDStringToDate, getEstimateFileSizeMbForMP3 } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
 import { formatComment } from '../components/componentUtils';
 
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';

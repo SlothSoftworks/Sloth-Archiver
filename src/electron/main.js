@@ -667,9 +667,26 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options)
     });
 })
 
+// Matches runFfmpegWithProgress's own '-b:a 192k' for the actual MP3
+// extraction pass -- the estimate has to agree with what really gets
+// encoded, or it's not an estimate of anything real.
+const MP3_BITRATE_KBPS = 192;
+
 function buildResolutions(info) {
     const seen = new Set();
     const resolutions = [];
+
+    // Every real download is bestvideo+bestaudio merged (see
+    // buildDownloadArgs), so a video-only format's own filesize always
+    // understates the actual merged output -- add the best available
+    // audio-only track's size to every video resolution's estimate below,
+    // same way yt-dlp itself would pick "bestaudio".
+    const audioFormats = (info.formats || []).filter((fmt) => fmt.vcodec === 'none' && fmt.acodec && fmt.acodec !== 'none');
+    const bestAudio = audioFormats.reduce((best, fmt) => ((fmt.abr || 0) > (best?.abr || 0) ? fmt : best), null);
+    let bestAudioSize = bestAudio ? (bestAudio.filesize || bestAudio.filesize_approx) : null;
+    if (!bestAudioSize && bestAudio?.abr && info.duration) {
+        bestAudioSize = (bestAudio.abr * 1000 * info.duration) / 8;
+    }
 
     for (const fmt of info.formats || []) {
         const height = fmt.height;
@@ -678,8 +695,13 @@ function buildResolutions(info) {
         seen.add(height);
 
         let size = fmt.filesize || fmt.filesize_approx;
+        // tbr is decimal kbps (per-thousand), not binary -- kilobits-to-bytes
+        // is *1000/8, not *1024/8.
         if (!size && fmt.tbr && info.duration) {
-            size = (fmt.tbr * info.duration / 8) * 1024;
+            size = (fmt.tbr * 1000 * info.duration) / 8;
+        }
+        if (size != null && bestAudioSize) {
+            size += bestAudioSize;
         }
 
         resolutions.push({
@@ -689,9 +711,16 @@ function buildResolutions(info) {
         });
     }
 
+    // A real, audio-only estimate -- not a leftover clone of the smallest
+    // video resolution's (video-track) byte count, which is what this used
+    // to be and had nothing to do with an actual MP3's size.
     if (resolutions.length > 0) {
-        const smallest = resolutions.reduce((a, b) => Number(a.resolution) < Number(b.resolution) ? a : b);
-        resolutions.push({ ...smallest, resolution: 'MP3' });
+        const mp3Size = info.duration ? (MP3_BITRATE_KBPS * 1000 * info.duration) / 8 : null;
+        resolutions.push({
+            resolution: 'MP3',
+            filesizeMb: mp3Size != null ? Math.round((mp3Size / (1024 * 1024)) * 100) / 100 : null,
+            ext: 'mp3',
+        });
     }
 
     return resolutions;
@@ -780,6 +809,33 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
 function needsDirectFfmpegPass({ format, resolution }) {
     if (resolution && resolution.toLowerCase() === 'mp3') return true;
     return !!format && !['undefined', 'dflt'].includes(format);
+}
+
+// The extension actually produced by the direct ffmpeg pass above -- MP3
+// wins over an explicit format choice since resolution:'mp3' means audio-only
+// regardless of whatever format dropdown value happens to be selected.
+// Returns null when no postprocessing happens (yt-dlp's own download/merge
+// picks its own correct extension in that case, untouched here).
+function ffmpegTargetExtension({ format, resolution }) {
+    if (resolution && resolution.toLowerCase() === 'mp3') return 'mp3';
+    if (format && !['undefined', 'dflt'].includes(format)) return format.toLowerCase();
+    return null;
+}
+
+// yt-dlp auto-appends the right extension to an extension-less outtmpl, but
+// our own ffmpeg postprocess pass (runFfmpegWithProgress) does not -- it
+// needs a real extension (or -f) to pick a muxer at all. outputPath handed
+// in here can arrive two ways, both wrong for ffmpeg: the Library view's
+// deterministic path has no extension whatsoever (ffmpeg fails outright --
+// the "MP3 download fails" bug), and the Downloader tab's Save-dialog path
+// always carries a video extension (mp4/mkv/3gp -- there's no MP3 filter
+// option), which for an MP3 selection means ffmpeg happily muxes MP3 audio
+// into a file merely *named* .mp4 (the "saves as video.mp4" bug). Stripping
+// whatever extension is already there and appending the real target one
+// fixes both regardless of which path the caller supplied.
+function withTargetExtension(outputPath, ext) {
+    const { dir, name } = path.parse(outputPath);
+    return path.join(dir, `${name}.${ext}`);
 }
 
 // yt-dlp itself only ever downloads (and merges separate video+audio streams,
@@ -936,6 +992,12 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     // can never spuriously match findFinalFile's/checkFileExists' prefix-based
     // lookups for the real target.
     const postprocess = needsDirectFfmpegPass(options);
+    // Only ever used in place of options.outputPath inside the postprocess
+    // branch below -- see withTargetExtension for why the caller-supplied
+    // path can't be trusted as-is for that step.
+    const postprocessOutputPath = postprocess
+        ? withTargetExtension(options.outputPath, ffmpegTargetExtension(options))
+        : options.outputPath;
     let rawDir = null;
     let downloadArgs;
     if (postprocess) {
@@ -1038,7 +1100,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
             if (options.resolution && options.resolution.toLowerCase() === 'mp3') {
                 await runFfmpegWithProgress({
                     inputPath: rawFile,
-                    outputPath: options.outputPath,
+                    outputPath: postprocessOutputPath,
                     codecArgs: ['-vn', '-c:a', 'libmp3lame', '-b:a', '192k'],
                     totalDurationSeconds: duration,
                     onProgress: onFfmpegProgress,
@@ -1052,7 +1114,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                 try {
                     await runFfmpegWithProgress({
                         inputPath: rawFile,
-                        outputPath: options.outputPath,
+                        outputPath: postprocessOutputPath,
                         codecArgs: ['-c', 'copy'],
                         totalDurationSeconds: duration,
                         onProgress: onFfmpegProgress,
@@ -1066,7 +1128,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                         : ['-c:v', 'libx264', '-c:a', 'aac'];
                     await runFfmpegWithProgress({
                         inputPath: rawFile,
-                        outputPath: options.outputPath,
+                        outputPath: postprocessOutputPath,
                         codecArgs: reencodeCodecArgs,
                         totalDurationSeconds: duration,
                         onProgress: onFfmpegProgress,
@@ -1076,7 +1138,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
 
             fs.rmSync(rawDir, { recursive: true, force: true });
             activeDownloadCount--;
-            send({ type: 'done', payload: { filename: options.outputPath } });
+            send({ type: 'done', payload: { filename: postprocessOutputPath } });
         } catch (err) {
             activeDownloadCount--;
             send({ type: 'error', payload: { message: err instanceof Error ? err.message : String(err) } });
