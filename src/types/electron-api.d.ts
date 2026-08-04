@@ -31,6 +31,7 @@ type LibraryVideoMetadata = {
     downloadedFilePath: string | null;
     downloadedResolution: string | null;
     downloadedFormat: string | null;
+    downloadedAudioFilePath: string | null;
 };
 
 type LibraryIndex = {
@@ -78,9 +79,11 @@ declare global {
             overrideLibraryEntry: (videoMetaData: T, existingVideoDir: string) => Promise<{ success: boolean; videoDir: string }>
             addLibraryVersion: (videoMetaData: T, videoDir: string) => Promise<{ success: boolean; videoDir: string; epoch: string; metadata: LibraryVideoMetadata }>
             findLibraryVideo: (videoId: string) => Promise<{ found: boolean; channelDisplayName?: string; videoDir?: string }>
-            recordLibraryDownload: (payload: { videoDir: string; epoch: string; filePath: string; resolution: string; format?: string }) => Promise<{ success: boolean }>
-            swapLibraryDownload: (payload: { videoDir: string; epoch: string; tempFilePath: string; oldFilePath: string | null; resolution: string; format?: string }) => Promise<LibraryVideoMetadata>
+            recordLibraryDownload: (payload: { videoDir: string; epoch: string; filePath: string; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<{ success: boolean }>
+            swapLibraryDownload: (payload: { videoDir: string; epoch: string; tempFilePath: string; oldFilePath: string | null; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<LibraryVideoMetadata>
             deleteLibraryEntry: (videoDir: string, epoch?: string) => Promise<{ success: boolean; videoDeleted: boolean }>
+            onLibraryBackgroundUpdate: (callback: () => void) => void
+            removeLibraryBackgroundUpdateListener: () => void
             reportRendererError: (payload: { message: string; stack?: string }) => Promise<void>
             getErrorLogInfo: () => Promise<{ exists: boolean; path: string }>
             openErrorLog: () => Promise<void>

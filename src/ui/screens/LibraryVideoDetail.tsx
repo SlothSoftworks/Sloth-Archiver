@@ -30,7 +30,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import DownloadDoneIcon from '@mui/icons-material/DownloadDone';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
-import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
 import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import LibraryVideoPlayer from '../components/LibraryVideoPlayer';
@@ -51,6 +51,10 @@ export type LibraryVideoMetadata = {
   downloadedFilePath: string | null;
   downloadedResolution: string | null;
   downloadedFormat: string | null;
+  // MP3 is a separate, coexisting artifact of the video, not a competing
+  // "quality" -- its own slot, entirely independent of the video fields
+  // above (which a real video download can populate at the same time).
+  downloadedAudioFilePath: string | null;
 };
 
 type LibraryVideo = {
@@ -90,13 +94,14 @@ function LinearProgressWithLabel({ value, valueBuffer }: { value: number; valueB
 // excludeResolution blocks re-picking whatever's already downloaded (that's
 // not a "different" quality) rather than hiding it, so it's clear why one
 // button is greyed out instead of it just silently not being there.
-function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFormat, onFormatChange, isError }: {
+function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFormat, onFormatChange, isError, disabled }: {
   resolutions: LibraryResolution[];
   excludeResolution?: string | null;
   onSelect: (resolution: string) => void;
   selectedFormat: string;
   onFormatChange: (format: string) => void;
   isError: boolean;
+  disabled?: boolean;
 }) {
   return (
     <>
@@ -107,15 +112,14 @@ function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFo
           <Grid size={{ xs: 1, sm: 3 }} key={idx}>
             <Button
               onClick={() => onSelect(res.resolution)}
-              disabled={res.resolution === excludeResolution}
+              disabled={res.resolution === excludeResolution || disabled}
               sx={{ whiteSpace: 'pre-line' }}
-              color={res.resolution === 'MP3' ? 'secondary' : 'primary'}
               fullWidth
-              variant={res.resolution === 'MP3' ? 'contained' : 'outlined'}
+              variant="outlined"
             >
               <Stack spacing={0} direction="column" divider={<Divider flexItem sx={{ mx: 1 }} orientation="horizontal" />}>
                 <Typography variant="button" textTransform="none">
-                  {res.resolution}{res.resolution === 'MP3' ? '' : 'p'}{res.resolution === excludeResolution ? ' (current)' : ''}
+                  {res.resolution}p{res.resolution === excludeResolution ? ' (current)' : ''}
                 </Typography>
                 <Typography variant="caption">{res.filesizeMb}Mb</Typography>
               </Stack>
@@ -163,6 +167,14 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // (startDownload resets isDone/isError/progress at the start of every
   // call, so a second download through the same hook instance is safe).
   const [downloadMode, setDownloadMode] = useState<'initial' | 'swap'>('initial');
+  // Video and audio (MP3) downloads coexist as separate files, but they
+  // still share this one useDownloadVideo() hook instance -- its progress
+  // events aren't tagged per-download (see TD-008), so two independent
+  // instances running at once would cross-talk. downloadTarget says which
+  // one the currently in-flight download (if any) belongs to; the UI
+  // disables the *other* target's controls while one is active rather than
+  // letting both fire at once.
+  const [downloadTarget, setDownloadTarget] = useState<'video' | 'audio'>('video');
   // Bumped after a successful quality swap and threaded into the player's
   // src URL -- a swap can land back on the exact same file path+extension,
   // and without this the <video>/<audio> element has no signal that the
@@ -235,6 +247,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
 
   const handleDownload = (resolution: string) => {
     if (!selectedEpoch) return;
+    setDownloadTarget('video');
     setDownloadMode('initial');
     setSelectedResolution(resolution);
     // Deterministic path inside the video's own storage -- no Save dialog,
@@ -257,23 +270,43 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // the isDone effect below, once the new file is confirmed complete.
   const handleSwapDownload = (resolution: string) => {
     if (!selectedEpoch) return;
+    setDownloadTarget('video');
     setDownloadMode('swap');
     setSelectedResolution(resolution);
     const outputPath = `${video.videoDir}/${selectedEpoch}/video.new`;
     startDownload({ videoUrl: metadata.originalUrl || '', outputPath, format: selectedFormat, resolution });
   };
 
+  // Covers both "download MP3 for the first time" and "re-download to
+  // replace an existing one" -- which of those it is just depends on
+  // whether downloadedAudioFilePath is already set, no separate confirm-UI
+  // needed the way the video quality-swap flow has one (there's only ever
+  // one MP3 option, nothing to pick between). The re-download case still
+  // gets the same safe temp-then-rename treatment via swapLibraryDownload
+  // in the isDone effect below.
+  const handleAudioDownload = () => {
+    if (!selectedEpoch) return;
+    const isReplacing = !!metadata.downloadedAudioFilePath;
+    setDownloadTarget('audio');
+    setDownloadMode(isReplacing ? 'swap' : 'initial');
+    setSelectedResolution('mp3');
+    const outputPath = `${video.videoDir}/${selectedEpoch}/${isReplacing ? 'audio.new' : 'audio'}`;
+    startDownload({ videoUrl: metadata.originalUrl || '', outputPath, format: 'dflt', resolution: 'mp3' });
+  };
+
   useEffect(() => {
     if (!isDone || !selectedEpoch) return;
     (async () => {
+      const kind = downloadTarget;
       if (downloadMode === 'swap') {
         const updated = await window.electronAPI.swapLibraryDownload({
           videoDir: video.videoDir,
           epoch: selectedEpoch,
           tempFilePath: finalFilePath,
-          oldFilePath: metadata.downloadedFilePath,
+          oldFilePath: kind === 'audio' ? metadata.downloadedAudioFilePath : metadata.downloadedFilePath,
           resolution: selectedResolution,
           format: selectedFormat,
+          kind,
         });
         setMetadata(updated);
         setCacheBustKey((prev) => prev + 1);
@@ -286,13 +319,16 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           filePath: finalFilePath,
           resolution: selectedResolution,
           format: selectedFormat,
+          kind,
         });
-        setMetadata((prev) => ({
-          ...prev,
-          downloadedFilePath: finalFilePath,
-          downloadedResolution: selectedResolution,
-          downloadedFormat: selectedFormat,
-        }));
+        setMetadata((prev) => (kind === 'audio'
+          ? { ...prev, downloadedAudioFilePath: finalFilePath }
+          : { ...prev, downloadedFilePath: finalFilePath, downloadedResolution: selectedResolution, downloadedFormat: selectedFormat }));
+        // Audio has no video-style "swap confirm UI" to fall back out of --
+        // always clear selectedResolution for it so the Audio section's
+        // active-download check (which, unlike the video one, doesn't also
+        // gate on !downloadedAudioFilePath) doesn't stay stuck showing progress.
+        if (kind === 'audio') setSelectedResolution('');
       }
       // Deep resync, not the shallow onLibraryChanged -- a regular download
       // or quality-swap only touches the currently-selected epoch's own
@@ -316,6 +352,18 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const handleOpenExternally = () => {
     if (metadata.downloadedFilePath) {
       window.electronAPI.openFileExternally(metadata.downloadedFilePath);
+    }
+  };
+
+  const handleOpenAudioFileLocation = () => {
+    if (metadata.downloadedAudioFilePath) {
+      window.electronAPI.openFileInDirectory(metadata.downloadedAudioFilePath);
+    }
+  };
+
+  const handleOpenAudioExternally = () => {
+    if (metadata.downloadedAudioFilePath) {
+      window.electronAPI.openFileExternally(metadata.downloadedAudioFilePath);
     }
   };
 
@@ -344,9 +392,21 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     }
   };
 
-  const isDownloading = !!selectedResolution && !isError && !metadata.downloadedFilePath && !swappingQuality;
-  const isSwapDownloading = !!selectedResolution && !isError && swappingQuality;
+  const isAudioActionActive = downloadTarget === 'audio' && !!selectedResolution && !isError;
+  const isDownloading = downloadTarget === 'video' && !!selectedResolution && !isError && !metadata.downloadedFilePath && !swappingQuality;
+  const isSwapDownloading = downloadTarget === 'video' && !!selectedResolution && !isError && swappingQuality;
+  // Derived from the same two flags above (not its own standalone check)
+  // specifically so it clears the instant a video download finishes -- an
+  // earlier, looser version of this stayed true after an initial (non-swap)
+  // video download completed, since selectedResolution is deliberately left
+  // set in that case (see the isDone effect) and nothing else cleared it,
+  // permanently locking out the Audio button until a full reload.
+  const isVideoActionActive = isDownloading || isSwapDownloading;
   const resolutions = metadata.resolutions || [];
+  // MP3 is rendered in its own Audio sub-section below, not mixed into the
+  // video quality grid -- see the Library-view MP3-coexistence design.
+  const videoResolutions = resolutions.filter((r) => r.resolution !== 'MP3');
+  const mp3Resolution = resolutions.find((r) => r.resolution === 'MP3');
 
   return (
     <Box>
@@ -437,7 +497,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                         {video.epochs.map(({ epoch, metadata: epochMetadata }) => (
                           <MenuItem key={epoch} value={epoch}>
                             <Stack direction="row" spacing={0.5} alignItems="center">
-                              {epochMetadata.downloadedFilePath &&
+                              {(epochMetadata.downloadedFilePath || epochMetadata.downloadedAudioFilePath) &&
                                 <DownloadDoneIcon fontSize="small" color="success" />}
                               <span>
                                 {formatEpochLabel(epoch)}{epoch === video.latestEpoch ? ' (latest)' : ''}
@@ -450,7 +510,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                   {metadata.downloadedFilePath &&
                     <Chip
                       color="success"
-                      label={metadata.downloadedResolution === 'MP3' ? 'MP3' : `${metadata.downloadedResolution}p`}
+                      label={`${metadata.downloadedResolution}p`}
                       sx={{ alignSelf: 'flex-start' }}
                     />}
                   <Divider />
@@ -468,12 +528,13 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
               ) : (
                 <>
                   <ResolutionPicker
-                    resolutions={resolutions}
+                    resolutions={videoResolutions}
                     excludeResolution={metadata.downloadedResolution}
                     onSelect={handleSwapDownload}
                     selectedFormat={selectedFormat}
                     onFormatChange={setSelectedFormat}
                     isError={isError}
+                    disabled={isAudioActionActive}
                   />
                   <Button size="small" onClick={() => setSwappingQuality(false)} sx={{ mt: 1 }}>
                     Cancel
@@ -493,24 +554,96 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
               <Stack spacing={1} sx={{ p: 1 }}>
                 <Typography variant="subtitle1" textAlign="center">
                   {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : 'Downloading'}
-                  {selectedResolution && ` (${selectedResolution}${selectedResolution.toLowerCase() === 'mp3' ? '' : 'p'})`}
+                  {selectedResolution && ` (${selectedResolution}p)`}
                 </Typography>
                 <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
               </Stack>
-            ) : resolutions.length === 0 ? (
+            ) : videoResolutions.length === 0 ? (
               <Typography variant="body2" color="text.secondary" sx={{ p: 1 }}>
                 No quality info was saved for this entry (it may have been added before this feature, or via testing) --
                 re-add it from the Downloader tab to enable downloading here.
               </Typography>
             ) : (
               <ResolutionPicker
-                resolutions={resolutions}
+                resolutions={videoResolutions}
                 onSelect={handleDownload}
                 selectedFormat={selectedFormat}
                 onFormatChange={setSelectedFormat}
                 isError={isError}
+                disabled={isAudioActionActive}
               />
             )}
+
+            {/* Audio (MP3) -- a separate, always-available download,
+                independent of whatever video quality is or isn't downloaded.
+                Shares the single download hook with the video controls above
+                (see downloadTarget/TD-008), so it's disabled while a video
+                download/swap is actually in flight rather than fully hidden. */}
+            {mp3Resolution &&
+              <>
+                <Divider sx={{ my: 1.5 }} />
+                <Stack spacing={1}>
+                  <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
+                    Audio
+                  </Typography>
+                  {isAudioActionActive ? (
+                    <Stack spacing={1} sx={{ p: 1 }}>
+                      <Typography variant="subtitle1" textAlign="center">
+                        {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : 'Downloading'} (MP3)
+                      </Typography>
+                      <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
+                    </Stack>
+                  ) : metadata.downloadedAudioFilePath ? (
+                    // Replaces the download button in place -- the player
+                    // itself lives here in the instrument panel, not
+                    // alongside the video above, so it stays visually tied
+                    // to its own download controls.
+                    <Stack spacing={0.5}>
+                      <Box
+                        component="audio"
+                        controls
+                        src={buildAppVideoUrl(metadata.downloadedAudioFilePath, cacheBustKey)}
+                        sx={{ width: '100%', height: 32 }}
+                      />
+                      <Stack direction="row" spacing={0.5}>
+                        <Tooltip title="Open file location">
+                          <IconButton size="small" onClick={handleOpenAudioFileLocation} aria-label="Open audio file location">
+                            <FolderOpenIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Open in default player">
+                          <IconButton size="small" onClick={handleOpenAudioExternally} aria-label="Open audio in default player">
+                            <OpenInNewIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Re-download MP3">
+                          <span>
+                            <IconButton
+                              size="small"
+                              onClick={handleAudioDownload}
+                              disabled={isVideoActionActive}
+                              aria-label="Re-download MP3"
+                            >
+                              <CloudDownloadIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Stack>
+                    </Stack>
+                  ) : (
+                    <Button
+                      size="small"
+                      color="secondary"
+                      variant="contained"
+                      startIcon={<CloudDownloadIcon />}
+                      onClick={handleAudioDownload}
+                      disabled={isVideoActionActive}
+                    >
+                      Download MP3 ({mp3Resolution.filesizeMb}Mb)
+                    </Button>
+                  )}
+                </Stack>
+              </>}
             </Stack>
           </Card>
         </Stack>

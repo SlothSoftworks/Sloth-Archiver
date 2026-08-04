@@ -32,6 +32,8 @@ export const electronAPIMock = {
     recordLibraryDownload: async () => ({ success: true }),
     swapLibraryDownload: async () => ({}),
     deleteLibraryEntry: async () => ({ success: true, videoDeleted: true }),
+    onLibraryBackgroundUpdate: noop,
+    removeLibraryBackgroundUpdateListener: noop,
     reportRendererError: noop,
     getErrorLogInfo: async () => ({ exists: false, path: '' }),
     openErrorLog: noop,

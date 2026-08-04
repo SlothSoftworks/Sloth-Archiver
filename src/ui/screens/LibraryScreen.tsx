@@ -39,6 +39,7 @@ type LibraryVideoMetadata = {
   downloadedFilePath: string | null;
   downloadedResolution: string | null;
   downloadedFormat: string | null;
+  downloadedAudioFilePath: string | null;
 };
 
 type LibraryVideo = {
@@ -63,13 +64,22 @@ type LibraryChannel = {
 // that case would misrepresent what's actually archived.
 function getBestDownloadedQuality(epochs: { metadata: LibraryVideoMetadata }[]): { resolution: string; format: string | null } | null {
   const downloaded = epochs.filter((e) => e.metadata.downloadedFilePath);
-  if (downloaded.length === 0) return null;
-  // Prefer an actual video resolution over an MP3-only capture when both
-  // exist -- a real video is generally the more "complete" archive of the two.
-  const videoOnly = downloaded.filter((e) => e.metadata.downloadedResolution !== 'MP3');
-  const pool = videoOnly.length > 0 ? videoOnly : downloaded;
-  const best = pool.reduce((a, b) => (Number(b.metadata.downloadedResolution) > Number(a.metadata.downloadedResolution) ? b : a));
-  return { resolution: best.metadata.downloadedResolution as string, format: best.metadata.downloadedFormat };
+  if (downloaded.length > 0) {
+    // Prefer an actual video resolution over a legacy MP3-only capture
+    // (from before MP3 got its own separate downloadedAudioFilePath slot)
+    // when both exist -- a real video is generally the more "complete"
+    // archive of the two.
+    const videoOnly = downloaded.filter((e) => e.metadata.downloadedResolution !== 'MP3');
+    const pool = videoOnly.length > 0 ? videoOnly : downloaded;
+    const best = pool.reduce((a, b) => (Number(b.metadata.downloadedResolution) > Number(a.metadata.downloadedResolution) ? b : a));
+    return { resolution: best.metadata.downloadedResolution as string, format: best.metadata.downloadedFormat };
+  }
+  // No video download in any version -- but a separately-downloaded MP3
+  // still counts as "something is archived" for the grid badge.
+  if (epochs.some((e) => e.metadata.downloadedAudioFilePath)) {
+    return { resolution: 'MP3', format: null };
+  }
+  return null;
 }
 
 export default function LibraryScreen() {
@@ -144,6 +154,20 @@ export default function LibraryScreen() {
       return prev;
     });
   };
+
+  // Fire-and-forget channel-icon/video-thumbnail fetches (main.js) only get
+  // picked up on the *next* index refresh -- without this, an already-
+  // mounted Library tab would silently never show a newly-added video's
+  // channel icon until the user happened to re-navigate or hit manual
+  // refresh. Reuses handleVersionsChanged's same deep resync (channels +
+  // selectedChannel + selectedVideo) rather than a near-duplicate function,
+  // even though this isn't a version change -- the resync it does is
+  // exactly "re-pull the index and re-sync every stale snapshot," which is
+  // just as correct here.
+  useEffect(() => {
+    window.electronAPI.onLibraryBackgroundUpdate(() => { handleVersionsChanged(); });
+    return () => window.electronAPI.removeLibraryBackgroundUpdateListener();
+  }, []);
 
   // Resets both selectedChannel and selectedVideo, not just the latter --
   // selectedChannel is a stale snapshot taken when the user first navigated

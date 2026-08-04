@@ -434,16 +434,28 @@ ipcMain.handle('library:refreshChannelIcon', async (e, { channelFolderName, chan
     return refreshLibraryIndex(libraryDir);
 });
 
+// The channel-icon/video-thumbnail fetches below are fire-and-forget (no
+// `await`, so "add to library" reports success immediately rather than
+// waiting on an extra yt-dlp + image-download round trip) -- but that alone
+// only means the *next* index refresh picks them up. If the Library tab is
+// already mounted and the user doesn't happen to re-navigate or hit manual
+// refresh afterward, the icon/thumbnail silently never appears even once
+// the background fetch is done. This notifies any open window once both
+// fetches (and the index refresh that follows them) actually finish, so an
+// already-mounted Library tab can silently pick up the change on its own --
+// see LibraryScreen.tsx's onLibraryBackgroundUpdate listener.
+function notifyLibraryBackgroundUpdate() {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('library:backgroundUpdate');
+}
+
 ipcMain.handle('library:addEntry', async (e, videoMetaData) => {
     const { libraryDir } = readSettings();
     const result = writeLibraryEntry({ libraryDir, videoMetaData });
     await refreshLibraryIndex(libraryDir);
-    // Fire-and-forget: fetches+caches the channel's avatar in the background
-    // so it works offline, without making the user wait on an extra yt-dlp
-    // call before "add to library" reports success. Picked up on the next
-    // index refresh (manual refresh, or navigating back into the channel).
-    ensureChannelIcon(result.channelDir, videoMetaData.channelId).then(() => refreshLibraryIndex(libraryDir));
-    ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail).then(() => refreshLibraryIndex(libraryDir));
+    Promise.all([
+        ensureChannelIcon(result.channelDir, videoMetaData.channelId),
+        ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail),
+    ]).then(() => refreshLibraryIndex(libraryDir)).then(notifyLibraryBackgroundUpdate);
     return { success: true, videoDir: result.videoDir };
 });
 
@@ -451,8 +463,10 @@ ipcMain.handle('library:overrideEntry', async (e, { videoMetaData, existingVideo
     const { libraryDir } = readSettings();
     const result = overrideLibraryEntry({ libraryDir, videoMetaData, existingVideoDir });
     await refreshLibraryIndex(libraryDir);
-    ensureChannelIcon(result.channelDir, videoMetaData.channelId).then(() => refreshLibraryIndex(libraryDir));
-    ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail).then(() => refreshLibraryIndex(libraryDir));
+    Promise.all([
+        ensureChannelIcon(result.channelDir, videoMetaData.channelId),
+        ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail),
+    ]).then(() => refreshLibraryIndex(libraryDir)).then(notifyLibraryBackgroundUpdate);
     return { success: true, videoDir: result.videoDir };
 });
 
@@ -464,8 +478,10 @@ ipcMain.handle('library:addVersion', async (e, { videoDir, videoMetaData }) => {
     const { libraryDir } = readSettings();
     const result = addLibraryVersion({ libraryDir, videoDir, videoMetaData });
     await refreshLibraryIndex(libraryDir);
-    ensureChannelIcon(path.dirname(result.videoDir), videoMetaData.channelId).then(() => refreshLibraryIndex(libraryDir));
-    ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail).then(() => refreshLibraryIndex(libraryDir));
+    Promise.all([
+        ensureChannelIcon(path.dirname(result.videoDir), videoMetaData.channelId),
+        ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail),
+    ]).then(() => refreshLibraryIndex(libraryDir)).then(notifyLibraryBackgroundUpdate);
     return { success: true, videoDir: result.videoDir, epoch: result.epoch, metadata: result.metadata };
 });
 
@@ -482,16 +498,16 @@ ipcMain.handle('library:findVideo', async (e, videoId) => {
     return { found: true, channelDisplayName: match.channel.displayName, videoDir: match.video.videoDir };
 });
 
-ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, resolution, format }) => {
-    recordLibraryDownload({ videoDir, epoch, filePath, resolution, format });
+ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, resolution, format, kind }) => {
+    recordLibraryDownload({ videoDir, epoch, filePath, resolution, format, kind });
     const { libraryDir } = readSettings();
     await refreshLibraryIndex(libraryDir);
     return { success: true };
 });
 
-ipcMain.handle('library:swapDownload', async (e, { videoDir, epoch, tempFilePath, oldFilePath, resolution, format }) => {
+ipcMain.handle('library:swapDownload', async (e, { videoDir, epoch, tempFilePath, oldFilePath, resolution, format, kind }) => {
     const { libraryDir } = readSettings();
-    const metadata = swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format });
+    const metadata = swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format, kind });
     await refreshLibraryIndex(libraryDir);
     return metadata;
 });

@@ -64,6 +64,7 @@ you point it here.
 11. Small improvements to the embedded local player:
     - Add a "play" icon in the middle of the player to indicate the user they can begin playback
     - remove the "download" option from the list of options that appear n the 3 dot menu on the corner. It feels redundant
+12. Special case for audio/mp3 download. Instead of replacing the video section if an MP3 is download it embed a smaller container labeled "Audio" with a small audio player embedded that plays the MP3 (the audio player logic is exactly the same) The mp3 download logic should also allow the mp3 and video file to coexist in the same version since they will have separate players. Since this pretty much makes the mp3 download logic separate visually an in many ways functionally this change also should make it so the library view download. buttons always have the mp3 download available in the same little Audio container in the instruments panel.
 
 
 ### Bugs found by testers:

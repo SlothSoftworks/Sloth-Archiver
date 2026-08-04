@@ -1,0 +1,155 @@
+# Technical Debt / Future Improvements
+
+Running log of shortcuts, hardcoded behavior, and known gaps introduced along the way, kept here so they don't get lost. Add a new dated entry per item; don't rewrite history. Each entry starts with a stable `TD-NNN` ID (sequential, never reused) so items can be referenced by number in conversation. Once an item is fixed and verified, add `[RESOLVED]` to its title (leave the rest of the title as-is) and append a dated "Resolved" note to the body — don't delete or rewrite the original entry.
+
+---
+
+## TD-001 — [RESOLVED] — 2026-08-01 — Download overwrite behavior is hardcoded, not a user choice
+
+**Where:** `src/electron/main.js`, `buildDownloadArgs()` — the `--force-overwrites` flag passed to yt-dlp on every download.
+
+**What happens today:** Every download call unconditionally passes `--force-overwrites` to yt-dlp. If a file already exists at the exact output path being downloaded to, it is silently deleted and re-downloaded from scratch, every time, with no prompt.
+
+**Why it's there:** yt-dlp's default behavior is the opposite — if a complete file already exists at the target path, it skips the download entirely and jumps straight to postprocessing. In the app, that skip looked indistinguishable from a frozen UI (no progress events, since no download actually happens) and was mistaken for a bug during testing. `--force-overwrites` was added to guarantee a real download always occurs on click, to get past that specific debugging session.
+
+**Why it's debt:** This removes an entire legitimate yt-dlp capability (skip-if-exists / resume-partial-download) without ever exposing the choice to the user. There's no way today to intentionally keep an existing file, or resume an interrupted download — the app always blows it away and starts over.
+
+**Suggested future fix:** Surface this as a real user-facing choice instead of a hardcoded flag:
+- When the chosen output path already has a file, prompt the user (Overwrite / Skip / Resume) before starting yt-dlp, similar to standard download-manager/browser behavior.
+- Alternatively (or additionally), add a persistent setting in the Options tab (currently a stub, see `MainPage.tsx`) for a default policy, so the user isn't prompted every time.
+- Plumb the resulting choice through `DownloadVideoParams` (`src/types.ts`) → IPC (`downloadVideoWithProgressUpdates`) → `buildDownloadArgs()`, swapping `--force-overwrites` for `--no-overwrites`/`--continue`/nothing depending on the choice.
+
+**Resolved — 2026-08-02:** Fixed by making the choice explicit rather than hardcoded. `VideoDetailCard.tsx` now checks (`electronAPI.checkFileExists`, backed by a new `system:pathExists` IPC handler) whether the chosen save path already has a file before starting a download; if so, a dialog offers **Resume** or **Overwrite** (Cancel just closes it). The choice flows through as `DownloadVideoParams.overwriteMode` → the `downloadVideoWithProgressUpdates` IPC → `buildDownloadArgs()`, which now only pushes `--force-overwrites` when `overwriteMode === 'overwrite'`; otherwise yt-dlp's own default behavior applies unmodified (resume a partial file via range requests, or skip a file that's already complete). This also happens to be the fix for the "Nice to haves" resume-download item noted separately — yt-dlp already supported resuming, the hardcoded flag was the only thing preventing it. Also added a persisted "default download folder" setting (`settings:getDownloadDir`/`settings:setDownloadDir`, Options tab) used as the save dialog's suggested starting folder.
+
+---
+
+## TD-002 — [RESOLVED] — 2026-08-01 — Metadata/video-info fetch is very slow (~15s+ overhead per call) due to yt-dlp binary format
+
+**Where:** `scripts/download-ytdlp.mjs` (fetches yt-dlp's official prebuilt `yt-dlp_macos` release binary), used by `main.js`'s `getVideoInfoPython`/`downloadVideoWithProgressUpdates` handlers.
+
+**What happens today:** Every single invocation of the bundled yt-dlp binary pays a large, mostly-fixed startup cost before doing any real work. Measured directly: `./dist/ytdlp-bin/yt-dlp --version` (no network call at all) takes ~15.7s consistently across repeated runs, vs. 0.28s for the system's `python3 -m yt_dlp --version`. CPU usage during that time is only ~5-7% (blocked, not computing).
+
+**Root cause:** yt-dlp's official macOS release binary (`yt-dlp_macos`) is a PyInstaller **onefile** build. Onefile mode self-extracts the entire bundled Python runtime + all compiled dependencies (stdlib C extensions, Cryptodome, websockets, etc. — dozens of files) to a fresh temp directory (`_MEIxxxxxx`) on *every single execution*, never reusing a previous extraction. Confirmed via `log show`: for each extracted `.so` file, macOS's `amfid`/`syspolicyd` flags it as "adhoc signed or signed by an unknown certificate chain" and performs a Gatekeeper policy scan that includes a real network round-trip to check notarization status — repeated per file, per run, since the extraction path (and thus the "is this trusted" cache key) differs every time. `spctl -a -vv` on the binary reports "rejected".
+
+This is why it feels so much slower than the old Python-library implementation: the old code shelled out to the system's already-installed, already-trusted `python3` (signed by python.org/Apple, long since approved by Gatekeeper) — no extraction, no per-file scanning at all. Our own earlier hand-built PyInstaller binary (before switching to yt-dlp's official binary) used `--onedir` mode specifically to avoid exactly this — onedir extracts once at build time, not on every launch — so this regression is specific to depending on yt-dlp's *official* onefile release binary.
+
+**Suggested future fix (open question, needs a decision, not just an implementation):**
+- Build our own `--onedir` freeze of yt-dlp instead of using their official onefile binary (brings back the PyInstaller build-pipeline complexity/maintenance cost we deliberately moved away from when switching off the from-scratch Python approach).
+- Or get a real Apple Developer ID signing certificate and codesign+notarize our bundled binary (removes the Gatekeeper scan entirely) — has a $99/yr cost and build-pipeline complexity, previously deferred (see the "skip signing for now" decision earlier in this project).
+- Or investigate whether yt-dlp publishes/supports an alternative distribution format that avoids onefile's re-extraction (e.g. a wheel/zipapp run via a bundled interpreter) — unexplored.
+- At minimum, this needs to be weighed against the size/maintenance tradeoffs before picking a direction.
+
+**Resolved — 2026-08-01:** Fixed by building our own `--onedir` PyInstaller freeze of yt-dlp's own unmodified CLI (`scripts/build-ytdlp-bin.sh`, `src/python/ytdlp_entrypoint.py`, `src/python/requirements-build.txt`), replacing the downloaded official onefile binary (`scripts/download-ytdlp.mjs`, deleted). No changes needed to `main.js` or the `extraResources` packaging config — only the *source* populating `dist/ytdlp-bin/` changed. Verified: `--version` dropped from ~15.7s on every run to ~10s on the very first run of a freshly-built binary (one-time Gatekeeper scan of a never-before-seen file hash, expected and acceptable) and ~0.2s on every run after that, matching the `python3 -m yt_dlp` baseline — confirmed both from the raw `dist/ytdlp-bin/` build output and from inside the actual packaged `.app`'s `Resources/ytdlp-bin/`. Functional parity (metadata fetch, standard download, MP3 extraction, format recode) and the SSL/certifi fix were re-verified against the new binary with no regressions.
+
+---
+
+## TD-003 — [RESOLVED] — 2026-08-01 — Packaged app is enormous (1-3GB) due to `"files": ["dist/**/*"]` in package.json
+
+**Where:** `package.json`, `build.files` config (`electron-builder`). Predates all recent work — this exact config was already present in the original project before any of the "make it shippable" changes.
+
+**What happens today:** `app.asar` inside the packaged `.app` is ~624MB. Of its ~26,437 files, 26,222 (99.2%) are raw, unbundled `node_modules` source — including the *entire* `@mui/icons-material` package (10,776 individual icon files) even though the app only imports a handful of icons. None of this is actually needed at runtime: Vite already bundles everything the renderer uses into one ~520KB minified file (`dist/renderer/assets/index-*.js`).
+
+Separately, and more surprisingly: `app.asar` also contains ~199 files under `/dist/mac/Electron.app/...` — that's `electron-builder`'s *own* in-progress build output (a copy of the Electron.app template it's currently assembling) getting swept up by the `"dist/**/*"` glob and re-embedded into the very asar being built, because `dist/` is simultaneously the glob's root and where `electron-builder` writes its own output (`dist/mac`, the final `.dmg`). If `dist/mac` isn't deleted before rebuilding, this compounds across successive builds — likely why the reported size varies from ~1GB up to ~3GB depending on build history.
+
+**Suggested future fix:**
+- Scope `"files"` to only what's actually needed, e.g. `["dist/electron/**/*", "dist/renderer/**/*"]`, instead of the whole `dist/**/*` tree (which also incidentally double-includes `dist/ytdlp-bin`/`dist/ffmpeg`, already handled separately via `extraResources`).
+- Explicitly exclude `node_modules` from `files` (e.g. `"!node_modules/**/*"`) since the renderer bundle is fully self-contained after `vite build` and never needs raw `node_modules` at runtime.
+- Always do a clean `rm -rf dist` before packaging (already how `npm run dist` is meant to be used), but the config shouldn't rely on that discipline to avoid unbounded growth — scoping `files` properly fixes the root cause regardless.
+
+**Resolved — 2026-08-01:** Fixed by scoping `build.files` to `["dist/electron/**/*", "dist/renderer/**/*", "!node_modules/**/*"]` (confirmed via grep first that `main.js`/`preload.mjs` import only `electron` and Node built-ins, zero third-party `node_modules` packages, so full exclusion is safe). Result, measured on a clean rebuild: `app.asar` 624MB → 524KB (26,437 files → 12, both the `node_modules` bloat and the `dist/mac` self-inclusion bug completely eliminated — 0 matches for either in the new asar listing), `.dmg` 608MB → 176MB, total `dist/` 1.8GB → 808MB (remaining size is legitimate: ffmpeg + yt-dlp binaries + the dmg itself). Verified the asar's contents are exactly the 8 files actually needed, internal path structure is unchanged (`main.js`'s `../renderer/index.html` resolution unaffected), and yt-dlp still runs correctly from the packaged `Resources/` directory.
+
+---
+
+## TD-004 — [RESOLVED] — 2026-08-02 — Postprocessing progress is a 2-state approximation, not real percentage
+
+**Where:** `src/electron/main.js` (`POSTPROCESS|` progress-template lines, `buildDownloadArgs()`), `src/ui/hooks/useDownloadVideo.tsx` (`postprocessProgress` state), `src/ui/screens/VideoDetailCard.tsx` (the buffer-bar indicator).
+
+**What happens today:** The download indicator's progress bar uses `LinearProgress variant="buffer"` — `valueBuffer` (download %) is real and continuous, but `value` (postprocessing %) is a hardcoded jump: 50% the moment any postprocessing step starts, 100% once the whole download reports done. There's no actual percentage during MP3 extraction or format recode, just a guess that *something* is happening.
+
+**Why it's there:** Researched directly against yt-dlp's current source (`yt_dlp/postprocessor/ffmpeg.py`, `real_run_ffmpeg`): postprocessing's ffmpeg subprocess is run via a **blocking** call —
+```python
+_, stderr, returncode = Popen.run(
+    cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
+```
+— which only reads stdout/stderr after ffmpeg exits, and discards it entirely on success. So yt-dlp's own `postprocessor_hook`/`--progress-template` can only ever report `started`/`finished`, never a real percentage — this is a structural property of yt-dlp itself, not a missing flag or config on our side, confirmed via a live GitHub issue (yt-dlp#7918) hitting the same wall.
+
+**Why it's debt:** ffmpeg itself *does* support real, continuous progress reporting — `-progress pipe:1` (stable since ffmpeg 3.1, 2016) emits periodic `frame=`/`out_time_us=`/`speed=`/`progress=continue|end` lines, from which a true percentage is trivial to compute (`out_time_us` vs. the video's known duration, already captured in `reshapeVideoInfo`). We just can't reach it through yt-dlp's postprocessing pipeline.
+
+**Suggested future fix:** Bypass yt-dlp's built-in postprocessing for the recode/MP3-extraction step and invoke our own bundled ffmpeg directly instead:
+- Have yt-dlp download+merge the raw stream only (drop `--recode-video`/`--extract-audio` from its args).
+- Afterward, spawn our own ffmpeg binary (`ffmpegDir`, already bundled) with `-progress pipe:1`, parsed the same way we already parse yt-dlp's own progress-template stdout.
+- This also means re-implementing whatever ffmpeg args yt-dlp's postprocessors were handling for us (codec selection, container muxing, any metadata/thumbnail embedding flags in play) — a real scope/maintenance cost, not just a progress-tracking change.
+- **Prerequisite, must land first:** `scripts/copy-ffmpeg.mjs` currently strips the platform extension unconditionally (always writes extensionless `ffmpeg`/`ffprobe`, even though `ffmpeg-static`/`ffprobe-static` resolve to `ffmpeg.exe`/`ffprobe.exe` on Windows). Today this is masked because `--ffmpeg-location` hands a *directory* to yt-dlp, which does its own more lenient internal resolution. The moment we spawn ffmpeg ourselves with an exact constructed path (same pattern as `ytdlpPath`'s `ytdlpBinaryName` branch), this becomes a hard `ENOENT` on Windows instead of a latent bug. Fix by mirroring the `ytdlpBinaryName` pattern: `const ffmpegBinaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'`.
+- Verified no other cross-platform risk beyond that: binary availability is already solved (`ffprobe-static` ships prebuilt `darwin`/`linux`/`win32` binaries directly; `ffmpeg-static` downloads the right one at `npm install` time), execute permissions are already handled cross-platform, and spawning our own child process directly (no `shell: true`) carries no new Gatekeeper/codesigning/Windows-quoting risk beyond what's already accepted for `ytdlpPath` today.
+
+**Resolved — 2026-08-02:** Fixed exactly as suggested above. `scripts/copy-ffmpeg.mjs` now preserves the `.exe` extension on Windows (prerequisite, landed first). `buildDownloadArgs()` no longer passes `--extract-audio`/`--recode-video` to yt-dlp at all; MP3 downloads switched from `bestvideo[height<=144]+bestaudio/best` to `bestaudio/best` (no more throwaway video download). When MP3/recode is requested, yt-dlp downloads to a raw intermediate file in a per-download temp dir (`app.getPath('temp')`, deliberately outside the user's chosen directory so it can never spuriously match `findFinalFile`'s/`checkFileExists`' prefix-based lookups) — derived deterministically from a hash of the output path rather than a random ID, so retrying a failed download reuses the same raw dir and doesn't silently lose the TD-001 resume behavior. Once yt-dlp closes, a new `runFfmpegWithProgress()` helper spawns our own bundled ffmpeg directly with `-progress pipe:1`, parsing real `out_time_us=` lines against a duration obtained via `ffprobe` (bundled but previously unused) run against the raw file itself — more robust than trusting the video metadata fetched earlier. MP3 extraction uses `-vn -c:a libmp3lame -b:a 192k`; format recode tries a fast remux (`-c copy`) first and falls back to a full re-encode only if that fails, with codec selection aware of the target container (`libvpx-vp9`/`libopus` for WebM, `libx264`/`aac` otherwise — WebM is spec'd to only hold VP8/VP9/AV1+Vorbis/Opus, so a universal libx264/aac fallback would have silently produced invalid WebM files, caught during testing). `useDownloadVideo.tsx` now uses the real `postprocessPercent` when present, falling back to the old 50/100 approximation only for yt-dlp's own merge-step events (still internal, still fast, doesn't need real tracking). Verified end-to-end against real ffmpeg/ffprobe binaries with a synthetic test video: duration detection, real incremental progress (confirmed via a genuinely slow video re-encode producing 21 smooth progress samples vs. a fast audio-only transcode correctly producing just 1-2), the remux-failure-triggers-reencode-fallback path, and the resulting WebM's actual codec validity (`ffprobe`-verified as real vp9/opus streams, not just a correctly-named file).
+
+---
+
+## TD-005 — 2026-08-02 — Library folder paths can exceed Windows' MAX_PATH (260 chars) in an extreme case
+
+**Where:** `src/electron/library.mjs` — `channelFolderName()`, `videoFolderName()`, and the `<libraryDir>/<channel>/<title> [<videoId>]/<epoch>/metadata.json` path structure they build.
+
+**What happens today:** Channel folder names are capped at 100 characters; video folder names (title + ` [videoId]`) are capped at 50 characters total (narrowed from an earlier 80+14≈94 char cap specifically to reduce this risk). With both near their caps, plus a normal-depth library location (e.g. `C:\Users\SomeUser\Documents\YT Archive`), the full path to a video's `metadata.json` comes out to roughly 218 characters — comfortably under Windows' classic 260-character `MAX_PATH` limit, which is still the *default* on Windows even though long-path support exists (it requires an explicit opt-in Windows doesn't enable automatically). Before the 50-char total cap was added, the same worst case measured 262 characters — already over the limit.
+
+**Why it's debt:** The 50-char cap narrows the window significantly but doesn't close it. A sufficiently deep library location (e.g. inside a synced OneDrive folder, which adds real extra path depth and is common in practice) combined with a near-max-length channel name (still capped at 100, untouched by this pass) could still overflow 260 characters. `fs.mkdirSync`/`fs.writeFileSync` would fail with a path-too-long error in that scenario, on Windows only.
+
+**Why it's logged instead of fixed further:** Explicitly called out by the user as a known limitation that may not be worth chasing further given how narrow the remaining window is (requires an unusually deep library location *and* a near-max-length channel name simultaneously) — logged here so it's not forgotten, not because a fix is planned imminently.
+
+**Suggested future fix, if it ever actually bites:**
+- Also cap `channelFolderName()`'s length more aggressively (currently 100 chars, untouched by this pass since the request was specifically about the title+videoId total).
+- Or opt into Windows long-path support at the app level (an NSIS/manifest setting), which removes the 260-char ceiling entirely rather than continuing to budget under it.
+- Or detect the specific path-too-long failure at write time and surface a clear error (better than a cryptic OS error) rather than trying to prevent it structurally.
+
+**Follow-up — 2026-08-03:** `videoFolderName()` was changed (for an unrelated reason — title drift causing folder-name staleness, see the "video merger"/naming section of `futureSpecsFeedback.md`) to be keyed purely on `videoId` instead of `title + " [videoId]"`. This incidentally shrinks the worst-case path further, since a bare videoId is far shorter than the old 50-char title+suffix budget — but doesn't resolve this entry: `channelFolderName()` (still up to 100 chars) and an arbitrarily deep `libraryDir` are both still unbounded, so the underlying risk remains, just narrower again.
+
+---
+
+## TD-006 — 2026-08-02 — Cookie auth requires manually pasting cookie text; `--cookies-from-browser` isn't wired up
+
+**Where:** `src/electron/main.js` — `cookiesPath` (`userData/cookies.txt`), `cookiesArgs()` (returns `['--cookies', cookiesPath]`), the `cookies:save`/`cookies:delete`/`cookies:status` IPC handlers. `src/ui/screens/OptionsScreen.tsx`'s "Personal Cookie" dialog, where the user pastes either a Netscape-format `cookies.txt` export or a raw browser cookie header value.
+
+**What happens today:** The only way to authenticate requests as the user (to avoid YouTube's "Sign in to confirm you're not a bot" errors) is manually copying cookie text out of the browser's dev tools and pasting it into a dialog. This works, but it's manual, easy to get subtly wrong (stray line breaks when copying a long value — already a real failure mode the paste dialog specifically surfaces an error for), and goes stale over time since it's a point-in-time snapshot rather than the browser's live, continuously-refreshed cookie jar.
+
+**Why it's debt, not just a missing feature:** yt-dlp natively supports `--cookies-from-browser BROWSER[+KEYRING][:PROFILE]`, which reads cookies directly from an installed browser's live cookie store instead of a manually exported file — no copy/paste step, and always fresh. This app never wires that flag up; `cookiesArgs()` only ever produces `--cookies <file>`.
+
+**Why it wasn't done already:** Initially came up as a question about whether relocating `ytdlp-bin` to `userData` (done for the self-updater feature) unlocked this — it doesn't; binary file location has no bearing on the spawned process's filesystem/keychain permissions, which come from the user account it runs as either way. The flag was always exactly as feasible as it is now.
+
+**What's already confirmed to support it:** The yt-dlp PyInstaller build (`scripts/build-ytdlp-bin.mjs`, relying entirely on yt-dlp's own bundled `__pyinstaller/hook-yt_dlp.py` hook rather than a hand-picked hidden-imports list) already bundles **Cryptodome** (confirmed via a real build log: `Adding imports: [..., 'Cryptodome', ...]`) — the library yt-dlp uses to decrypt Chromium-based browsers' AES-encrypted cookie values once it has the browser's master key.
+
+**Real caveats, platform/browser-specific, not about this app's own code:**
+- **Chromium-based browsers (Chrome/Edge/Brave) need an OS keychain unlock first**, before Cryptodome ever runs — yt-dlp has to pull a master key from macOS Keychain or Windows DPAPI. On macOS, this triggers a one-time permission prompt ("yt-dlp wants to access key 'Chrome Safe Storage'") — and since this app ships **unsigned** (`identity: null`, `package.json`'s `build.mac` config) *and* yt-dlp gets rebuilt fresh on-device by the self-updater, each rebuild is effectively a new unsigned binary. macOS ties "always allow" keychain grants to a binary's code signature, so there's a real risk this prompt reappears after every yt-dlp update instead of being remembered once. Windows DPAPI is tied to the OS login session rather than app identity, so it should be smoother there — unverified directly, no Windows test environment available.
+- **Firefox has no OS keychain step at all** — its cookie store is a plain, unencrypted SQLite file. `--cookies-from-browser firefox` would work with zero permission-prompt friction on any platform, and is likely the better default to steer toward even if Chrome/Edge support is offered too.
+
+**Suggested future fix:**
+- Add a browser-picker option alongside (not necessarily replacing) the existing paste-cookie-text dialog in the Options tab's "Personal Cookie" section — e.g. a dropdown of detected/common browsers, defaulting to Firefox given the caveat above.
+- Plumb the choice through to `cookiesArgs()`: swap `['--cookies', cookiesPath]` for `['--cookies-from-browser', browserChoice]` when this mode is active, mutually exclusive with the existing pasted-file mode.
+- Test the macOS Keychain re-prompt behavior specifically across a real yt-dlp self-update cycle before shipping this as the default path, given the unsigned-binary risk flagged above.
+
+---
+
+## TD-007 — 2026-08-03 — Version-scoped UI updates trigger a full library re-scan, not a localized one
+
+**Where:** `src/electron/library.mjs`'s `refreshLibraryIndex()` (a full `scanLibrary()` walk of the entire library directory tree). Called via `LibraryScreen.tsx`'s `handleVersionsChanged` every time a single video's version data changes — a download completing, a quality swap, adding a new version, or deleting one.
+
+**What happens today:** Any single-video, single-epoch mutation (e.g. recording that one file finished downloading) triggers a full re-walk of the whole library folder tree — every channel folder, every video folder, every epoch folder, re-parsing every `metadata.json` — even though only one small, already-known part of that tree actually changed.
+
+**Why it's there:** This was the simplest correct fix for the version-control staleness bugs found during testing (the version-selector's option list and per-epoch download state going stale after switching versions and back) — reusing the existing whole-tree scan function was the fastest way to guarantee the UI's `video.epochs` data was genuinely fresh after any version-mutating action, without inventing a new incremental-update mechanism under time pressure.
+
+**Why it's debt:** For a very large library (many channels/videos/versions), a full re-scan on every single download/swap/version-add/version-delete could become a real, felt latency cost that scales with the whole library's size rather than with the size of the one thing that actually changed.
+
+**Suggested future fix:** Add a more surgical/localized update path — e.g. a function that patches just the affected video's entry in the in-memory index (re-reading only that one video's own epoch folders) rather than re-scanning every channel/video/epoch in the library. Worth profiling against a real, large library first to confirm this is actually worth the added complexity, rather than assuming it's necessary before there's evidence it matters in practice.
+
+---
+
+## TD-008 — 2026-08-03 — Download progress isn't scoped per-download, so only one download can run at a time app-wide
+
+**Where:** `src/electron/main.js`'s `downloadVideoWithProgressUpdates` IPC handler broadcasts progress via `BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', msg)` — a single, unlabeled event channel, not tagged with which download it belongs to. `useDownloadVideo.tsx` (the renderer-side hook every download flow uses) subscribes with `ipcRenderer.on('progressUpdate', ...)` and tears down with `ipcRenderer.removeAllListeners('progressUpdate')` — a global removal, not scoped to just its own listener.
+
+**What happens today:** Found while planning the Library view's "MP3 as a separate, coexisting download" feature — video and MP3 downloads were kept on the same single `useDownloadVideo()` hook instance (sequential, one active download at a time) specifically *because* running two independent `useDownloadVideo()` instances concurrently would cross-talk: both would receive both downloads' progress/done events indiscriminately, since nothing in the message identifies which download it's reporting on. This isn't specific to that feature — it's a pre-existing limitation of the whole download pipeline, just newly load-bearing now that a UI wants two independently-triggerable downloads for the same video visible at once.
+
+**Why it's there:** The app was designed around exactly one download happening at a time (one Downloader-tab operation, or one Library-tab operation), so a single global progress channel was simplest and always worked correctly in practice.
+
+**Why it's debt:** Any future feature wanting two genuinely simultaneous downloads (the MP3-coexistence feature above deliberately avoided needing this by making video/audio downloads mutually exclusive in time instead) would require this to be fixed first — it's an architectural ceiling on the whole download system, not something a single feature can safely work around by itself.
+
+**Suggested future fix:** Tag every download with a request id at the point `downloadVideoWithProgressUpdates` is invoked (renderer generates one, passes it through `options`), include it in every progress/postprocess/done/error message, and filter on it in `useDownloadVideo.tsx`'s listener (or move to `ipcRenderer.invoke`-per-chunk / a dedicated `MessageChannel` per download instead of one shared broadcast). Worth doing once there's an actual feature that needs concurrent downloads, rather than speculatively now.

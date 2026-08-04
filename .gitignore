@@ -24,7 +24,6 @@ yt-archiver-dist
 *.sln
 *.sw?
 
-reports
 src/python/__pycache__
 .venv-build
 build

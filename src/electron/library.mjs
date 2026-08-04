@@ -56,7 +56,7 @@ export function videoFolderName(videoId) {
 function buildEpochMetadata(videoMetaData, addedEpoch) {
     const { id, title, fullTitle, description, thumbnail, originalUrl, duration, durationString, uploadDate, channelId, uploader, resolutions } = videoMetaData;
     return {
-        schemaVersion: 2,
+        schemaVersion: 3,
         videoId: id,
         channelId: channelId || null,
         channel: uploader || null,
@@ -82,6 +82,10 @@ function buildEpochMetadata(videoMetaData, addedEpoch) {
         downloadedFilePath: null,
         downloadedResolution: null,
         downloadedFormat: null,
+        // MP3 is a separate, coexisting artifact of the video -- its own
+        // slot (audio.mp3, alongside video.<ext>), entirely independent of
+        // the video fields above. Also filled in by recordLibraryDownload().
+        downloadedAudioFilePath: null,
     };
 }
 
@@ -133,12 +137,21 @@ export function addLibraryVersion({ libraryDir, videoDir, videoMetaData }) {
 // epoch's metadata.json in place rather than writing a new epoch, since
 // fulfilling an already-tracked entry isn't itself a new version (unlike the
 // still-deferred "Download new version" flow).
-export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, format }) {
+//
+// kind distinguishes the video slot from the separate, coexisting MP3 slot --
+// 'audio' only ever touches downloadedAudioFilePath, leaving the video
+// fields (and vice versa) completely untouched, so downloading one never
+// disturbs the other.
+export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, format, kind = 'video' }) {
     const metadataPath = path.join(videoDir, epoch, 'metadata.json');
     const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
-    metadata.downloadedFilePath = filePath;
-    metadata.downloadedResolution = resolution || null;
-    metadata.downloadedFormat = format || null;
+    if (kind === 'audio') {
+        metadata.downloadedAudioFilePath = filePath;
+    } else {
+        metadata.downloadedFilePath = filePath;
+        metadata.downloadedResolution = resolution || null;
+        metadata.downloadedFormat = format || null;
+    }
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
     return metadata;
 }
@@ -152,7 +165,7 @@ export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, f
 // this function is only ever called after startDownload's own isDone/isError
 // signal confirms the new file is real and complete. Guard-railed against
 // libraryDir with the same path.relative check deleteLibraryEntry uses.
-export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format }) {
+export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format, kind = 'video' }) {
     const resolvedLibraryDir = path.resolve(libraryDir || '');
     const resolvedTempFilePath = path.resolve(tempFilePath || '');
     const relative = path.relative(resolvedLibraryDir, resolvedTempFilePath);
@@ -161,11 +174,13 @@ export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath,
     }
 
     const resolvedVideoDir = path.resolve(videoDir);
-    // The deterministic "video.<ext>" slot this video's downloads always live
-    // at (see LibraryVideoDetail.tsx's outputPath) -- re-derived from the
-    // temp file's own resolved extension rather than reusing oldFilePath's
-    // name verbatim, since a quality swap can also change format/extension.
-    const targetPath = path.join(resolvedVideoDir, epoch, `video${path.extname(resolvedTempFilePath)}`);
+    // The deterministic "video.<ext>"/"audio.<ext>" slot this video's
+    // downloads always live at (see LibraryVideoDetail.tsx's outputPath) --
+    // re-derived from the temp file's own resolved extension rather than
+    // reusing oldFilePath's name verbatim, since a quality swap can also
+    // change format/extension.
+    const baseName = kind === 'audio' ? 'audio' : 'video';
+    const targetPath = path.join(resolvedVideoDir, epoch, `${baseName}${path.extname(resolvedTempFilePath)}`);
 
     if (oldFilePath) {
         const resolvedOldFilePath = path.resolve(oldFilePath);
@@ -180,9 +195,13 @@ export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath,
 
     const metadataPath = path.join(resolvedVideoDir, epoch, 'metadata.json');
     const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
-    metadata.downloadedFilePath = targetPath;
-    metadata.downloadedResolution = resolution || null;
-    metadata.downloadedFormat = format || null;
+    if (kind === 'audio') {
+        metadata.downloadedAudioFilePath = targetPath;
+    } else {
+        metadata.downloadedFilePath = targetPath;
+        metadata.downloadedResolution = resolution || null;
+        metadata.downloadedFormat = format || null;
+    }
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
     return metadata;
 }
