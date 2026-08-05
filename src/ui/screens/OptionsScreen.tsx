@@ -9,10 +9,13 @@ import {
   DialogContentText,
   DialogTitle,
   Divider,
+  IconButton,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { useYtdlpUpdater, type YtdlpUpdateStage } from '../hooks/useYtdlpUpdater';
 
 const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
@@ -33,6 +36,7 @@ export default function OptionsScreen() {
   const [cookieLoaded, setCookieLoaded] = useState(false);
   const [cookieCount, setCookieCount] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [ytdlpInfoOpen, setYtdlpInfoOpen] = useState(false);
   const [cookieText, setCookieText] = useState('');
   const [error, setError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
@@ -160,11 +164,38 @@ export default function OptionsScreen() {
 
       <Divider sx={{ my: 3 }} />
 
-      <Typography variant="h6" gutterBottom>yt-dlp Version</Typography>
+      <Stack direction="row" spacing={0.5} alignItems="center">
+        <Typography variant="h6" gutterBottom sx={{ mb: '0 !important' }}>yt-dlp Version</Typography>
+        <Tooltip title="What is yt-dlp?">
+          <IconButton size="small" onClick={() => setYtdlpInfoOpen(true)} aria-label="What is yt-dlp?">
+            <InfoOutlinedIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
         yt-dlp needs to change whenever YouTube does. Updating rebuilds it locally on this
         machine, which can take a minute or two the first time.
       </Typography>
+      <Dialog open={ytdlpInfoOpen} onClose={() => setYtdlpInfoOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>What is yt-dlp?</DialogTitle>
+        <DialogContent>
+          <DialogContentText component="div">
+            <Typography variant="body2" sx={{ mb: 1.5 }}>
+              yt-dlp is the tool this app uses behind the scenes to actually talk to
+              YouTube and download videos. It's separate from YT Archiver itself --
+              updating it here does <strong>not</strong> update the app.
+            </Typography>
+            <Typography variant="body2">
+              YouTube changes how it works fairly often, and when it does, yt-dlp can
+              stop working correctly until it's updated to keep up. Keeping this
+              current is what keeps downloads working reliably.
+            </Typography>
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setYtdlpInfoOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
       <Stack direction="row" spacing={2} alignItems="center">
         <Button variant="outlined" onClick={() => checkForUpdate()} disabled={checking || isUpdating}>
           Check for updates
