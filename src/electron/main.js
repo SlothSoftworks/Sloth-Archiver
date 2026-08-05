@@ -9,7 +9,7 @@ import https from 'node:https';
 
 import { getSupportedVideoFilters } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry } from './library.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -514,6 +514,24 @@ ipcMain.handle('library:addVersion', async (e, { videoDir, videoMetaData }) => {
     return { success: true, videoDir: result.videoDir, epoch: result.epoch, metadata: result.metadata };
 });
 
+// Flat-playlist entries carry more than just id/title/url for free (no extra
+// per-video fetch) -- confirmed directly against a real playlist: each entry
+// already has its own `thumbnails[]` array and (when YouTube happens to
+// resolve it during the flat listing, not guaranteed) a `timestamp`. Picking
+// the largest thumbnail and converting the timestamp when present costs
+// nothing extra; falling back to the same predictable i.ytimg.com CDU URL
+// pattern already used for the bulk-add sidepanel's thumbnails when the
+// array is empty, and leaving uploadDate null when timestamp isn't resolved
+// (a full per-video fetch would be needed for that reliably, which defeats
+// the point of flat-listing an entire playlist cheaply).
+function pickBestThumbnail(id, thumbnails) {
+    if (Array.isArray(thumbnails) && thumbnails.length > 0) {
+        const best = thumbnails.reduce((a, b) => ((b.width || 0) > (a.width || 0) ? b : a));
+        if (best.url) return best.url;
+    }
+    return `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+}
+
 // Bulk-add's playlist path -- same --flat-playlist mechanism as
 // fetchChannelAvatarUrl above, just without --playlist-end 1, so this lists
 // every entry (in source order) instead of capping at one. No YouTube Data
@@ -542,8 +560,21 @@ function fetchPlaylistEntries(playlistUrl) {
                 const info = JSON.parse(data);
                 const entries = (info.entries || []).map((e) => ({
                     id: e.id,
-                    title: e.title || e.id,
+                    // No `|| e.id` fallback here -- that would silently turn
+                    // "yt-dlp gave us no title" into a title that's just the
+                    // raw video ID, indistinguishable from a real (if
+                    // coincidentally id-shaped) title downstream. Leave it
+                    // null and let isDeadTitle()/writePlaylistSnapshot
+                    // (library.mjs) decide what a missing title means.
+                    title: e.title || null,
                     url: e.url || `https://www.youtube.com/watch?v=${e.id}`,
+                    thumbnailUrl: pickBestThumbnail(e.id, e.thumbnails),
+                    // YYYYMMDD, matching the format getVideoInfoPython's
+                    // reshapeVideoInfo already uses for uploadDate elsewhere
+                    // (info.upload_date) -- so entries enriched later
+                    // (enrichPlaylistEntry) and entries filled in from this
+                    // flat listing are never in two different date formats.
+                    uploadDate: e.timestamp ? new Date(e.timestamp * 1000).toISOString().slice(0, 10).replace(/-/g, '') : null,
                 }));
                 resolve({
                     id: info.id,
@@ -575,11 +606,40 @@ ipcMain.handle('library:fetchPlaylistEntries', async (e, playlistUrl) => {
                 title: playlist.title,
                 uploader: playlist.uploader,
                 originalUrl: playlist.originalUrl,
-                entries: playlist.entries.map((entry) => ({ videoId: entry.id, title: entry.title, url: entry.url })),
+                entries: playlist.entries.map((entry) => ({
+                    videoId: entry.id,
+                    title: entry.title,
+                    url: entry.url,
+                    thumbnailUrl: entry.thumbnailUrl,
+                    uploadDate: entry.uploadDate,
+                })),
                 index,
             });
         }
-        return { success: true, entries: playlist.entries };
+        return { success: true, entries: playlist.entries, playlistId: playlist.id };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// Called once per bulk-add item that turns out to belong to a
+// previously-saved playlist snapshot, right after that item's own real info
+// has actually been fetched (see useBulkAddQueue.tsx's processItem) --
+// patches just that one entry with the real title/date/thumbnail now known,
+// instead of leaving it stuck with whatever the cheap flat-listing guessed.
+// This is exactly the scenario the spec calls out: if the video later
+// disappears from YouTube, a *future* re-fetch of the playlist would only
+// ever see a dead, title-less entry for it -- but by then this real data is
+// already saved and won't be overwritten (see enrichPlaylistEntry's own
+// never-regress guard).
+ipcMain.handle('library:enrichPlaylistEntry', async (e, { playlistId, videoId, title, uploadDate, thumbnailUrl }) => {
+    const { libraryDir } = readSettings();
+    if (!libraryDir || !playlistId) {
+        return { success: false };
+    }
+    try {
+        enrichPlaylistEntry({ libraryDir, playlistId, videoId, title, uploadDate, thumbnailUrl });
+        return { success: true };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
@@ -889,14 +949,35 @@ function reshapeVideoInfo(info) {
     };
 }
 
+// A video is effectively dead (unavailable/private/deleted/region-locked)
+// even when yt-dlp still exits 0 and hands back a parseable info dict --
+// --ignore-no-formats-error (below) exists specifically to let that
+// non-fatal case through rather than hard-failing on format-selector
+// resolution. Two independent signals, either one enough on its own:
+// no downloadable formats at all (buildResolutions came back empty -- not
+// even MP3, which itself requires at least one real video-height entry
+// today), or no channel/uploader at all -- yt-dlp can't resolve who
+// uploaded a video it can't actually load the real page for, so a real,
+// available video never has both null.
+function isDeadVideoInfo(response) {
+    if (!response.resolutions || response.resolutions.length === 0) return true;
+    if (!response.channelId && !response.uploader) return true;
+    return false;
+}
+
 ipcMain.handle('getVideoInfoPython', async (event, url) => {
-    const cached = readVideoInfoCache()[url];
-    // A cached entry with zero resolutions is itself the symptom of the
-    // no-formats bug below having already slipped one through before this
-    // check existed -- trusting it here would just keep serving that same
-    // bad data back for the rest of the TTL. Treat it as a miss instead.
-    if (cached && cached.response.resolutions?.length > 0 && Date.now() - cached.savedEpoch < VIDEO_INFO_CACHE_TTL_MS) {
-        return { success: true, data: { response: cached.response, fromCache: true } };
+    const cache = readVideoInfoCache();
+    const cached = cache[url];
+    if (cached && Date.now() - cached.savedEpoch < VIDEO_INFO_CACHE_TTL_MS) {
+        // Self-healing: a dead-video response cached before this check
+        // existed (or from a transient gap) doesn't get served as valid
+        // forever -- drop it and fall through to a real, fresh fetch below
+        // instead of returning early.
+        if (!isDeadVideoInfo(cached.response)) {
+            return { success: true, data: { response: cached.response, fromCache: true } };
+        }
+        delete cache[url];
+        writeVideoInfoCache(cache);
     }
 
     return new Promise((resolve, reject) => {
@@ -949,9 +1030,16 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
                         return;
                     }
                     const response = reshapeVideoInfo(info);
-                    const cache = readVideoInfoCache();
-                    cache[url] = { savedEpoch: Date.now(), response };
-                    writeVideoInfoCache(cache);
+                    // Reject before this ever gets cached or handed to a
+                    // caller that would otherwise go on to create a library
+                    // folder for a video with nothing real to archive.
+                    if (isDeadVideoInfo(response)) {
+                        reject(new Error('No downloadable formats found for this video -- it may be unavailable, private, or region-locked.'));
+                        return;
+                    }
+                    const freshCache = readVideoInfoCache();
+                    freshCache[url] = { savedEpoch: Date.now(), response };
+                    writeVideoInfoCache(freshCache);
                     resolve({ success: true, data: { response, fromCache: false } });
                 } catch (e) {
                     reject(new Error('Failed to parse video data'));

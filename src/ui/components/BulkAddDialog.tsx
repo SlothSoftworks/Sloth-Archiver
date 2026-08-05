@@ -69,19 +69,21 @@ export default function BulkAddDialog({ open, onClose }: { open: boolean; onClos
     setSubmitting(true);
     try {
       let entries: BulkAddEntry[];
+      let playlistId: string | undefined;
       if (isSinglePlaylist) {
         const result = await window.electronAPI.fetchPlaylistEntries(lines[0]);
         if (!result.success || !result.entries) {
           throw new Error(result.message || 'Failed to fetch playlist.');
         }
         entries = result.entries.map((e) => ({ ...e, videoId: e.id }));
+        playlistId = result.playlistId;
       } else {
         entries = lines.map((url) => ({ id: url, title: null, url }));
       }
       if (entries.length === 0) {
         throw new Error('No videos found.');
       }
-      start(entries, { download, targetResolution });
+      start(entries, { download, targetResolution, playlistId });
       setInput('');
       onClose();
     } catch (err) {
