@@ -27,3 +27,4 @@ yt-archiver-dist
 src/python/__pycache__
 .venv-build
 build
+debugLib

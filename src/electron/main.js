@@ -71,7 +71,21 @@ const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const videoInfoCachePath = path.join(app.getPath('userData'), 'videoInfoCache.json');
 const VIDEO_INFO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Browsers yt-dlp's own --cookies-from-browser supports reading a cookie
+// database from directly (its documented keyring list) -- kept here as the
+// single source of truth for both validating settings:setCookiesConfig and
+// populating the Options screen's dropdown.
+const SUPPORTED_COOKIE_BROWSERS = ['brave', 'chrome', 'chromium', 'edge', 'firefox', 'opera', 'safari', 'vivaldi', 'whale'];
+
+// 'browser' mode takes priority whenever a browser is actually configured --
+// switching modes in Options doesn't delete the saved cookies.txt file, so a
+// leftover file from a previous 'file'-mode setup should never silently win
+// again once the user has moved to 'browser' mode.
 function cookiesArgs() {
+    const { cookiesMode, cookiesBrowser } = readSettings();
+    if (cookiesMode === 'browser' && SUPPORTED_COOKIE_BROWSERS.includes(cookiesBrowser)) {
+        return ['--cookies-from-browser', cookiesBrowser];
+    }
     return fs.existsSync(cookiesPath) ? ['--cookies', cookiesPath] : [];
 }
 
@@ -730,6 +744,26 @@ ipcMain.handle('cookies:status', async () => {
     return { loaded: true, cookieCount: valid };
 });
 
+ipcMain.handle('cookies:getConfig', async () => {
+    const { cookiesMode, cookiesBrowser } = readSettings();
+    return {
+        cookiesMode: cookiesMode === 'browser' ? 'browser' : 'file',
+        cookiesBrowser: cookiesBrowser || '',
+        supportedBrowsers: SUPPORTED_COOKIE_BROWSERS,
+    };
+});
+
+ipcMain.handle('cookies:setConfig', async (e, { cookiesMode, cookiesBrowser }) => {
+    if (cookiesMode === 'browser' && !SUPPORTED_COOKIE_BROWSERS.includes(cookiesBrowser)) {
+        throw new Error(`Unsupported browser: ${cookiesBrowser}`);
+    }
+    const settings = readSettings();
+    settings.cookiesMode = cookiesMode === 'browser' ? 'browser' : 'file';
+    settings.cookiesBrowser = cookiesBrowser || '';
+    writeSettings(settings);
+    return { success: true, cookiesMode: settings.cookiesMode, cookiesBrowser: settings.cookiesBrowser };
+});
+
 app.on("ready", async () => {
     protocol.handle('app-video', handleAppVideoRequest);
 
@@ -857,7 +891,11 @@ function reshapeVideoInfo(info) {
 
 ipcMain.handle('getVideoInfoPython', async (event, url) => {
     const cached = readVideoInfoCache()[url];
-    if (cached && Date.now() - cached.savedEpoch < VIDEO_INFO_CACHE_TTL_MS) {
+    // A cached entry with zero resolutions is itself the symptom of the
+    // no-formats bug below having already slipped one through before this
+    // check existed -- trusting it here would just keep serving that same
+    // bad data back for the rest of the TTL. Treat it as a miss instead.
+    if (cached && cached.response.resolutions?.length > 0 && Date.now() - cached.savedEpoch < VIDEO_INFO_CACHE_TTL_MS) {
         return { success: true, data: { response: cached.response, fromCache: true } };
     }
 
@@ -895,6 +933,21 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
             } else {
                 try {
                     const info = JSON.parse(data);
+                    // --ignore-no-formats-error (see above) makes yt-dlp swallow real
+                    // extraction failures -- most commonly YouTube's "Sign in to
+                    // confirm you're not a bot" bot-check when no cookies are loaded
+                    // -- entirely internally: exit code 0, empty stderr, just a
+                    // degraded JSON blob (formats: [], duration/channel_id missing,
+                    // title/uploader still present from the flat webpage data).
+                    // Without this check that silently saved as a real library entry
+                    // with an empty download-quality list and no way to tell why.
+                    // A selector-mismatch (the case the flag above is actually for)
+                    // always leaves formats non-empty, so this only catches genuine
+                    // extraction failures.
+                    if (!info.formats || info.formats.length === 0) {
+                        reject(new Error('yt-dlp could not retrieve any downloadable formats for this video. This usually means YouTube blocked the request (e.g. "Sign in to confirm you\'re not a bot") -- load a cookie or enable "cookies from browser" in Options and try again.'));
+                        return;
+                    }
                     const response = reshapeVideoInfo(info);
                     const cache = readVideoInfoCache();
                     cache[url] = { savedEpoch: Date.now(), response };
@@ -976,6 +1029,19 @@ function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteMode }) 
         args.push('-f', 'bestaudio/best');
     } else {
         args.push('-f', `bestvideo[height<=${resolution}]+bestaudio/best`);
+        // Without this, yt-dlp's own merge step picks MKV by default whenever the
+        // chosen video+audio pair isn't natively MP4-safe (e.g. Opus audio) --
+        // which Chromium's <video> element (this app's own Library player) can't
+        // play at all, container aside from codecs (see LibraryVideoPlayer.tsx's
+        // PLAYABLE_VIDEO_EXTENSIONS). --merge-output-format only picks the
+        // container for the stream-copy merge, it doesn't transcode, and modern
+        // ffmpeg's MP4 muxer already supports every codec combination yt-dlp's own
+        // format selector above can produce (H.264/VP9/AV1 video, AAC/Opus audio),
+        // so this is a free fix with no quality/compatibility cost. Only applies
+        // to this default (no explicit format chosen) path -- an explicit format
+        // choice (Downloader tab) still goes through the direct ffmpeg postprocess
+        // pass instead and picks its own target container there.
+        args.push('--merge-output-format', 'mp4');
     }
 
     // Overwrite behavior is a real user choice now (see the renderer's existing-file
