@@ -10,6 +10,7 @@ import { electronAPIMock, electronAPIPythonDownloadMock } from '../../testing/mo
 import theme from './theme';
 import { YtdlpUpdaterProvider } from './hooks/useYtdlpUpdater';
 import { LibraryNotificationProvider } from './hooks/useLibraryNotifications';
+import { BulkAddProvider } from './hooks/useBulkAddQueue.tsx';
 
 // Forwards uncaught renderer errors to the same main.log a crashed main
 // process already writes to (see errorLog:report in main.js) -- the renderer
@@ -54,10 +55,12 @@ function App() {
       <CssBaseline />
       <YtdlpUpdaterProvider>
         <LibraryNotificationProvider>
-          <Routes>
-            <Route path="/" element={<MainPage />}></Route>
-            <Route path="/other" element={<Other />}/>
-          </Routes>
+          <BulkAddProvider>
+            <Routes>
+              <Route path="/" element={<MainPage />}></Route>
+              <Route path="/other" element={<Other />}/>
+            </Routes>
+          </BulkAddProvider>
         </LibraryNotificationProvider>
       </YtdlpUpdaterProvider>
     </ThemeProvider>

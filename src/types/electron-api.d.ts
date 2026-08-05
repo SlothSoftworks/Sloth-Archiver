@@ -77,10 +77,11 @@ declare global {
             getLibraryIndex: () => Promise<LibraryIndex>
             refreshLibraryIndex: () => Promise<LibraryIndex>
             refreshChannelIcon: (payload: { channelFolderName: string; channelId: string | null }) => Promise<LibraryIndex>
-            addLibraryEntry: (videoMetaData: T) => Promise<{ success: boolean; videoDir: string }>
+            addLibraryEntry: (videoMetaData: T) => Promise<{ success: boolean; videoDir: string; epoch: string }>
             overrideLibraryEntry: (videoMetaData: T, existingVideoDir: string) => Promise<{ success: boolean; videoDir: string }>
             addLibraryVersion: (videoMetaData: T, videoDir: string) => Promise<{ success: boolean; videoDir: string; epoch: string; metadata: LibraryVideoMetadata }>
             findLibraryVideo: (videoId: string) => Promise<{ found: boolean; channelDisplayName?: string; videoDir?: string }>
+            fetchPlaylistEntries: (playlistUrl: string) => Promise<{ success: boolean; entries?: { id: string; title: string; url: string }[]; message?: string }>
             recordLibraryDownload: (payload: { videoDir: string; epoch: string; filePath: string; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<{ success: boolean }>
             swapLibraryDownload: (payload: { videoDir: string; epoch: string; tempFilePath: string; oldFilePath: string | null; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<LibraryVideoMetadata>
             deleteLibraryEntry: (videoDir: string, epoch?: string) => Promise<{ success: boolean; videoDeleted: boolean }>

@@ -9,6 +9,9 @@ you point it here.
 ### Long shot ideas/Need planning
 1. Video diff/comparator: a feture that lets users compare the difference between versions of videos (we can think of how to do this. For example we coun try to fetch the video transcript or maybe look up if there's any algorithmic way to search through video content to compare it.) the diff should show as a report with timestamps
 2. Support for download from other video/media platforms: soundcloud/tiktok/instagram/twitter
+3. Playlist saving: A special playlist adding and saving feature. It would work something like it would scan and save all the data for the playlist and keep it in a special directory for playlists. The video themselves cna se saved on the normal locations but the playlist links and whatever order they come in should be saved in the exact order they came from youtube. 
+    - This playlist fetching should attempt to map into videos that are already in the local library to avoid attempting to download duplicates
+    - Playlists can be versioned or refreshed in case the user wants to save a new version for comparison or just refresh over the current version.
 
 ### Big features
 1. Library view
@@ -48,6 +51,20 @@ you point it here.
     - The sidepanel will indicate with loading bars which video the working is downloading right now and it will have a button on top to stop the entire worker process
     - If the user stops the worker it should keep track of what folder he was working with and the program will ask if the user wants to delete all files related to the process. The program will delete all the directories it created if the user selects yes
     - Once the worker completes the job it should send a system notification to the user to le them know the background process is done
+4. Bulk add and playlist detection (without background worker)
+    - A feature that let's users add entries to the library in bulk, be it with a playlist link or with a comma separated or breakline separated list of youtube links
+    - Investigate if the normal youtube public api let's us access a public playlist's items to avoid overusing yt-dlp
+    - Includes a collapsable sidepanel where all the videos that are added will be listed. This sidepanel wil be separate even from the main menu panels we've been working with until now it whould be interactable always in case there are elements in the queue.
+    - In that sidepanel more features will be added for now each one trackes the recently added entries in the order they were found and processed by the collector function that fetched the information
+    - This sidepanel will indicate if any of the entires in it failed when doing the fetch.
+        - During the session the user can choose to send an individual retry signal to try and re-fetch the video info or they can choose to delete the entry from the sidepanel list if they choose not to download it anymore
+    - Add an option to download data + video on the dialog for adding the playlist
+        - the videos and data being download it should be sequential and based on the order they came from youtube (if playlist) or the comma separated text
+        
+
+### QoL features
+1. Theme support: the react app already supports a themprovider let's add a theme selector in the options, for a start just add dark and bright themes
+2. Language support. Add support for language and set up the ability add more languages in the future via a "strings" style file that the app can reado n startup and load all the messages in the app in any language.
 
 
 ### Small features and corrections

@@ -4,6 +4,7 @@ import Button from '@mui/material/Button';
 import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
 import Box from '@mui/material/Box';
+import Stack from '@mui/material/Stack';
 import Badge from '@mui/material/Badge';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
@@ -19,6 +20,7 @@ import DownloaderScreen from './screens/DownloaderScreen';
 import OptionsScreen from './screens/OptionsScreen';
 import LibraryScreen from './screens/LibraryScreen';
 import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
+import BulkAddSidePanel, { BulkAddToggleButton } from './components/BulkAddSidePanel';
 import { useLibraryNotification } from './hooks/useLibraryNotifications';
 import ltxImage from '../assets/ltx.jpeg';
 
@@ -94,11 +96,14 @@ export function BasicTabs() {
           />
           <Tab label="Options" {...a11yProps(2)} />
         </Tabs>
-        <Tooltip title="About">
-          <IconButton size="small" onClick={() => setInfoOpen(true)} aria-label="About" sx={{ mr: 1 }}>
-            <InfoOutlinedIcon />
-          </IconButton>
-        </Tooltip>
+        <Stack direction="row" alignItems="center" sx={{ mr: 1 }}>
+          <BulkAddToggleButton />
+          <Tooltip title="About">
+            <IconButton size="small" onClick={() => setInfoOpen(true)} aria-label="About">
+              <InfoOutlinedIcon />
+            </IconButton>
+          </Tooltip>
+        </Stack>
       </Box>
       <CustomTabPanel value={value} index={0}>
         <DownloaderScreen/>
@@ -109,6 +114,8 @@ export function BasicTabs() {
       <CustomTabPanel value={value} index={2}>
         <OptionsScreen/>
       </CustomTabPanel>
+
+      <BulkAddSidePanel />
 
       <Dialog open={infoOpen} onClose={() => setInfoOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>About</DialogTitle>
