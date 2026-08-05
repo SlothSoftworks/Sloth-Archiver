@@ -397,3 +397,56 @@ export function findVideoInIndex(index, videoId) {
     }
     return null;
 }
+
+// One-time snapshot of a fetched playlist's contents -- not a live-synced
+// mirror (see futureSpecsFeedback.md's "Playlist saving" assessment: whether
+// to re-sync against upstream changes later is an open design question,
+// deliberately deferred). Same epoch-folder shape as a video's own
+// versioning (<libraryDir>/playlists/<playlistId>/<epoch>/metadata.json) so
+// the versioning/playlist-view features planned on top of this later have a
+// consistent structure to build against from day one, even though nothing
+// reads these epochs back yet.
+//
+// Real epoch handling (deciding when a re-fetch is actually a new version
+// worth keeping vs. just a refresh) is deferred to that future work -- for
+// now, a playlist gets exactly one epoch ever. Every bulk-add run against
+// the same playlist link calls this again, and without this guard that
+// would silently pile up a fresh, functionally-identical epoch folder per
+// run. If one already exists, this is a no-op.
+//
+// localFiles maps each entry's videoId to wherever that video's own
+// videoDir currently is in the library (or null if it isn't tracked at
+// all) -- computed once, from the index as of this snapshot, purely so
+// future features (a playlist view, "download everything still missing")
+// have something to key off immediately rather than needing to invent this
+// mapping later.
+export function writePlaylistSnapshot({ libraryDir, playlistId, title, uploader, originalUrl, entries, index }) {
+    const playlistDir = path.join(libraryDir, 'playlists', sanitizeForFilesystem(playlistId));
+
+    if (fs.existsSync(playlistDir) && fs.readdirSync(playlistDir, { withFileTypes: true }).some((e) => e.isDirectory())) {
+        return { playlistDir, epochDir: null, epoch: null, metadata: null, skipped: true };
+    }
+
+    const addedEpoch = Date.now();
+    const epochDir = path.join(playlistDir, String(addedEpoch));
+    fs.mkdirSync(epochDir, { recursive: true });
+
+    const localFiles = {};
+    for (const entry of entries) {
+        const match = findVideoInIndex(index, entry.videoId);
+        localFiles[entry.videoId] = match ? match.video.videoDir : null;
+    }
+
+    const metadata = {
+        schemaVersion: 1,
+        playlistId,
+        title: title || null,
+        uploader: uploader || null,
+        originalUrl: originalUrl || null,
+        addedEpoch,
+        entries: entries.map((e) => ({ videoId: e.videoId, title: e.title, url: e.url })),
+        localFiles,
+    };
+    fs.writeFileSync(path.join(epochDir, 'metadata.json'), JSON.stringify(metadata, null, 2), 'utf-8');
+    return { playlistDir, epochDir, epoch: String(addedEpoch), metadata };
+}

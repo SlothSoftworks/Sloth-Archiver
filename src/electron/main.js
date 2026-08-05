@@ -9,7 +9,7 @@ import https from 'node:https';
 
 import { getSupportedVideoFilters } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot } from './library.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -468,7 +468,10 @@ ipcMain.handle('library:addEntry', async (e, videoMetaData) => {
         ensureChannelIcon(result.channelDir, videoMetaData.channelId),
         ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail),
     ]).then(() => refreshLibraryIndex(libraryDir)).then(notifyLibraryBackgroundUpdate);
-    return { success: true, videoDir: result.videoDir };
+    // epoch included alongside videoDir -- bulk-add (useBulkAddQueue.tsx) needs
+    // it immediately to kick off a download for the entry it just created,
+    // without a second round-trip to look it back up.
+    return { success: true, videoDir: result.videoDir, epoch: String(result.metadata.addedEpoch) };
 });
 
 ipcMain.handle('library:overrideEntry', async (e, { videoMetaData, existingVideoDir }) => {
@@ -495,6 +498,77 @@ ipcMain.handle('library:addVersion', async (e, { videoDir, videoMetaData }) => {
         ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail),
     ]).then(() => refreshLibraryIndex(libraryDir)).then(notifyLibraryBackgroundUpdate);
     return { success: true, videoDir: result.videoDir, epoch: result.epoch, metadata: result.metadata };
+});
+
+// Bulk-add's playlist path -- same --flat-playlist mechanism as
+// fetchChannelAvatarUrl above, just without --playlist-end 1, so this lists
+// every entry (in source order) instead of capping at one. No YouTube Data
+// API involved: playlistItems.list unconditionally requires an API key/OAuth
+// token (confirmed against Google's own docs, no keyless variant exists),
+// and the public no-auth playlist RSS feed caps out at the 15 most recent
+// videos -- neither fits "every video, in source order." yt-dlp needs no new
+// credential and already does this reliably elsewhere in this file.
+function fetchPlaylistEntries(playlistUrl) {
+    return new Promise((resolve, reject) => {
+        const script = spawn(ytdlpPath, [
+            '-J', '--no-warnings', '--flat-playlist',
+            '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), playlistUrl,
+        ]);
+        let data = '';
+        let error = '';
+        script.on('error', (err) => reject(new Error(`Failed to start yt-dlp: ${err.message}`)));
+        script.stdout.on('data', (chunk) => { data += chunk.toString(); });
+        script.stderr.on('data', (chunk) => { error += chunk.toString(); });
+        script.on('close', (code) => {
+            if (code !== 0) {
+                reject(new Error(error || `yt-dlp exited with code ${code}`));
+                return;
+            }
+            try {
+                const info = JSON.parse(data);
+                const entries = (info.entries || []).map((e) => ({
+                    id: e.id,
+                    title: e.title || e.id,
+                    url: e.url || `https://www.youtube.com/watch?v=${e.id}`,
+                }));
+                resolve({
+                    id: info.id,
+                    title: info.title,
+                    uploader: info.uploader,
+                    originalUrl: info.original_url || info.webpage_url || playlistUrl,
+                    entries,
+                });
+            } catch {
+                reject(new Error('Failed to parse playlist listing.'));
+            }
+        });
+    });
+}
+
+ipcMain.handle('library:fetchPlaylistEntries', async (e, playlistUrl) => {
+    try {
+        const playlist = await fetchPlaylistEntries(playlistUrl);
+        // Snapshot saved every time a playlist is fetched -- not surfaced to
+        // the renderer yet (versioning/a playlist view are future work, see
+        // library.mjs's writePlaylistSnapshot), just persisted so that data
+        // exists from day one instead of needing to be reconstructed later.
+        const { libraryDir } = readSettings();
+        if (libraryDir) {
+            const index = await getLibraryIndex(libraryDir);
+            writePlaylistSnapshot({
+                libraryDir,
+                playlistId: playlist.id,
+                title: playlist.title,
+                uploader: playlist.uploader,
+                originalUrl: playlist.originalUrl,
+                entries: playlist.entries.map((entry) => ({ videoId: entry.id, title: entry.title, url: entry.url })),
+                index,
+            });
+        }
+        return { success: true, entries: playlist.entries };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
 });
 
 // Checked by the renderer before calling addEntry, so a duplicate can be
