@@ -30,6 +30,7 @@ export const electronAPIMock = {
     addLibraryVersion: async () => ({ success: true, videoDir: '', epoch: '', metadata: {} }),
     findLibraryVideo: async () => ({ found: false }),
     fetchPlaylistEntries: async () => ({ success: true, entries: [] }),
+    enrichPlaylistEntry: async () => ({ success: true }),
     recordLibraryDownload: async () => ({ success: true }),
     swapLibraryDownload: async () => ({}),
     deleteLibraryEntry: async () => ({ success: true, videoDeleted: true }),

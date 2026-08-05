@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import useDownloadVideo from './useDownloadVideo.tsx';
 
-export type BulkAddStatus = 'pending' | 'fetching' | 'downloading' | 'done' | 'skipped' | 'failed';
+export type BulkAddStatus = 'pending' | 'fetching' | 'downloading' | 'done' | 'skipped' | 'failed' | 'cancelled';
 
 // videoId is only known upfront for playlist-sourced entries (the flat
 // listing already has real ids) -- undefined for the comma/newline-list
@@ -28,7 +28,11 @@ export type BulkAddItem = {
   kind?: 'video' | 'audio';
 };
 
-type StartOptions = { download: boolean; targetResolution: string };
+// playlistId is set only when this batch came from a single playlist link
+// (BulkAddDialog) -- lets processItem below patch that playlist's saved
+// snapshot with each item's real info as it's fetched, instead of leaving
+// it stuck with whatever the cheap flat-listing initially guessed.
+type StartOptions = { download: boolean; targetResolution: string; playlistId?: string };
 
 // The "indicator" retry needs: whether this item still has to go all the
 // way back to fetching its info (nothing persisted yet, or the add itself
@@ -75,6 +79,11 @@ function useBulkAddQueueState() {
   const [items, setItems] = useState<BulkAddItem[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  // Purely for rendering -- "Stop after current item" otherwise gives no
+  // feedback at all until the in-flight item actually finishes, which can
+  // take a while. This is a plain, non-authoritative mirror of
+  // stopRequestedRef (below), which stays the loop's own source of truth.
+  const [stopRequested, setStopRequested] = useState(false);
 
   // Mirrors `items` for the loop's own use -- the loop is a plain recursive
   // async function, not a React effect, so it needs a way to read the
@@ -107,6 +116,7 @@ function useBulkAddQueueState() {
   const runNext = async () => {
     if (stopRequestedRef.current) {
       setIsRunning(false);
+      setStopRequested(false);
       return;
     }
     const next = itemsRef.current.find((it) => it.status === 'pending');
@@ -151,6 +161,25 @@ function useBulkAddQueueState() {
         videoId: videoInfo.id,
         thumbnailUrl: videoInfo.thumbnail || item.thumbnailUrl,
       });
+
+      // This is the real, authoritative data the spec cares about -- if this
+      // item's playlist ever sees this video go unavailable later, its
+      // saved snapshot already has the real title/date/thumbnail captured
+      // now rather than whatever the cheap flat-listing guessed. Best-effort:
+      // never lets a failure here interrupt the actual bulk-add item.
+      if (optionsRef.current.playlistId) {
+        try {
+          await window.electronAPI.enrichPlaylistEntry({
+            playlistId: optionsRef.current.playlistId,
+            videoId: videoInfo.id,
+            title: videoInfo.fullTitle || videoInfo.title,
+            uploadDate: videoInfo.uploadDate,
+            thumbnailUrl: videoInfo.thumbnail,
+          });
+        } catch {
+          // swallowed -- see comment above.
+        }
+      }
 
       const existing = await window.electronAPI.findLibraryVideo(videoInfo.id);
       if (existing.found) {
@@ -219,6 +248,7 @@ function useBulkAddQueueState() {
   const start = (entries: BulkAddEntry[], options: StartOptions) => {
     optionsRef.current = options;
     stopRequestedRef.current = false;
+    setStopRequested(false);
     const newItems: BulkAddItem[] = entries.map((entry, idx) => ({
       id: `${entry.url}#${itemsRef.current.length + idx}`,
       sourceUrl: entry.url,
@@ -247,12 +277,34 @@ function useBulkAddQueueState() {
   // no process-kill tracking needed, unlike a true background worker.
   const stop = () => {
     stopRequestedRef.current = true;
+    setStopRequested(true);
+  };
+
+  // Continues processing whatever's still 'pending' after a stop -- without
+  // this, a stopped queue had no way back except retrying/removing every
+  // remaining item one at a time (retry only ever applied to 'failed' items
+  // anyway, not 'pending' ones sitting frozen after a stop).
+  const resume = () => {
+    stopRequestedRef.current = false;
+    setStopRequested(false);
+    setIsRunning(true);
+    runNext();
+  };
+
+  // The bulk counterpart to resume -- instead of continuing, gives up on
+  // every item still 'pending' after a stop in one action, moving them to
+  // their own 'cancelled' status so they read as a deliberate choice (not a
+  // failure) and can then be swept away together by clearFinished below.
+  const cancelAllPending = () => {
+    itemsRef.current = itemsRef.current.map((it) => (it.status === 'pending' ? { ...it, status: 'cancelled' } : it));
+    setItems(itemsRef.current);
   };
 
   const retryItem = (id: string) => {
     updateItem(id, { status: 'pending', error: undefined });
     if (!isRunning) {
       stopRequestedRef.current = false;
+      setStopRequested(false);
       setIsRunning(true);
       runNext();
     }
@@ -263,16 +315,17 @@ function useBulkAddQueueState() {
     setItems(itemsRef.current);
   };
 
-  // "Finished" covers every end state that isn't actionable anymore -- both
-  // done (downloaded/added) and skipped (already in the library, so there
-  // was never anything to do). failed is deliberately excluded: it still
-  // needs a retry or an explicit individual removal.
+  // "Finished" covers every end state that isn't actionable anymore -- done
+  // (downloaded/added), skipped (already in the library, so there was never
+  // anything to do), and cancelled (explicitly given up on via
+  // cancelAllPending). failed is deliberately excluded: it still needs a
+  // retry or an explicit individual removal.
   const clearFinished = () => {
-    itemsRef.current = itemsRef.current.filter((it) => it.status !== 'done' && it.status !== 'skipped');
+    itemsRef.current = itemsRef.current.filter((it) => it.status !== 'done' && it.status !== 'skipped' && it.status !== 'cancelled');
     setItems(itemsRef.current);
   };
 
-  return { items, isRunning, panelOpen, setPanelOpen, start, stop, retryItem, removeItem, clearFinished };
+  return { items, isRunning, stopRequested, panelOpen, setPanelOpen, start, stop, resume, cancelAllPending, retryItem, removeItem, clearFinished };
 }
 
 type BulkAddQueueContextValue = ReturnType<typeof useBulkAddQueueState>;

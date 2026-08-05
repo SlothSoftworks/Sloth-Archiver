@@ -11,6 +11,14 @@ const WINDOWS_RESERVED_NAMES = new Set([
     'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
 ]);
 
+// Top-level reserved folder name for playlist snapshots
+// (<libraryDir>/playlists/<playlistId>/<epoch>/metadata.json) -- lives
+// alongside channel folders in libraryDir, but isn't one itself.
+// scanLibrary() explicitly skips it so it's never mistaken for a channel
+// (playlists are their own concept, deliberately not surfaced in the
+// channel/video view -- a playlist view is future work).
+export const PLAYLISTS_DIR_NAME = 'playlists';
+
 // One cross-platform sanitizer using Windows' illegal-character set as the
 // superset (rather than branching per-OS) -- keeps folder names identical if
 // the library is ever copied between a Mac and a Windows machine, which
@@ -280,6 +288,7 @@ export async function scanLibrary(libraryDir) {
 
     for (const channelEntry of channelEntries) {
         if (!channelEntry.isDirectory()) continue;
+        if (channelEntry.name === PLAYLISTS_DIR_NAME) continue;
         const channelPath = path.join(libraryDir, channelEntry.name);
 
         let videoEntries;
@@ -398,6 +407,16 @@ export function findVideoInIndex(index, videoId) {
     return null;
 }
 
+// A title that's missing, or that's literally just the video's own id, means
+// "we don't actually know this video's title" -- yt-dlp's flat-playlist
+// listing sometimes has no title at all for an entry (most often an
+// unavailable/deleted/private video), and this catches that case rather
+// than letting a caller accidentally persist the id string as if it were
+// real, meaningful title data.
+function isDeadTitle(title, videoId) {
+    return !title || title === videoId;
+}
+
 // One-time snapshot of a fetched playlist's contents -- not a live-synced
 // mirror (see futureSpecsFeedback.md's "Playlist saving" assessment: whether
 // to re-sync against upstream changes later is an open design question,
@@ -420,8 +439,15 @@ export function findVideoInIndex(index, videoId) {
 // future features (a playlist view, "download everything still missing")
 // have something to key off immediately rather than needing to invent this
 // mapping later.
+//
+// Each entry also carries its own title/thumbnailUrl/uploadDate (as of this
+// snapshot) rather than just a bare videoId/url -- entries.length can run
+// into the hundreds and localFiles will be null for most of them at
+// save-time (nothing's downloaded yet), so this is the fallback display
+// data a future playlist view needs to show something for those, without
+// depending on the video ever actually getting added to the library.
 export function writePlaylistSnapshot({ libraryDir, playlistId, title, uploader, originalUrl, entries, index }) {
-    const playlistDir = path.join(libraryDir, 'playlists', sanitizeForFilesystem(playlistId));
+    const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
 
     if (fs.existsSync(playlistDir) && fs.readdirSync(playlistDir, { withFileTypes: true }).some((e) => e.isDirectory())) {
         return { playlistDir, epochDir: null, epoch: null, metadata: null, skipped: true };
@@ -444,9 +470,57 @@ export function writePlaylistSnapshot({ libraryDir, playlistId, title, uploader,
         uploader: uploader || null,
         originalUrl: originalUrl || null,
         addedEpoch,
-        entries: entries.map((e) => ({ videoId: e.videoId, title: e.title, url: e.url })),
+        entries: entries.map((e) => ({
+            videoId: e.videoId,
+            title: isDeadTitle(e.title, e.videoId) ? null : e.title,
+            url: e.url,
+            thumbnailUrl: e.thumbnailUrl || null,
+            uploadDate: e.uploadDate || null,
+        })),
         localFiles,
     };
     fs.writeFileSync(path.join(epochDir, 'metadata.json'), JSON.stringify(metadata, null, 2), 'utf-8');
     return { playlistDir, epochDir, epoch: String(addedEpoch), metadata };
+}
+
+// Patches a single already-saved playlist entry with real data once it's
+// actually known -- called from the bulk-add loop right after a video
+// belonging to a saved playlist gets its own real info fetched (see
+// useBulkAddQueue.tsx). This is deliberately additive/non-destructive: a
+// dead incoming title (isDeadTitle) or a missing uploadDate/thumbnailUrl
+// never overwrites whatever was already stored, so a later re-fetch of the
+// playlist that happens to see the video as unavailable can't regress data
+// this already captured while it was still up. Silently no-ops if the
+// playlist was never saved or doesn't have this entry -- bulk-adding an
+// individual video that isn't part of any known playlist is the common
+// case, not an error.
+export function enrichPlaylistEntry({ libraryDir, playlistId, videoId, title, uploadDate, thumbnailUrl }) {
+    const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
+    if (!fs.existsSync(playlistDir)) return null;
+
+    // Only ever one epoch today (writePlaylistSnapshot), but read whichever
+    // is newest rather than assuming a specific name, in case that changes.
+    const epochNames = fs.readdirSync(playlistDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+        .sort((a, b) => Number(b) - Number(a));
+    if (epochNames.length === 0) return null;
+
+    const metadataPath = path.join(playlistDir, epochNames[0], 'metadata.json');
+    let metadata;
+    try {
+        metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    } catch {
+        return null;
+    }
+
+    const entry = metadata.entries.find((e) => e.videoId === videoId);
+    if (!entry) return null;
+
+    if (!isDeadTitle(title, videoId)) entry.title = title;
+    if (uploadDate) entry.uploadDate = uploadDate;
+    if (thumbnailUrl) entry.thumbnailUrl = thumbnailUrl;
+
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    return metadata;
 }

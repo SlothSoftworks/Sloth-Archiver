@@ -22,6 +22,8 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ClearAllIcon from '@mui/icons-material/ClearAll';
 import ReplayIcon from '@mui/icons-material/Replay';
 import StopIcon from '@mui/icons-material/Stop';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import CancelIcon from '@mui/icons-material/Cancel';
 import { getRetryStage, useBulkAddQueue, type BulkAddItem, type BulkAddStatus } from '../hooks/useBulkAddQueue.tsx';
 import BulkAddDialog from './BulkAddDialog';
 
@@ -32,6 +34,7 @@ const STATUS_COLOR: Record<BulkAddStatus, 'default' | 'info' | 'success' | 'warn
   done: 'success',
   skipped: 'warning',
   failed: 'error',
+  cancelled: 'default',
 };
 
 const STATUS_LABEL: Record<BulkAddStatus, string> = {
@@ -41,6 +44,7 @@ const STATUS_LABEL: Record<BulkAddStatus, string> = {
   done: 'Done',
   skipped: 'Already in library',
   failed: 'Failed',
+  cancelled: 'Cancelled',
 };
 
 // Small header button, meant to live in MainPage.tsx's tab bar row so it's
@@ -60,13 +64,13 @@ export function BulkAddToggleButton() {
   );
 }
 
-function BulkAddListItem({ item, onRetry, onRemove }: { item: BulkAddItem; onRetry: () => void; onRemove: () => void }) {
+function BulkAddListItem({ item, stopping, onRetry, onRemove }: { item: BulkAddItem; stopping: boolean; onRetry: () => void; onRemove: () => void }) {
   const isActive = item.status === 'fetching' || item.status === 'downloading';
-  // Once an item is done there's nothing left to cancel or clean up
+  // Once an item is done (or cancelled) there's nothing left to clean up
   // individually -- "Clear done" (below) is the affordance for that now, so
   // a per-item delete button that would otherwise sit there doing nothing
   // useful is just hidden instead.
-  const showDelete = item.status !== 'done';
+  const showDelete = item.status !== 'done' && item.status !== 'cancelled';
   const retryLabel = getRetryStage(item) === 'download' ? 'Retry download' : 'Retry';
   return (
     <ListItem
@@ -117,6 +121,10 @@ function BulkAddListItem({ item, onRetry, onRemove }: { item: BulkAddItem; onRet
               sx={{ mt: 0.5 }}
             />
             {item.error && <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>{item.error}</Typography>}
+            {stopping &&
+              <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 0.5 }}>
+                Finishing this item, then stopping
+              </Typography>}
           </>
         }
         slotProps={{ primary: { noWrap: true } }}
@@ -127,9 +135,12 @@ function BulkAddListItem({ item, onRetry, onRemove }: { item: BulkAddItem; onRet
 }
 
 export default function BulkAddSidePanel() {
-  const { items, isRunning, panelOpen, setPanelOpen, stop, retryItem, removeItem, clearFinished } = useBulkAddQueue();
+  const { items, isRunning, stopRequested, panelOpen, setPanelOpen, stop, resume, cancelAllPending, retryItem, removeItem, clearFinished } = useBulkAddQueue();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const hasFinished = items.some((it) => it.status === 'done' || it.status === 'skipped');
+  const hasFinished = items.some((it) => it.status === 'done' || it.status === 'skipped' || it.status === 'cancelled');
+  // Only meaningful once stopped -- while running, whatever's still
+  // 'pending' just means "hasn't been picked up yet," not "stuck."
+  const hasStoppedPending = !isRunning && items.some((it) => it.status === 'pending');
 
   return (
     <>
@@ -153,10 +164,24 @@ export default function BulkAddSidePanel() {
           </Stack>
         </Stack>
         <Divider sx={{ mb: 1 }} />
-        <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+        <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap' }}>
           {isRunning &&
-            <Button size="small" color="error" startIcon={<StopIcon />} onClick={stop}>
-              Stop after current item
+            <Button
+              size="small"
+              color="error"
+              startIcon={stopRequested ? <CircularProgress size={14} color="inherit" /> : <StopIcon />}
+              onClick={stop}
+              disabled={stopRequested}
+            >
+              {stopRequested ? 'Stopping after this item...' : 'Stop after current item'}
+            </Button>}
+          {hasStoppedPending &&
+            <Button size="small" color="primary" startIcon={<PlayArrowIcon />} onClick={resume}>
+              Resume
+            </Button>}
+          {hasStoppedPending &&
+            <Button size="small" color="warning" startIcon={<CancelIcon />} onClick={cancelAllPending}>
+              Cancel all pending
             </Button>}
           {hasFinished &&
             <Button size="small" startIcon={<ClearAllIcon />} onClick={clearFinished}>
@@ -174,6 +199,7 @@ export default function BulkAddSidePanel() {
                 <BulkAddListItem
                   key={item.id}
                   item={item}
+                  stopping={stopRequested && (item.status === 'fetching' || item.status === 'downloading')}
                   onRetry={() => retryItem(item.id)}
                   onRemove={() => removeItem(item.id)}
                 />
