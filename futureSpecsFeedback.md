@@ -19,7 +19,6 @@ log, so that history isn't lost when the backlog gets trimmed.
   - [Playlist refresh/versioning](#playlist-refresh)
 - [Big features](#big-features)
 - [QoL features](#qol-features)
-  - [Theme support](#theme-support)
   - [Language support](#language-support)
 - [Small features and corrections](#small-features)
   - [Video merger](#video-merger)
@@ -49,6 +48,7 @@ flowchart LR
         d2["yt-dlp self-updater"]
         d3["Bulk add + playlist snapshot (no worker)"]
         d4["10 small features (see Shipped section)"]
+        d5["Theme support (dark/light selector, persisted)"]
     end
 
     subgraph PARTIAL["Partially done"]
@@ -61,7 +61,6 @@ flowchart LR
     subgraph TODO["Not started"]
         direction LR
         t1["Video merger / re-upload link swap"]
-        t5["Theme support"]
         t6["Language support"]
         t7["Video diff/comparator"]
         t8["Multi-platform downloads"]
@@ -73,11 +72,12 @@ flowchart LR
     class d2 updater
     class d3,p2 playlist
     class d4,t1 smallfeat
-    class t5,t6 qol
+    class d5,t6 qol
     class t7,t8 longshot
 ```
 
 **Recently shipped (2026-08-05):**
+- Theme support shipped: a dark/light selector in Options, persisted via a `settings:getThemeMode`/`setThemeMode` IPC pair (same `readSettings`/`writeSettings` pattern as `libraryViewMode`/`cookiesMode`), with `App.tsx`'s `ThemeProvider` now driven by a `useMemo`'d theme instead of a static import (`useThemeMode.tsx`) — closes out `futureSpecs.md`'s QoL item 1.
 - Library view ffmpeg utilities shipped end-to-end (visual pass → wiring → polish), closing out `futureSpecs.md`'s Big features item 1: Extract MP3 (both a save-dialog export and a one-click local extraction straight into the library's own audio slot, playable immediately), Convert to a different format (popular + custom-muxer list from Options, plus a freeform "Other" muxer name), Extract clip (`-ss`/`-to` output-side trim, `-c copy`), and Embed metadata -- which now also embeds the local video-thumbnail file as cover art (always re-encoded to MJPEG regardless of source jpg/png/webp, replacing rather than stacking on repeated runs) and, per follow-up feedback, now applies to whichever of the video/audio files are actually downloaded (previously video-only) with a success toast since the operation is fast enough to otherwise look like nothing happened. The save-dialog default location for exports was also changed to the source file's own folder instead of the configured download dir.
 - (2026-08-04 shipped items retained below.)
 
@@ -109,6 +109,7 @@ still open. Not a full changelog — see git history for line-by-line detail.
 |---|---|
 | Library view (browse → add → download → play → delete → version → MP3-as-separate-download, channel-vs-video toggle, real channel icons, offline thumbnails) | 2026-08-02 → 2026-08-04 |
 | Library view ffmpeg utilities (extract MP3, convert format, extract clip, embed metadata + cover art into video and/or audio) | 2026-08-05 |
+| Theme support (dark/light selector, persisted) | 2026-08-05 |
 | yt-dlp self-updater (on-device PyInstaller rebuild, `userData`-relocated binary) | 2026-08-02 |
 | Bulk add + playlist snapshot, no background worker (see Recently shipped above) | 2026-08-04 |
 | Real, continuous postprocessing progress via direct ffmpeg pass (TD-004) | 2026-08-02 |
@@ -184,19 +185,8 @@ it's still wanted.
 <a id="qol-features"></a>
 ## QoL features
 
-<a id="theme-support"></a>
-### Theme support (dark/bright theme selector)
-
-**Overall: Low.** Nothing about this app's structure fights it — MUI's theming
-system already does the hard part.
-
-| Piece | Difficulty | Why |
-|---|---|---|
-| Dark palette | Low | `theme.ts` currently exports a single static `createTheme()` call (default light palette only, no options passed). `createTheme({ palette: { mode: 'dark' } })` gives a complete, accessible dark palette for free — no manual color work needed for a first pass. |
-| Persisted selector | Low | Reuses the exact settings pattern already established three times over (`cookiesMode`, `downloadDir`, `libraryViewMode` — all `readSettings`/`writeSettings` + a `settings:get*`/`settings:set*` IPC pair in `main.js`). A new `settings:getThemeMode`/`settings:setThemeMode` pair, plus a toggle/dropdown in `OptionsScreen.tsx`, is pure repetition of an existing pattern. |
-| Wiring the choice into the running app | Low | `App.tsx` currently imports the static `theme` object once. Needs to become a `useMemo`-created theme driven by the persisted mode (read on mount via the new IPC call) instead. `CssBaseline` (already present) automatically re-themes the whole app the moment the `ThemeProvider`'s `theme` prop changes — no per-component work needed. |
-
-**Recommendation:** no real risk here; this is small enough to build and ship in one pass, including a "follow system" option (`prefers-color-scheme` media query) alongside explicit light/dark if wanted.
+Theme support (dark/light selector) shipped 2026-08-05 — see [Shipped](#shipped)
+and Recently shipped above. Only language support remains open here.
 
 <a id="language-support"></a>
 ### Language support (i18n / "strings" file)
