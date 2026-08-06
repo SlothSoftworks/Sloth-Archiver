@@ -28,3 +28,6 @@ src/python/__pycache__
 .venv-build
 build
 debugLib
+
+# Machine-specific, not meant to be shared
+scripts/dev-build-shell.ps1
