@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Box, CardMedia, Typography } from '@mui/material';
+import { useEffect, useRef, useState } from 'react';
+import { Box, CardMedia, IconButton, Typography } from '@mui/material';
+import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import type { LibraryVideoMetadata } from '../screens/LibraryVideoDetail';
 import YouTubeEmbed from './YouTubeEmbed';
 import ResizableMediaContainer from './ResizableMediaContainer';
@@ -47,8 +48,16 @@ export default function LibraryVideoPlayer({
   // thumbnail-plus-"open externally" fallback as a known-unplayable
   // extension, instead of leaving a black, silently-broken player on screen.
   const [playbackFailed, setPlaybackFailed] = useState(false);
+  // Purely a one-time "you can start playback here" affordance, not a
+  // persistent pause indicator -- once the video has ever started playing
+  // for this file, the overlay is gone for good (native controls already
+  // handle play/pause from then on). Resets alongside playbackFailed
+  // whenever the underlying file actually changes.
+  const [hasStartedPlayback, setHasStartedPlayback] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     setPlaybackFailed(false);
+    setHasStartedPlayback(false);
   }, [downloadedFilePath, cacheBustKey]);
 
   // Prefer the locally-cached, offline-capable copy (video-level, shared
@@ -71,14 +80,35 @@ export default function LibraryVideoPlayer({
   if (!isKnownUnplayable && !playbackFailed) {
     return (
       <ResizableMediaContainer sx={containerSx}>
-        <Box
-          component="video"
-          controls
-          poster={posterSrc}
-          src={buildAppVideoUrl(downloadedFilePath, cacheBustKey)}
-          onError={() => setPlaybackFailed(true)}
-          sx={{ ...fillSx, backgroundColor: 'black', objectFit: 'contain' }}
-        />
+        <Box sx={{ ...fillSx, position: 'relative' }}>
+          <Box
+            component="video"
+            ref={videoRef}
+            controls
+            // Chromium's native "3 dot" controls menu offers a Download
+            // entry by default -- redundant here (this file is already on
+            // disk, "Open file location"/"Open in default player" exist
+            // right next to this player) and confusing on top of that.
+            controlsList="nodownload"
+            poster={posterSrc}
+            src={buildAppVideoUrl(downloadedFilePath, cacheBustKey)}
+            onError={() => setPlaybackFailed(true)}
+            onPlay={() => setHasStartedPlayback(true)}
+            sx={{ ...fillSx, backgroundColor: 'black', objectFit: 'contain' }}
+          />
+          {!hasStartedPlayback &&
+            <IconButton
+              onClick={() => videoRef.current?.play()}
+              aria-label="Play"
+              sx={{
+                position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+                color: 'common.white', backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.6)' },
+              }}
+            >
+              <PlayCircleOutlineIcon sx={{ fontSize: 64 }} />
+            </IconButton>}
+        </Box>
       </ResizableMediaContainer>
     );
   }

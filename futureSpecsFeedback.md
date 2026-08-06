@@ -60,7 +60,7 @@ flowchart LR
     subgraph TODO["Not started"]
         direction LR
         t1["Video merger / re-upload link swap"]
-        t2["Player UX (play icon, hide native download option)"]
+        t2["Player UX (play icon, hide download, remove buffered look)"]
         t3["Library view: small ffmpeg utilities"]
         t5["Theme support"]
         t6["Language support"]
@@ -259,10 +259,22 @@ item needed is no longer a blocker.
 <a id="player-ux"></a>
 ### 2. Player UX
 
-Play-icon overlay on the embedded local player, hide the native "Download" option.
+Play-icon overlay on the embedded local player, hide the native "Download" option,
+remove the native "buffered" look from the scrub bar (added to the spec after the
+first two items were already assessed — it could confuse users into thinking a fully
+local file is streaming from the internet).
 
-**Overall: Low.** The "3 dot menu" is Chromium's own native `<video>` controls
-overlay, not custom UI — suppressing its Download entry is a one-line
-`controlsList="nodownload"` attribute on the `<video>` element (`LibraryVideoPlayer.tsx`),
-no new component needed. The play-icon overlay is a small composition addition over
-the same element (a centered `IconButton`, hidden once playback starts).
+**Overall: Low** for the first two, **Medium** for the buffer-bar removal — the odd
+one out.
+
+| Piece | Difficulty | Why |
+|---|---|---|
+| Hide the native "Download" option | Low | The "3 dot menu" is Chromium's own native `<video>` controls overlay, not custom UI — suppressing its Download entry is a one-line `controlsList="nodownload"` attribute on the `<video>` element (`LibraryVideoPlayer.tsx`), no new component needed. |
+| Play-icon overlay | Low | A small composition addition over the same element — a centered `IconButton`, hidden once playback starts. |
+| Remove the "buffered ahead" look on the scrub bar | Medium | This is native `<video controls>` styling, not anything this app draws itself — Chromium always renders a lighter buffered-range segment on the scrub bar for any `<video>` element, local file or not, since it has no concept of "this source is instant." There's no clean prop to disable just that one piece of native controls; the real options are (a) suppress it via `::-webkit-media-controls-*` CSS pseudo-elements — undocumented/unstable, Chromium-version-dependent, could silently break on an Electron upgrade — or (b) drop native `controls` entirely and build custom play/pause/seek/volume controls — more work, but the only fully reliable route. |
+
+**Recommendation:** try the `::-webkit-media-controls-*` route first since it's cheap
+to attempt and this app already targets one pinned Chromium version via Electron
+(not "whatever browser the user happens to have"), which limits the usual fragility
+concern with that approach; fall back to fully custom controls only if that turns out
+not to work, or breaks on a future Electron version bump.
