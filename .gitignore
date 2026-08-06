@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 yt-archiver-dist
+scripts/dev-build-shell.ps1
 
 # Editor directories and files
 .vscode/*
@@ -24,6 +25,9 @@ yt-archiver-dist
 *.sln
 *.sw?
 
-src/python/__pycache__
+
 .venv-build
 build
+debuglib
+
+src/python/__pycache__
