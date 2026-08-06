@@ -49,6 +49,16 @@ const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
   'verifying',
 ]);
 
+// Purely a visual section divider (Media vs. General) -- doesn't affect the
+// options' own logic, state, or IPC calls in any way.
+function OptionsGroupHeader({ label }: { label: string }) {
+  return (
+    <Typography variant="overline" color="primary" sx={{ fontWeight: 700, letterSpacing: 1, display: 'block', mb: 1 }}>
+      {label}
+    </Typography>
+  );
+}
+
 export default function OptionsScreen() {
   // Progress/error while updating is shown by the shared full-view overlay
   // (YtdlpUpdateDialog, mounted once at MainPage level) regardless of which
@@ -223,22 +233,7 @@ export default function OptionsScreen() {
 
   return (
     <Box>
-      <Typography variant="h6" gutterBottom>Appearance</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
-        Choose the app's color theme. Saved between sessions.
-      </Typography>
-      <ToggleButtonGroup
-        value={themeMode}
-        exclusive
-        onChange={handleThemeModeChange}
-        size="small"
-        sx={{ mb: 2 }}
-      >
-        <ToggleButton value="light">Light</ToggleButton>
-        <ToggleButton value="dark">Dark</ToggleButton>
-      </ToggleButtonGroup>
-
-      <Divider sx={{ my: 3 }} />
+      <OptionsGroupHeader label="Media Options" />
 
       <Typography variant="h6" gutterBottom>Conversion Formats</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
@@ -306,6 +301,25 @@ export default function OptionsScreen() {
           {libraryDir || 'Not set'}
         </Typography>
       </Stack>
+
+      <Divider sx={{ my: 4, borderBottomWidth: 2 }} />
+
+      <OptionsGroupHeader label="General Options" />
+
+      <Typography variant="h6" gutterBottom>Appearance</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
+        Choose the app's color theme. Saved between sessions.
+      </Typography>
+      <ToggleButtonGroup
+        value={themeMode}
+        exclusive
+        onChange={handleThemeModeChange}
+        size="small"
+        sx={{ mb: 2 }}
+      >
+        <ToggleButton value="light">Light</ToggleButton>
+        <ToggleButton value="dark">Dark</ToggleButton>
+      </ToggleButtonGroup>
 
       <Divider sx={{ my: 3 }} />
 

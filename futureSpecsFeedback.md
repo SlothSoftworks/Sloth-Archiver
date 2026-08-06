@@ -49,6 +49,7 @@ flowchart LR
         d3["Bulk add + playlist snapshot (no worker)"]
         d4["10 small features (see Shipped section)"]
         d5["Theme support (dark/light selector, persisted)"]
+        d6["Options UX grouping (Media/General)"]
     end
 
     subgraph PARTIAL["Partially done"]
@@ -72,11 +73,12 @@ flowchart LR
     class d2 updater
     class d3,p2 playlist
     class d4,t1 smallfeat
-    class d5,t6 qol
+    class d5,d6,t6 qol
     class t7,t8 longshot
 ```
 
 **Recently shipped (2026-08-05):**
+- Options UX grouping shipped: `OptionsScreen.tsx`'s sections are now split under two headers, "Media Options" (Conversion Formats, Default Download Folder, Library Folder) and "General Options" (Appearance, yt-dlp Version, Personal Cookie, Error Log), matching the spec's own grouping exactly. Pure JSX reorder plus a small `OptionsGroupHeader` label component — no state/IPC changes.
 - Theme support shipped: a dark/light selector in Options, persisted via a `settings:getThemeMode`/`setThemeMode` IPC pair (same `readSettings`/`writeSettings` pattern as `libraryViewMode`/`cookiesMode`), with `App.tsx`'s `ThemeProvider` now driven by a `useMemo`'d theme instead of a static import (`useThemeMode.tsx`) — closes out `futureSpecs.md`'s QoL item 1.
 - Library view ffmpeg utilities shipped end-to-end (visual pass → wiring → polish), closing out `futureSpecs.md`'s Big features item 1: Extract MP3 (both a save-dialog export and a one-click local extraction straight into the library's own audio slot, playable immediately), Convert to a different format (popular + custom-muxer list from Options, plus a freeform "Other" muxer name), Extract clip (`-ss`/`-to` output-side trim, `-c copy`), and Embed metadata -- which now also embeds the local video-thumbnail file as cover art (always re-encoded to MJPEG regardless of source jpg/png/webp, replacing rather than stacking on repeated runs) and, per follow-up feedback, now applies to whichever of the video/audio files are actually downloaded (previously video-only) with a success toast since the operation is fast enough to otherwise look like nothing happened. The save-dialog default location for exports was also changed to the source file's own folder instead of the configured download dir.
 - (2026-08-04 shipped items retained below.)
@@ -110,6 +112,7 @@ still open. Not a full changelog — see git history for line-by-line detail.
 | Library view (browse → add → download → play → delete → version → MP3-as-separate-download, channel-vs-video toggle, real channel icons, offline thumbnails) | 2026-08-02 → 2026-08-04 |
 | Library view ffmpeg utilities (extract MP3, convert format, extract clip, embed metadata + cover art into video and/or audio) | 2026-08-05 |
 | Theme support (dark/light selector, persisted) | 2026-08-05 |
+| Options UX grouping (Media Options / General Options) | 2026-08-05 |
 | yt-dlp self-updater (on-device PyInstaller rebuild, `userData`-relocated binary) | 2026-08-02 |
 | Bulk add + playlist snapshot, no background worker (see Recently shipped above) | 2026-08-04 |
 | Real, continuous postprocessing progress via direct ffmpeg pass (TD-004) | 2026-08-02 |
@@ -185,8 +188,9 @@ it's still wanted.
 <a id="qol-features"></a>
 ## QoL features
 
-Theme support (dark/light selector) shipped 2026-08-05 — see [Shipped](#shipped)
-and Recently shipped above. Only language support remains open here.
+Theme support (dark/light selector) and Options UX grouping (Media/General) both
+shipped 2026-08-05 — see [Shipped](#shipped) and Recently shipped above. Only
+language support remains open here.
 
 <a id="language-support"></a>
 ### Language support (i18n / "strings" file)

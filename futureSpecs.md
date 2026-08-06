@@ -19,7 +19,6 @@ you point it here.
 ### QoL features
 
 1. Language support. Add support for language and set up the ability add more languages in the future via a "strings" style file that the app can reado n startup and load all the messages in the app in any language.
-2. Improve options UX by grouping the options in "media options" which contain things like the download folder selections and the formats and the "general options" which include all the other ones
 
 ### Small features and corrections
 
