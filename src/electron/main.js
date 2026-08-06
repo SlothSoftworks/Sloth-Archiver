@@ -336,6 +336,22 @@ ipcMain.handle('settings:setThemeMode', async (e, mode) => {
     return { success: true, themeMode: settings.themeMode };
 });
 
+// User-added muxers for the Library view's "convert to" ffmpeg utility,
+// beyond the small hardcoded popular set (LibraryVideoDetail.tsx) -- kept as
+// a plain string list, no validation against ffmpeg's own real muxer list
+// here (that's a concern for whenever the actual conversion gets wired up).
+ipcMain.handle('settings:getCustomConvertFormats', async () => {
+    const { customConvertFormats } = readSettings();
+    return { customConvertFormats: Array.isArray(customConvertFormats) ? customConvertFormats : [] };
+});
+
+ipcMain.handle('settings:setCustomConvertFormats', async (e, formats) => {
+    const settings = readSettings();
+    settings.customConvertFormats = Array.isArray(formats) ? formats : [];
+    writeSettings(settings);
+    return { success: true, customConvertFormats: settings.customConvertFormats };
+});
+
 ipcMain.handle('library:getIndex', async () => {
     const { libraryDir } = readSettings();
     return getLibraryIndex(libraryDir);

@@ -20,6 +20,7 @@ import {
   MenuItem,
   Select,
   Stack,
+  TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -30,7 +31,13 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import DownloadDoneIcon from '@mui/icons-material/DownloadDone';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import AudiotrackIcon from '@mui/icons-material/Audiotrack';
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
+import ContentCutIcon from '@mui/icons-material/ContentCut';
+import LabelOutlinedIcon from '@mui/icons-material/LabelOutlined';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
+import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import LibraryVideoPlayer from '../components/LibraryVideoPlayer';
@@ -71,6 +78,13 @@ type LibraryVideo = {
 function formatEpochLabel(epoch: string): string {
   return new Date(Number(epoch)).toLocaleString();
 }
+
+// Sentinel Select value for "Other" -- a one-off custom format typed for
+// just this conversion, distinct from the persisted custom list Options
+// manages (that one adds a format to the dropdown itself; this one doesn't
+// save anything, just lets a single conversion target something not listed).
+const OTHER_FORMAT_VALUE = '__other__';
+
 
 // Same visual pattern as VideoDetailCard.tsx's buffer bar -- kept as a
 // separate copy rather than a shared import since this file has no other
@@ -180,6 +194,26 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // and without this the <video>/<audio> element has no signal that the
   // underlying bytes changed, so it just keeps showing the old content.
   const [cacheBustKey, setCacheBustKey] = useState(0);
+
+  // FFMPEG utilities -- visual pass only for now, no execution wired up yet
+  // (see futureSpecsFeedback.md's Library-view ffmpeg-utilities assessment).
+  // Kept minimal deliberately: a single target-format choice for convert,
+  // and plain start/end text fields for the clip trim rather than a scrubber.
+  const [convertFormat, setConvertFormat] = useState('mp4');
+  const [otherFormatInput, setOtherFormatInput] = useState('');
+  const [clipStart, setClipStart] = useState('');
+  const [clipEnd, setClipEnd] = useState('');
+  // User-added muxers from Options, on top of the small popular default set
+  // -- fetched once on mount, same as any other settings-backed value with
+  // no live-update need within a single session.
+  const [customConvertFormats, setCustomConvertFormats] = useState<string[]>([]);
+  useEffect(() => {
+    window.electronAPI.getCustomConvertFormats().then(({ customConvertFormats }) => setCustomConvertFormats(customConvertFormats));
+  }, []);
+  const convertFormatOptions = [
+    ...POPULAR_CONVERT_FORMATS,
+    ...customConvertFormats.filter((f) => !POPULAR_CONVERT_FORMATS.includes(f.toLowerCase())),
+  ];
 
   const { downloadProgress, postprocessProgress, downloadStatus, finalFilePath, isDone, isError, startDownload } = useDownloadVideo();
 
@@ -402,6 +436,9 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // set in that case (see the isDone effect) and nothing else cleared it,
   // permanently locking out the Audio button until a full reload.
   const isVideoActionActive = isDownloading || isSwapDownloading;
+  // Gates the whole FFMPEG utilities section below -- every tool there
+  // operates on the video file itself, not the separate MP3 slot.
+  const isVideoDownloaded = !!metadata.downloadedFilePath;
   const resolutions = metadata.resolutions || [];
   // MP3 is rendered in its own Audio sub-section below, not mixed into the
   // video quality grid -- see the Library-view MP3-coexistence design.
@@ -644,6 +681,124 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                   )}
                 </Stack>
               </>}
+
+            {/* FFMPEG utilities -- visual pass only, per current plan: layout,
+                icons, and the minimal inputs each action needs, no execution
+                wired up yet. Convert/extract-mp3/extract-clip normally result
+                in a new file, so those will eventually prompt a save
+                location the same way a download does; embed-metadata edits
+                the already-downloaded file in place, no save prompt needed.
+                Every control here operates on the video *file* -- disabled
+                as a whole whenever this version doesn't have one downloaded
+                yet, regardless of whether an MP3 already exists for it. */}
+            <Divider sx={{ my: 1.5 }} />
+            <Stack spacing={1}>
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
+                  FFMPEG utilities
+                </Typography>
+                <Tooltip title="FFmpeg is a tool this app uses to edit media files already on your device -- extracting audio, converting formats, trimming clips, or adding info tags -- without re-downloading anything.">
+                  <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                </Tooltip>
+              </Stack>
+              {!isVideoDownloaded &&
+                <Typography variant="caption" color="text.secondary">
+                  Download the video for this version to use these tools.
+                </Typography>}
+
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Typography variant="body2" sx={{ flexGrow: 1 }}>Extract MP3</Typography>
+                <Tooltip title="Extract MP3">
+                  <span>
+                    <IconButton size="small" aria-label="Extract MP3" disabled={!isVideoDownloaded}>
+                      <AudiotrackIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </Stack>
+
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Typography variant="body2" sx={{ flexGrow: 1 }}>Convert to</Typography>
+                <Select
+                  size="small"
+                  variant="standard"
+                  value={convertFormat}
+                  onChange={(e) => setConvertFormat(e.target.value)}
+                  disabled={!isVideoDownloaded}
+                >
+                  {convertFormatOptions.map((format) => (
+                    <MenuItem key={format} value={format.toLowerCase()}>{format.toUpperCase()}</MenuItem>
+                  ))}
+                  <MenuItem value={OTHER_FORMAT_VALUE}>Other...</MenuItem>
+                </Select>
+                <Tooltip title="Convert">
+                  <span>
+                    <IconButton size="small" aria-label="Convert to a different format" disabled={!isVideoDownloaded}>
+                      <SwapHorizIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </Stack>
+              {convertFormat === OTHER_FORMAT_VALUE &&
+                <Stack spacing={0.5}>
+                  <TextField
+                    size="small"
+                    variant="standard"
+                    placeholder="Format name"
+                    value={otherFormatInput}
+                    onChange={(e) => setOtherFormatInput(e.target.value)}
+                    disabled={!isVideoDownloaded}
+                    slotProps={{ htmlInput: { 'aria-label': 'Custom format name' } }}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    Must match a real ffmpeg muxer name (e.g. mp4, matroska, avi).
+                  </Typography>
+                </Stack>}
+
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Typography variant="body2">Clip</Typography>
+                <TextField
+                  size="small"
+                  variant="standard"
+                  placeholder="0:00"
+                  value={clipStart}
+                  onChange={(e) => setClipStart(e.target.value)}
+                  disabled={!isVideoDownloaded}
+                  sx={{ width: 56 }}
+                  slotProps={{ htmlInput: { 'aria-label': 'Clip start' } }}
+                />
+                <Typography variant="body2" color="text.secondary">–</Typography>
+                <TextField
+                  size="small"
+                  variant="standard"
+                  placeholder="0:00"
+                  value={clipEnd}
+                  onChange={(e) => setClipEnd(e.target.value)}
+                  disabled={!isVideoDownloaded}
+                  sx={{ width: 56 }}
+                  slotProps={{ htmlInput: { 'aria-label': 'Clip end' } }}
+                />
+                <Box sx={{ flexGrow: 1 }} />
+                <Tooltip title="Extract clip">
+                  <span>
+                    <IconButton size="small" aria-label="Extract clip" disabled={!isVideoDownloaded}>
+                      <ContentCutIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </Stack>
+
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Typography variant="body2" sx={{ flexGrow: 1 }}>Embed metadata</Typography>
+                <Tooltip title="Embed metadata">
+                  <span>
+                    <IconButton size="small" aria-label="Embed metadata into local file" disabled={!isVideoDownloaded}>
+                      <LabelOutlinedIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </Stack>
+            </Stack>
             </Stack>
           </Card>
         </Stack>

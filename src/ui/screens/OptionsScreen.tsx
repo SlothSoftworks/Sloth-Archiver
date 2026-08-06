@@ -1,5 +1,6 @@
 import { useEffect, useState, type MouseEvent } from 'react';
 import {
+  Autocomplete,
   Box,
   Button,
   Chip,
@@ -21,6 +22,7 @@ import {
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { useYtdlpUpdater, type YtdlpUpdateStage } from '../hooks/useYtdlpUpdater';
 import { useThemeMode } from '../hooks/useThemeMode.tsx';
+import { POPULAR_CONVERT_FORMATS, SUGGESTED_EXTRA_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 
 // Display labels for yt-dlp's --cookies-from-browser browser keys -- kept
 // here rather than main.js's SUPPORTED_COOKIE_BROWSERS (which is the source
@@ -68,6 +70,7 @@ export default function OptionsScreen() {
   const [downloadDir, setDownloadDirState] = useState('');
   const [libraryDir, setLibraryDirState] = useState('');
   const [errorLogExists, setErrorLogExists] = useState(false);
+  const [customConvertFormats, setCustomConvertFormatsState] = useState<string[]>([]);
 
   const refreshStatus = async () => {
     const status = await window.electronAPI.getCookieStatus();
@@ -97,13 +100,43 @@ export default function OptionsScreen() {
     setErrorLogExists(exists);
   };
 
+  const refreshCustomConvertFormats = async () => {
+    const { customConvertFormats } = await window.electronAPI.getCustomConvertFormats();
+    setCustomConvertFormatsState(customConvertFormats);
+  };
+
   useEffect(() => {
     refreshStatus();
     refreshCookiesConfig();
     refreshDownloadDir();
     refreshLibraryDir();
     refreshErrorLogInfo();
+    refreshCustomConvertFormats();
   }, []);
+
+  // Autocomplete's own value normalization (lowercasing, de-duping against
+  // the always-available popular set) happens here rather than in the
+  // Library view, so the persisted list is already clean everywhere it's
+  // read from.
+  const handleCustomConvertFormatsChange = async (formats: string[]) => {
+    const cleaned = Array.from(new Set(
+      formats.map((f) => f.trim().toLowerCase()).filter((f) => f && !POPULAR_CONVERT_FORMATS.includes(f)),
+    ));
+    setCustomConvertFormatsState(cleaned);
+    await window.electronAPI.setCustomConvertFormats(cleaned);
+  };
+
+  // Comma-to-commit, tag-input style (Enter already does this for free --
+  // MUI's Autocomplete commits typed freeSolo text as a tag on Enter on its
+  // own). Comma isn't a built-in trigger, so it's intercepted here: swallow
+  // the character itself (nobody wants a literal "," in a saved format name)
+  // and commit whatever's typed so far as a new tag instead.
+  const [convertFormatInput, setConvertFormatInput] = useState('');
+  const commitConvertFormatInput = () => {
+    if (!convertFormatInput.trim()) return;
+    handleCustomConvertFormatsChange([...customConvertFormats, convertFormatInput]);
+    setConvertFormatInput('');
+  };
 
   const handleChooseDownloadDir = async () => {
     // Electron 43+ opens unset-defaultPath dialogs at Downloads instead of
@@ -204,6 +237,42 @@ export default function OptionsScreen() {
         <ToggleButton value="light">Light</ToggleButton>
         <ToggleButton value="dark">Dark</ToggleButton>
       </ToggleButtonGroup>
+
+      <Divider sx={{ my: 3 }} />
+
+      <Typography variant="h6" gutterBottom>Conversion Formats</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
+        The Library view's "Convert to" tool always offers {POPULAR_CONVERT_FORMATS.map((f) => f.toUpperCase()).join(', ')}.
+        Add more here for your own use -- pick a suggestion or type any ffmpeg format name.
+      </Typography>
+      <Autocomplete
+        multiple
+        freeSolo
+        size="small"
+        options={SUGGESTED_EXTRA_CONVERT_FORMATS}
+        value={customConvertFormats}
+        inputValue={convertFormatInput}
+        onInputChange={(_e, newInputValue) => setConvertFormatInput(newInputValue)}
+        onChange={(_e, newValue) => {
+          handleCustomConvertFormatsChange(newValue);
+          setConvertFormatInput('');
+        }}
+        onKeyDown={(e) => {
+          if (e.key === ',') {
+            e.preventDefault();
+            commitConvertFormatInput();
+          }
+        }}
+        getOptionLabel={(option) => option.toUpperCase()}
+        renderTags={(value, getTagProps) =>
+          value.map((option, index) => {
+            const { key, ...tagProps } = getTagProps({ index });
+            return <Chip key={key} label={option.toUpperCase()} size="small" {...tagProps} />;
+          })
+        }
+        renderInput={(params) => <TextField {...params} placeholder="Add a format, then comma or Enter" />}
+        sx={{ maxWidth: 640, mb: 2 }}
+      />
 
       <Divider sx={{ my: 3 }} />
 
