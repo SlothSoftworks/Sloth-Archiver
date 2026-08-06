@@ -18,7 +18,6 @@ log, so that history isn't lost when the backlog gets trimmed.
   - [Multi-platform downloads](#multi-platform-downloads)
   - [Playlist refresh/versioning](#playlist-refresh)
 - [Big features](#big-features)
-  - [Library view — ffmpeg utilities](#library-view)
 - [QoL features](#qol-features)
   - [Theme support](#theme-support)
   - [Language support](#language-support)
@@ -46,6 +45,7 @@ flowchart LR
     subgraph DONE["Shipped"]
         direction LR
         d1["Library view core (browse/add/download/play/version/MP3)"]
+        d1b["Library view: ffmpeg utilities (extract MP3, convert, clip, embed metadata+cover art)"]
         d2["yt-dlp self-updater"]
         d3["Bulk add + playlist snapshot (no worker)"]
         d4["10 small features (see Shipped section)"]
@@ -61,7 +61,6 @@ flowchart LR
     subgraph TODO["Not started"]
         direction LR
         t1["Video merger / re-upload link swap"]
-        t3["Library view: small ffmpeg utilities"]
         t5["Theme support"]
         t6["Language support"]
         t7["Video diff/comparator"]
@@ -70,13 +69,17 @@ flowchart LR
 
     DONE ~~~ PARTIAL ~~~ TODO
 
-    class d1,p1,p3,t3 library
+    class d1,d1b,p1,p3 library
     class d2 updater
     class d3,p2 playlist
     class d4,t1 smallfeat
     class t5,t6 qol
     class t7,t8 longshot
 ```
+
+**Recently shipped (2026-08-05):**
+- Library view ffmpeg utilities shipped end-to-end (visual pass → wiring → polish), closing out `futureSpecs.md`'s Big features item 1: Extract MP3 (both a save-dialog export and a one-click local extraction straight into the library's own audio slot, playable immediately), Convert to a different format (popular + custom-muxer list from Options, plus a freeform "Other" muxer name), Extract clip (`-ss`/`-to` output-side trim, `-c copy`), and Embed metadata -- which now also embeds the local video-thumbnail file as cover art (always re-encoded to MJPEG regardless of source jpg/png/webp, replacing rather than stacking on repeated runs) and, per follow-up feedback, now applies to whichever of the video/audio files are actually downloaded (previously video-only) with a success toast since the operation is fast enough to otherwise look like nothing happened. The save-dialog default location for exports was also changed to the source file's own folder instead of the configured download dir.
+- (2026-08-04 shipped items retained below.)
 
 **Recently shipped (2026-08-04):**
 - Bulk add and playlist detection shipped, matching the "no background worker" spec scope exactly: a renderer-side sequential queue (`useBulkAddQueue.tsx`) fed by either a single playlist link (`--flat-playlist` via `fetchPlaylistEntries`) or a comma/newline-separated list of individual video links, an always-available side panel with per-item status/retry/skip/cancel, closest-available-quality matching, dedup against the existing library, and a system notification when the queue empties.
@@ -105,6 +108,7 @@ still open. Not a full changelog — see git history for line-by-line detail.
 | Feature | Landed |
 |---|---|
 | Library view (browse → add → download → play → delete → version → MP3-as-separate-download, channel-vs-video toggle, real channel icons, offline thumbnails) | 2026-08-02 → 2026-08-04 |
+| Library view ffmpeg utilities (extract MP3, convert format, extract clip, embed metadata + cover art into video and/or audio) | 2026-08-05 |
 | yt-dlp self-updater (on-device PyInstaller rebuild, `userData`-relocated binary) | 2026-08-02 |
 | Bulk add + playlist snapshot, no background worker (see Recently shipped above) | 2026-08-04 |
 | Real, continuous postprocessing progress via direct ffmpeg pass (TD-004) | 2026-08-02 |
@@ -168,29 +172,8 @@ missing is a deliberate no-op guard, not new design.
 <a id="big-features"></a>
 ## Big features
 
-<a id="library-view"></a>
-### Library view — ffmpeg utilities
-
-**Status:** the core Library view (browse → add → download → play → delete →
-version → MP3-as-separate-download, channel-vs-video toggle, real channel icons,
-offline-capable thumbnails) is feature-complete and shipped — see
-[Shipped](#shipped). The only piece still open is the ffmpeg-utilities item kept in
-`futureSpecs.md`.
-
-**Overall: Low**, per sub-item — the infrastructure this needs already exists and is
-proven: `runFfmpegWithProgress()` and the ffprobe-duration helper (`main.js`) already
-do "run ffmpeg on a local file with real progress." Pointing that same helper at an
-*already-downloaded* library file instead of a fresh raw one is a small, low-risk
-reuse. Where the output lives has a real precedent too: "download different quality"
-already landed on delete-old-and-rename-into-the-deterministic-slot.
-
-| Sub-item | Difficulty | Why |
-|---|---|---|
-| Extract MP3 audio (from an already-downloaded video file) | Low | Same `-vn -c:a libmp3lame -b:a 192k` ffmpeg invocation already used for fresh MP3 downloads (`main.js`), just pointed at a local file instead of yt-dlp's raw output. |
-| Convert to a different format | Low | Same remux-then-reencode-fallback pattern already built for format recode (`runFfmpegWithProgress`'s two-try logic) — reused as-is against a local input file. |
-| Embed metadata (title/channel/date/description via ffmpeg's `-metadata` flags) | Low | A pure remux, no re-encode needed, all the data's already sitting in each version's `metadata.json`. |
-| Embed thumbnail into MP3 | Low-Medium | Cheap now that thumbnails are already downloaded and cached locally — no new "fetch the image" step needed, just attach the already-local file as MP3 cover art. |
-| Extract clip (start/stop trim) | Medium | Needs a start/end-timestamp picker UI (could reuse the player's own scrubber via "mark in"/"mark out" buttons) plus a real UX tradeoff: fast stream-copy trimming (`-c copy`) snaps to the nearest keyframe rather than an exact frame, versus a slower full re-encode for frame-accurate cuts. |
+Nothing open here right now — Library view's ffmpeg utilities (the only item this
+section tracked) shipped 2026-08-05, see [Shipped](#shipped).
 
 **One related, smaller gap:** auto-navigate to the newly added video after a
 successful "add to library" — today a successful add just clears the Downloader
