@@ -13,6 +13,7 @@ dist-ssr
 *.local
 yt-archiver-dist
 scripts/dev-build-shell.ps1
+coverage
 
 # Editor directories and files
 .vscode/*

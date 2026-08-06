@@ -62,7 +62,10 @@
     "build:ytdlp:bin": "node scripts/build-ytdlp-bin.mjs",
     "build:copy:ffmpeg": "node scripts/copy-ffmpeg.mjs",
     "build:electron": "npm run build:copy:electron && npm run build:ytdlp:bin && npm run build:copy:ffmpeg",
-    "build:all": "npm run build:renderer && npm run build:electron"
+    "build:all": "npm run build:renderer && npm run build:electron",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -79,6 +82,7 @@
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "electron": "^43.2.0",
     "electron-builder": "^26.0.12",
     "electron-devtools-installer": "^4.0.0",
@@ -90,6 +94,7 @@
     "globals": "^16.0.0",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.30.1",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "vitest": "^4.1.10"
   }
 }
