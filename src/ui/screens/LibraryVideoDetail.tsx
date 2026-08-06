@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   Card,
@@ -19,6 +20,7 @@ import {
   LinearProgress,
   MenuItem,
   Select,
+  Snackbar,
   Stack,
   TextField,
   Tooltip,
@@ -77,6 +79,13 @@ type LibraryVideo = {
 // anywhere in the renderer turns one into something readable.
 function formatEpochLabel(epoch: string): string {
   return new Date(Number(epoch)).toLocaleString();
+}
+
+// Same small extension-extraction as LibraryVideoPlayer.tsx's own copy --
+// not shared, this file has no other coupling to that component.
+function getExtension(filePath: string): string {
+  const lastDot = filePath.lastIndexOf('.');
+  return lastDot === -1 ? '' : filePath.slice(lastDot + 1).toLowerCase();
 }
 
 // Sentinel Select value for "Other" -- a one-off custom format typed for
@@ -195,10 +204,9 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // underlying bytes changed, so it just keeps showing the old content.
   const [cacheBustKey, setCacheBustKey] = useState(0);
 
-  // FFMPEG utilities -- visual pass only for now, no execution wired up yet
-  // (see futureSpecsFeedback.md's Library-view ffmpeg-utilities assessment).
-  // Kept minimal deliberately: a single target-format choice for convert,
-  // and plain start/end text fields for the clip trim rather than a scrubber.
+  // FFMPEG utilities -- kept minimal deliberately: a single target-format
+  // choice for convert, and plain start/end text fields for the clip trim
+  // rather than a scrubber.
   const [convertFormat, setConvertFormat] = useState('mp4');
   const [otherFormatInput, setOtherFormatInput] = useState('');
   const [clipStart, setClipStart] = useState('');
@@ -214,6 +222,25 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     ...POPULAR_CONVERT_FORMATS,
     ...customConvertFormats.filter((f) => !POPULAR_CONVERT_FORMATS.includes(f.toLowerCase())),
   ];
+
+  // Which ffmpeg utility (if any) is currently running -- gates the rest of
+  // the panel the same way downloadTarget gates video-vs-audio above,
+  // except entirely separate from that hook/channel (see main.js's
+  // ffmpegUtilityProgress comment for why: these run against an
+  // already-downloaded file, not a fresh yt-dlp download).
+  const [ffmpegAction, setFfmpegAction] = useState<'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | null>(null);
+  const [ffmpegProgress, setFfmpegProgress] = useState(0);
+  const [ffmpegError, setFfmpegError] = useState<string | null>(null);
+  // Separate from ffmpegError -- embedding is fast enough that a plain
+  // disabled->enabled flicker on the button isn't a reliable "it worked"
+  // signal, so a toast confirms it explicitly.
+  const [embedSuccessSnackbarOpen, setEmbedSuccessSnackbarOpen] = useState(false);
+  useEffect(() => {
+    window.electronAPI.onFfmpegUtilityProgress(({ percent }) => {
+      if (typeof percent === 'number') setFfmpegProgress(percent);
+    });
+    return () => window.electronAPI.removeFfmpegUtilityProgressListener();
+  }, []);
 
   const { downloadProgress, postprocessProgress, downloadStatus, finalFilePath, isDone, isError, startDownload } = useDownloadVideo();
 
@@ -401,6 +428,137 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     }
   };
 
+  const handleExtractMp3 = async () => {
+    if (!metadata.downloadedFilePath) return;
+    const result = await window.electronAPI.saveExportedFile({
+      defaultName: `${metadata.title || video.videoFolderName}.mp3`,
+      extensions: ['mp3'],
+      inputPath: metadata.downloadedFilePath,
+    });
+    if (result.canceled || !result.filePath) return;
+    setFfmpegAction('extractMp3');
+    setFfmpegError(null);
+    setFfmpegProgress(0);
+    const res = await window.electronAPI.extractMp3FromFile({ inputPath: metadata.downloadedFilePath, outputPath: result.filePath });
+    if (!res.success) setFfmpegError(res.message || 'Failed to extract MP3.');
+    setFfmpegAction(null);
+  };
+
+  const handleConvertFormat = async () => {
+    if (!metadata.downloadedFilePath) return;
+    const targetFormat = (convertFormat === OTHER_FORMAT_VALUE ? otherFormatInput : convertFormat).trim().toLowerCase();
+    if (!targetFormat) return;
+    const result = await window.electronAPI.saveExportedFile({
+      defaultName: `${metadata.title || video.videoFolderName}.${targetFormat}`,
+      extensions: [targetFormat],
+      inputPath: metadata.downloadedFilePath,
+    });
+    if (result.canceled || !result.filePath) return;
+    setFfmpegAction('convert');
+    setFfmpegError(null);
+    setFfmpegProgress(0);
+    const res = await window.electronAPI.convertFileFormat({ inputPath: metadata.downloadedFilePath, outputPath: result.filePath, format: targetFormat });
+    if (!res.success) setFfmpegError(res.message || 'Failed to convert.');
+    setFfmpegAction(null);
+  };
+
+  const handleExtractClip = async () => {
+    if (!metadata.downloadedFilePath || !clipStart.trim() || !clipEnd.trim()) return;
+    const ext = getExtension(metadata.downloadedFilePath) || 'mp4';
+    const result = await window.electronAPI.saveExportedFile({
+      defaultName: `${metadata.title || video.videoFolderName} (clip).${ext}`,
+      extensions: [ext],
+      inputPath: metadata.downloadedFilePath,
+    });
+    if (result.canceled || !result.filePath) return;
+    setFfmpegAction('clip');
+    setFfmpegError(null);
+    setFfmpegProgress(0);
+    const res = await window.electronAPI.extractClipFromFile({
+      inputPath: metadata.downloadedFilePath,
+      outputPath: result.filePath,
+      start: clipStart.trim(),
+      end: clipEnd.trim(),
+    });
+    if (!res.success) setFfmpegError(res.message || 'Failed to extract clip.');
+    setFfmpegAction(null);
+  };
+
+  // Local ffmpeg extraction straight from the already-downloaded video file,
+  // landing directly in this version's own audio slot -- unlike
+  // handleExtractMp3 above (which exports a copy to a user-picked location),
+  // this one saves and plays back through the library the same way a real
+  // MP3 download does, just without re-fetching anything from YouTube. Only
+  // ever invoked from the "no MP3 yet" branch of the Audio section, so no
+  // replace/swap path is needed here.
+  const handleExtractAudioToLibrary = async () => {
+    if (!selectedEpoch || !metadata.downloadedFilePath || metadata.downloadedAudioFilePath) return;
+    setFfmpegAction('extractAudioToLibrary');
+    setFfmpegError(null);
+    setFfmpegProgress(0);
+    const outputPath = `${video.videoDir}/${selectedEpoch}/audio.mp3`;
+    const res = await window.electronAPI.extractMp3FromFile({ inputPath: metadata.downloadedFilePath, outputPath });
+    if (res.success) {
+      await window.electronAPI.recordLibraryDownload({
+        videoDir: video.videoDir,
+        epoch: selectedEpoch,
+        filePath: outputPath,
+        resolution: 'mp3',
+        format: 'dflt',
+        kind: 'audio',
+      });
+      setMetadata((prev) => ({ ...prev, downloadedAudioFilePath: outputPath }));
+      // Same deep resync reason as the isDone effect above -- switching
+      // versions and back would otherwise revert to the stale `video` prop.
+      await onVersionsChanged();
+    } else {
+      setFfmpegError(res.message || 'Failed to extract MP3.');
+    }
+    setFfmpegAction(null);
+  };
+
+  const handleEmbedMetadata = async () => {
+    // Embeds into whichever of the video/audio files this version actually
+    // has -- either, or both, since they're independent coexisting slots
+    // (see downloadedAudioFilePath's own comment above). kind tells main.js
+    // which stream index the embedded cover art lands at (a video file
+    // already has its own video stream at v:0; audio doesn't).
+    const targets: { path: string; kind: 'video' | 'audio' }[] = [
+      metadata.downloadedFilePath ? { path: metadata.downloadedFilePath, kind: 'video' as const } : null,
+      metadata.downloadedAudioFilePath ? { path: metadata.downloadedAudioFilePath, kind: 'audio' as const } : null,
+    ].filter((t): t is { path: string; kind: 'video' | 'audio' } => !!t);
+    if (targets.length === 0) return;
+    setFfmpegAction('embedMetadata');
+    setFfmpegError(null);
+    setFfmpegProgress(0);
+    const metadataTags = {
+      title: metadata.title,
+      artist: metadata.channel,
+      date: metadata.uploadDate,
+      description: metadata.description,
+    };
+    let failureMessage: string | null = null;
+    for (const target of targets) {
+      const res = await window.electronAPI.embedFileMetadata({
+        inputPath: target.path,
+        kind: target.kind,
+        thumbnailPath: video.thumbnailPath,
+        metadataTags,
+      });
+      if (!res.success) failureMessage = res.message || 'Failed to embed metadata.';
+    }
+    if (failureMessage) {
+      setFfmpegError(failureMessage);
+    } else {
+      // Same file paths as before, new bytes -- without this the player
+      // would keep showing whatever it already had cached under that
+      // unchanged src, same reason every quality swap bumps this too.
+      setCacheBustKey((prev) => prev + 1);
+      setEmbedSuccessSnackbarOpen(true);
+    }
+    setFfmpegAction(null);
+  };
+
   const handleDelete = async () => {
     setDeleting(true);
     setDeleteError(null);
@@ -439,6 +597,16 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // Gates the whole FFMPEG utilities section below -- every tool there
   // operates on the video file itself, not the separate MP3 slot.
   const isVideoDownloaded = !!metadata.downloadedFilePath;
+  // Every ffmpeg-utility control shares this one disabled condition: no
+  // video downloaded yet, or another utility is already mid-run (they share
+  // one ffmpegAction slot, same "one at a time" reasoning as video/audio
+  // downloads above).
+  const ffmpegControlsDisabled = !isVideoDownloaded || ffmpegAction !== null;
+  // Embed Metadata is the one FFMPEG utility that doesn't need the video
+  // file specifically -- it can tag whichever of video/audio exists, so it's
+  // enabled whenever either one is downloaded, not gated on isVideoDownloaded
+  // like the rest of the panel.
+  const embedMetadataDisabled = (!isVideoDownloaded && !metadata.downloadedAudioFilePath) || ffmpegAction !== null;
   const resolutions = metadata.resolutions || [];
   // MP3 is rendered in its own Audio sub-section below, not mixed into the
   // video quality grid -- see the Library-view MP3-coexistence design.
@@ -667,30 +835,46 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                         </Tooltip>
                       </Stack>
                     </Stack>
+                  ) : ffmpegAction === 'extractAudioToLibrary' ? (
+                    <Stack spacing={1} sx={{ p: 1 }}>
+                      <Typography variant="subtitle1" textAlign="center">Extracting MP3</Typography>
+                      <LinearProgressWithLabel value={ffmpegProgress} valueBuffer={ffmpegProgress} />
+                    </Stack>
                   ) : (
-                    <Button
-                      size="small"
-                      color="secondary"
-                      variant="contained"
-                      startIcon={<CloudDownloadIcon />}
-                      onClick={handleAudioDownload}
-                      disabled={isVideoActionActive}
-                    >
-                      Download MP3 ({mp3Resolution.filesizeMb}Mb)
-                    </Button>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Button
+                        size="small"
+                        color="secondary"
+                        variant="contained"
+                        startIcon={<CloudDownloadIcon />}
+                        onClick={handleAudioDownload}
+                        disabled={isVideoActionActive}
+                      >
+                        Download MP3 ({mp3Resolution.filesizeMb}Mb)
+                      </Button>
+                      {isVideoDownloaded &&
+                        <Tooltip title="Extract MP3 from the already-downloaded video (no re-download)">
+                          <span>
+                            <IconButton
+                              size="small"
+                              onClick={handleExtractAudioToLibrary}
+                              disabled={isVideoActionActive || ffmpegAction !== null}
+                              aria-label="Extract MP3 from downloaded video"
+                            >
+                              <AudiotrackIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>}
+                    </Stack>
                   )}
                 </Stack>
               </>}
 
-            {/* FFMPEG utilities -- visual pass only, per current plan: layout,
-                icons, and the minimal inputs each action needs, no execution
-                wired up yet. Convert/extract-mp3/extract-clip normally result
-                in a new file, so those will eventually prompt a save
-                location the same way a download does; embed-metadata edits
-                the already-downloaded file in place, no save prompt needed.
-                Every control here operates on the video *file* -- disabled
-                as a whole whenever this version doesn't have one downloaded
-                yet, regardless of whether an MP3 already exists for it. */}
+            {/* FFMPEG utilities -- every control operates on the video
+                *file*, disabled as a whole whenever this version doesn't
+                have one downloaded yet (regardless of whether an MP3
+                already exists for it), or while another utility is already
+                running (they share one ffmpegAction slot). */}
             <Divider sx={{ my: 1.5 }} />
             <Stack spacing={1}>
               <Stack direction="row" spacing={0.5} alignItems="center">
@@ -701,16 +885,24 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                   <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
                 </Tooltip>
               </Stack>
-              {!isVideoDownloaded &&
+              {!isVideoDownloaded && !metadata.downloadedAudioFilePath &&
                 <Typography variant="caption" color="text.secondary">
-                  Download the video for this version to use these tools.
+                  Download the video or its MP3 for this version to use these tools.
                 </Typography>}
+              {!isVideoDownloaded && metadata.downloadedAudioFilePath &&
+                <Typography variant="caption" color="text.secondary">
+                  Download the video for this version to use Extract MP3, Convert, and Clip.
+                </Typography>}
+              {ffmpegAction &&
+                <LinearProgressWithLabel value={ffmpegProgress} valueBuffer={ffmpegProgress} />}
+              {ffmpegError &&
+                <Typography variant="caption" color="error">{ffmpegError}</Typography>}
 
               <Stack direction="row" spacing={1} alignItems="center">
                 <Typography variant="body2" sx={{ flexGrow: 1 }}>Extract MP3</Typography>
                 <Tooltip title="Extract MP3">
                   <span>
-                    <IconButton size="small" aria-label="Extract MP3" disabled={!isVideoDownloaded}>
+                    <IconButton size="small" aria-label="Extract MP3" onClick={handleExtractMp3} disabled={ffmpegControlsDisabled}>
                       <AudiotrackIcon fontSize="small" />
                     </IconButton>
                   </span>
@@ -724,7 +916,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                   variant="standard"
                   value={convertFormat}
                   onChange={(e) => setConvertFormat(e.target.value)}
-                  disabled={!isVideoDownloaded}
+                  disabled={ffmpegControlsDisabled}
                 >
                   {convertFormatOptions.map((format) => (
                     <MenuItem key={format} value={format.toLowerCase()}>{format.toUpperCase()}</MenuItem>
@@ -733,7 +925,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 </Select>
                 <Tooltip title="Convert">
                   <span>
-                    <IconButton size="small" aria-label="Convert to a different format" disabled={!isVideoDownloaded}>
+                    <IconButton size="small" aria-label="Convert to a different format" onClick={handleConvertFormat} disabled={ffmpegControlsDisabled}>
                       <SwapHorizIcon fontSize="small" />
                     </IconButton>
                   </span>
@@ -747,7 +939,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                     placeholder="Format name"
                     value={otherFormatInput}
                     onChange={(e) => setOtherFormatInput(e.target.value)}
-                    disabled={!isVideoDownloaded}
+                    disabled={ffmpegControlsDisabled}
                     slotProps={{ htmlInput: { 'aria-label': 'Custom format name' } }}
                   />
                   <Typography variant="caption" color="text.secondary">
@@ -763,7 +955,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                   placeholder="0:00"
                   value={clipStart}
                   onChange={(e) => setClipStart(e.target.value)}
-                  disabled={!isVideoDownloaded}
+                  disabled={ffmpegControlsDisabled}
                   sx={{ width: 56 }}
                   slotProps={{ htmlInput: { 'aria-label': 'Clip start' } }}
                 />
@@ -774,14 +966,19 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                   placeholder="0:00"
                   value={clipEnd}
                   onChange={(e) => setClipEnd(e.target.value)}
-                  disabled={!isVideoDownloaded}
+                  disabled={ffmpegControlsDisabled}
                   sx={{ width: 56 }}
                   slotProps={{ htmlInput: { 'aria-label': 'Clip end' } }}
                 />
                 <Box sx={{ flexGrow: 1 }} />
                 <Tooltip title="Extract clip">
                   <span>
-                    <IconButton size="small" aria-label="Extract clip" disabled={!isVideoDownloaded}>
+                    <IconButton
+                      size="small"
+                      aria-label="Extract clip"
+                      onClick={handleExtractClip}
+                      disabled={ffmpegControlsDisabled || !clipStart.trim() || !clipEnd.trim()}
+                    >
                       <ContentCutIcon fontSize="small" />
                     </IconButton>
                   </span>
@@ -792,7 +989,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 <Typography variant="body2" sx={{ flexGrow: 1 }}>Embed metadata</Typography>
                 <Tooltip title="Embed metadata">
                   <span>
-                    <IconButton size="small" aria-label="Embed metadata into local file" disabled={!isVideoDownloaded}>
+                    <IconButton size="small" aria-label="Embed metadata into local file" onClick={handleEmbedMetadata} disabled={embedMetadataDisabled}>
                       <LabelOutlinedIcon fontSize="small" />
                     </IconButton>
                   </span>
@@ -818,6 +1015,17 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           <Button onClick={handleDelete} color="error" variant="contained" disabled={deleting}>Delete</Button>
         </DialogActions>
       </Dialog>
+
+      <Snackbar
+        open={embedSuccessSnackbarOpen}
+        autoHideDuration={4000}
+        onClose={() => setEmbedSuccessSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setEmbedSuccessSnackbarOpen(false)} severity="success" variant="filled">
+          Metadata embedded
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

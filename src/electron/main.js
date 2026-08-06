@@ -7,9 +7,9 @@ import crypto from 'crypto';
 import http from 'node:http';
 import https from 'node:https';
 
-import { getSupportedVideoFilters } from './utils/constants.mjs';
+import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, sanitizeForFilesystem } from './library.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -1231,9 +1231,9 @@ function getMediaDurationSeconds(filePath) {
 // postprocessing ffmpeg subprocess with a blocking call that only reads output
 // after the process exits, so it can never report real progress; spawning
 // ffmpeg ourselves with -progress pipe:1 gives a genuine, continuous percentage.
-function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress }) {
+function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress, extraInputArgs = [] }) {
     return new Promise((resolve, reject) => {
-        const args = ['-i', inputPath, ...codecArgs, '-progress', 'pipe:1', '-y', outputPath];
+        const args = ['-i', inputPath, ...extraInputArgs, ...codecArgs, '-progress', 'pipe:1', '-y', outputPath];
         const proc = spawn(ffmpegBinaryPath, args);
         let stderr = '';
         let buffer = '';
@@ -1260,6 +1260,26 @@ function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDuration
             }
         });
     });
+}
+
+// Try a fast remux first (no quality loss, just a container swap); fall back
+// to a full re-encode if the source codec isn't compatible with the target
+// container. Reasonably close to yt-dlp's own remux-preferred behavior
+// without hand-maintaining a codec/container compatibility matrix ourselves.
+// Shared by the download-time format recode below and the Library view's
+// standalone "Convert to" ffmpeg utility.
+async function convertWithFallback({ inputPath, outputPath, format, totalDurationSeconds, onProgress }) {
+    try {
+        await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: ['-c', 'copy'], totalDurationSeconds, onProgress });
+    } catch {
+        // WebM is spec'd to only hold VP8/VP9/AV1 video + Vorbis/Opus audio --
+        // falling back to libx264/aac universally would produce a file labeled
+        // .webm that isn't actually valid WebM.
+        const reencodeCodecArgs = (format || '').toLowerCase() === 'webm'
+            ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus']
+            : ['-c:v', 'libx264', '-c:a', 'aac'];
+        await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: reencodeCodecArgs, totalDurationSeconds, onProgress });
+    }
 }
 
 // Tracked so the updater can refuse to swap the live yt-dlp binary out from
@@ -1390,34 +1410,13 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                     onProgress: onFfmpegProgress,
                 });
             } else {
-                // Try a fast remux first (no quality loss, just a container swap);
-                // fall back to a full re-encode if the source codec isn't compatible
-                // with the target container. Reasonably close to yt-dlp's own
-                // remux-preferred behavior without hand-maintaining a codec/container
-                // compatibility matrix ourselves.
-                try {
-                    await runFfmpegWithProgress({
-                        inputPath: rawFile,
-                        outputPath: postprocessOutputPath,
-                        codecArgs: ['-c', 'copy'],
-                        totalDurationSeconds: duration,
-                        onProgress: onFfmpegProgress,
-                    });
-                } catch {
-                    // WebM is spec'd to only hold VP8/VP9/AV1 video + Vorbis/Opus
-                    // audio -- falling back to libx264/aac universally would produce
-                    // a file labeled .webm that isn't actually valid WebM.
-                    const reencodeCodecArgs = (options.format || '').toLowerCase() === 'webm'
-                        ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus']
-                        : ['-c:v', 'libx264', '-c:a', 'aac'];
-                    await runFfmpegWithProgress({
-                        inputPath: rawFile,
-                        outputPath: postprocessOutputPath,
-                        codecArgs: reencodeCodecArgs,
-                        totalDurationSeconds: duration,
-                        onProgress: onFfmpegProgress,
-                    });
-                }
+                await convertWithFallback({
+                    inputPath: rawFile,
+                    outputPath: postprocessOutputPath,
+                    format: options.format,
+                    totalDurationSeconds: duration,
+                    onProgress: onFfmpegProgress,
+                });
             }
 
             fs.rmSync(rawDir, { recursive: true, force: true });
@@ -1429,6 +1428,157 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
         }
     })
 
+});
+
+// --- Library view: ffmpeg utilities (extract MP3, convert format, extract
+// clip, embed metadata) ---------------------------------------------------
+// These all run ffmpeg directly against an *already-downloaded* library
+// file (not a fresh yt-dlp download), so they're deliberately kept separate
+// from downloadVideoWithProgressUpdates/'progressUpdate' above rather than
+// overloading that pipeline's meaning -- one shared broadcast channel here,
+// same "one at a time" assumption as everywhere else in this app (see
+// TD-008, reports/TechnicalDebt.md).
+function sendFfmpegUtilityProgress(msg) {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('ffmpegUtilityProgress', msg);
+}
+
+// Generic "export a derived file" save dialog -- distinct from
+// dialog:saveVideoFile (which is hardcoded to video-download filters and the
+// configured download dir) since these exports can be audio, a different
+// container, or an arbitrary user-typed "Other" format. defaultName is
+// sanitized the same way library folder/file names already are, since it's
+// often derived straight from a video's title. Defaults to the source file's
+// own folder (inputPath) rather than the configured download dir -- these
+// exports are edits of a library file the user is already looking at, so
+// saving next to it is the more useful default; falls back to the download
+// dir/OS downloads folder only when no inputPath is given.
+ipcMain.handle('dialog:saveExportedFile', async (e, { defaultName, extensions, inputPath }) => {
+    const { downloadDir } = readSettings();
+    const baseDir = (inputPath && path.dirname(inputPath)) || downloadDir || app.getPath('downloads');
+    return dialog.showSaveDialog({
+        title: 'Save File',
+        buttonLabel: 'Save',
+        defaultPath: path.join(baseDir, sanitizeForFilesystem(defaultName)),
+        filters: [{ name: 'File', extensions }, ...allVideoFilter],
+    });
+});
+
+ipcMain.handle('library:extractMp3', async (e, { inputPath, outputPath }) => {
+    try {
+        const duration = await getMediaDurationSeconds(inputPath);
+        await runFfmpegWithProgress({
+            inputPath,
+            outputPath,
+            codecArgs: ['-vn', '-c:a', 'libmp3lame', '-b:a', '192k'],
+            totalDurationSeconds: duration,
+            onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
+        });
+        return { success: true, outputPath };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, format }) => {
+    try {
+        const duration = await getMediaDurationSeconds(inputPath);
+        await convertWithFallback({
+            inputPath,
+            outputPath,
+            format,
+            totalDurationSeconds: duration,
+            onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
+        });
+        return { success: true, outputPath };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// start/end are passed straight through to ffmpeg's own -ss/-to, which
+// already accepts the flexible time formats the UI's plain text fields take
+// (SS, MM:SS, HH:MM:SS[.ms]) -- no need to parse/validate them ourselves.
+// Both as output options (after -i), not input-seeking, so they're
+// unambiguous absolute timestamps in the source's own timeline -- slower to
+// seek than input-side -ss on a long file, but -c copy never decodes video
+// either way, so it's still just an I/O cost, not a CPU one. -c copy snaps
+// to the nearest keyframe rather than an exact frame (a real, documented
+// tradeoff, not a bug) -- a full re-encode for frame-accurate cuts is a
+// deliberately separate, not-yet-offered option.
+ipcMain.handle('library:extractClip', async (e, { inputPath, outputPath, start, end }) => {
+    try {
+        await runFfmpegWithProgress({
+            inputPath,
+            outputPath,
+            codecArgs: ['-ss', start, '-to', end, '-c', 'copy'],
+            totalDurationSeconds: 0,
+            onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
+        });
+        return { success: true, outputPath };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// Edits "in place" from the user's perspective, but ffmpeg can never read
+// and write the same file at once -- same safe temp-then-rename pattern
+// swapLibraryDownload (library.mjs) already established for quality swaps:
+// write to a distinct video.new.<ext> path first, only delete the working
+// file and rename the new one into its exact place once ffmpeg actually
+// succeeds, so a failed/interrupted run never touches the original.
+// Doesn't touch metadata.json at all -- downloadedFilePath/Resolution/Format
+// are all unchanged, only the bytes at that same path are.
+//
+// thumbnailPath (the video-level video-thumbnail.* file, may be jpg/png/webp
+// -- see downloadImageToFile) is embedded as cover art alongside the plain
+// text tags, when given. -map explicitly drops any video stream(s) beyond
+// the real one (video's own v:0) / any pre-existing cover on audio, so
+// re-running this doesn't accumulate a stack of old covers -- each run
+// replaces whatever cover was there with the current thumbnail. The cover
+// stream itself is always re-encoded to mjpeg (never copied) since a webp
+// thumbnail isn't a valid embedded-cover codec for ID3/mov -- everything
+// else stays -c copy, no quality loss.
+ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thumbnailPath, kind }) => {
+    try {
+        const ext = path.extname(inputPath);
+        const tempPath = `${inputPath.slice(0, -ext.length)}.new${ext}`;
+        const duration = await getMediaDurationSeconds(inputPath);
+        const metadataArgs = Object.entries(metadataTags || {})
+            .filter(([, value]) => !!value)
+            .flatMap(([key, value]) => ['-metadata', `${key}=${value}`]);
+
+        const hasThumbnail = !!thumbnailPath && fs.existsSync(thumbnailPath);
+        // Audio (mp3) has no pre-existing video stream, so the embedded cover
+        // becomes v:0; a video file's real video stream is always v:0 (it's
+        // mapped first below), so the cover lands at v:1.
+        const coverStreamIndex = kind === 'audio' ? 0 : 1;
+        const streamMapArgs = hasThumbnail
+            ? (kind === 'audio' ? ['-map', '0:a', '-map', '1'] : ['-map', '0:v:0', '-map', '0:a?', '-map', '1'])
+            : [];
+        const coverArgs = hasThumbnail
+            ? [
+                `-c:v:${coverStreamIndex}`, 'mjpeg',
+                `-disposition:v:${coverStreamIndex}`, 'attached_pic',
+                `-metadata:s:v:${coverStreamIndex}`, 'title=Album cover',
+                `-metadata:s:v:${coverStreamIndex}`, 'comment=Cover (front)',
+                ...(kind === 'audio' ? ['-id3v2_version', '3'] : []),
+            ]
+            : [];
+
+        await runFfmpegWithProgress({
+            inputPath,
+            outputPath: tempPath,
+            extraInputArgs: hasThumbnail ? ['-i', thumbnailPath] : [],
+            codecArgs: ['-c', 'copy', ...streamMapArgs, ...coverArgs, ...metadataArgs],
+            totalDurationSeconds: duration,
+            onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
+        });
+        fs.rmSync(inputPath, { force: true });
+        fs.renameSync(tempPath, inputPath);
+        return { success: true };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
 });
 
 ipcMain.handle('ytdlp:checkForUpdate', async () => {

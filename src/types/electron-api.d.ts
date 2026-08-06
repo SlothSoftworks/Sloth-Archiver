@@ -94,6 +94,13 @@ declare global {
             deleteLibraryEntry: (videoDir: string, epoch?: string) => Promise<{ success: boolean; videoDeleted: boolean }>
             onLibraryBackgroundUpdate: (callback: () => void) => void
             removeLibraryBackgroundUpdateListener: () => void
+            saveExportedFile: (payload: { defaultName: string; extensions: string[]; inputPath?: string }) => Promise<{ filePath?: string; canceled: boolean }>
+            extractMp3FromFile: (payload: { inputPath: string; outputPath: string }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
+            convertFileFormat: (payload: { inputPath: string; outputPath: string; format: string }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
+            extractClipFromFile: (payload: { inputPath: string; outputPath: string; start: string; end: string }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
+            embedFileMetadata: (payload: { inputPath: string; metadataTags: Record<string, string | null | undefined>; thumbnailPath?: string | null; kind: 'video' | 'audio' }) => Promise<{ success: boolean; message?: string }>
+            onFfmpegUtilityProgress: (callback: (data: { type: string; percent?: number }) => void) => void
+            removeFfmpegUtilityProgressListener: () => void
             reportRendererError: (payload: { message: string; stack?: string }) => Promise<void>
             getErrorLogInfo: () => Promise<{ exists: boolean; path: string }>
             openErrorLog: () => Promise<void>

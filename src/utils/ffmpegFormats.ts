@@ -5,7 +5,7 @@
 // default set (shown directly in the Library view's convert-to picker) and
 // a longer suggested list only surfaced in Options, for anyone who wants to
 // add one of their own without typing a muxer name from memory.
-export const POPULAR_CONVERT_FORMATS = ['mp4', 'mov', 'mkv', 'webm', 'avi', 'gif'];
+export const POPULAR_CONVERT_FORMATS = ['mp4', 'mov', 'mkv', 'webm', 'avi'];
 
 // Known-good muxers not in the popular set above. GIF (in the popular set)
 // has no audio track at all -- any audio silently drops. MPG/3GP/3G2 here
