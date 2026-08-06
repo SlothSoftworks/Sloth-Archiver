@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveCookie: (cookieText) => ipcRenderer.invoke('cookies:save', cookieText),
     deleteCookie: () => ipcRenderer.invoke('cookies:delete'),
     getCookieStatus: () => ipcRenderer.invoke('cookies:status'),
+    getCookiesConfig: () => ipcRenderer.invoke('cookies:getConfig'),
+    setCookiesConfig: (payload) => ipcRenderer.invoke('cookies:setConfig', payload),
     getDownloadDir: () => ipcRenderer.invoke('settings:getDownloadDir'),
     setDownloadDir: (dir) => ipcRenderer.invoke('settings:setDownloadDir', dir),
     checkFileExists: (filePath) => ipcRenderer.invoke('system:pathExists', filePath),

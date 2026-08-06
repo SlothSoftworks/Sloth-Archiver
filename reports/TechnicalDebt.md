@@ -105,7 +105,7 @@ _, stderr, returncode = Popen.run(
 
 ---
 
-## TD-006 — 2026-08-02 — Cookie auth requires manually pasting cookie text; `--cookies-from-browser` isn't wired up
+## TD-006 — [RESOLVED] — 2026-08-02 — Cookie auth requires manually pasting cookie text; `--cookies-from-browser` isn't wired up
 
 **Where:** `src/electron/main.js` — `cookiesPath` (`userData/cookies.txt`), `cookiesArgs()` (returns `['--cookies', cookiesPath]`), the `cookies:save`/`cookies:delete`/`cookies:status` IPC handlers. `src/ui/screens/OptionsScreen.tsx`'s "Personal Cookie" dialog, where the user pastes either a Netscape-format `cookies.txt` export or a raw browser cookie header value.
 
@@ -125,6 +125,8 @@ _, stderr, returncode = Popen.run(
 - Add a browser-picker option alongside (not necessarily replacing) the existing paste-cookie-text dialog in the Options tab's "Personal Cookie" section — e.g. a dropdown of detected/common browsers, defaulting to Firefox given the caveat above.
 - Plumb the choice through to `cookiesArgs()`: swap `['--cookies', cookiesPath]` for `['--cookies-from-browser', browserChoice]` when this mode is active, mutually exclusive with the existing pasted-file mode.
 - Test the macOS Keychain re-prompt behavior specifically across a real yt-dlp self-update cycle before shipping this as the default path, given the unsigned-binary risk flagged above.
+
+**Resolved — 2026-08-04:** Added exactly as suggested. The Options tab's "Personal Cookie" section now has a mode switch (paste-file vs. browser), mutually exclusive — `cookiesMode`/`cookiesBrowser` persisted via `settings:getCookiesConfig`/`settings:setCookiesConfig`, with `SUPPORTED_COOKIE_BROWSERS` (`main.js`) as the single source of truth for the dropdown's options. `cookiesArgs()` now branches on the saved mode: `--cookies-from-browser <browser>` when in browser mode, falling back to the existing `--cookies <path>` file behavior otherwise (switching modes doesn't delete a previously-saved `cookies.txt`, so returning to file mode still works). Landed in the same pass as a related fix (commit `d8e7fc8`): `getVideoInfoPython` now hard-errors on an empty `formats` list instead of silently saving degraded metadata, which is exactly the failure mode an unauthenticated bot-check produces — so this cookie option is also what actually fixes that error for a real user now, not just a nice-to-have.
 
 ---
 

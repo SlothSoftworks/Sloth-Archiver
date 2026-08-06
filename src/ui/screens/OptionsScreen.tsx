@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import {
   Box,
   Button,
@@ -10,13 +10,32 @@ import {
   DialogTitle,
   Divider,
   IconButton,
+  MenuItem,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@mui/material';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { useYtdlpUpdater, type YtdlpUpdateStage } from '../hooks/useYtdlpUpdater';
+
+// Display labels for yt-dlp's --cookies-from-browser browser keys -- kept
+// here rather than main.js's SUPPORTED_COOKIE_BROWSERS (which is the source
+// of truth for the actual list) since that array is plain lowercase keyring
+// names, not fit for showing in a dropdown.
+const COOKIE_BROWSER_LABELS: Record<string, string> = {
+  brave: 'Brave',
+  chrome: 'Chrome',
+  chromium: 'Chromium',
+  edge: 'Edge',
+  firefox: 'Firefox',
+  opera: 'Opera',
+  safari: 'Safari',
+  vivaldi: 'Vivaldi',
+  whale: 'Whale',
+};
 
 const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
   'checking',
@@ -40,6 +59,10 @@ export default function OptionsScreen() {
   const [cookieText, setCookieText] = useState('');
   const [error, setError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
+  const [cookiesMode, setCookiesModeState] = useState<'file' | 'browser'>('file');
+  const [cookiesBrowser, setCookiesBrowserState] = useState('');
+  const [supportedBrowsers, setSupportedBrowsers] = useState<string[]>([]);
+  const [browserSavedMessage, setBrowserSavedMessage] = useState('');
   const [downloadDir, setDownloadDirState] = useState('');
   const [libraryDir, setLibraryDirState] = useState('');
   const [errorLogExists, setErrorLogExists] = useState(false);
@@ -48,6 +71,13 @@ export default function OptionsScreen() {
     const status = await window.electronAPI.getCookieStatus();
     setCookieLoaded(status.loaded);
     setCookieCount(status.cookieCount);
+  };
+
+  const refreshCookiesConfig = async () => {
+    const config = await window.electronAPI.getCookiesConfig();
+    setCookiesModeState(config.cookiesMode);
+    setCookiesBrowserState(config.cookiesBrowser);
+    setSupportedBrowsers(config.supportedBrowsers);
   };
 
   const refreshDownloadDir = async () => {
@@ -67,6 +97,7 @@ export default function OptionsScreen() {
 
   useEffect(() => {
     refreshStatus();
+    refreshCookiesConfig();
     refreshDownloadDir();
     refreshLibraryDir();
     refreshErrorLogInfo();
@@ -127,6 +158,27 @@ export default function OptionsScreen() {
   const handleDelete = async () => {
     await window.electronAPI.deleteCookie();
     await refreshStatus();
+  };
+
+  // Switching modes alone doesn't need a browser picked yet (the 'browser'
+  // toggle button can be selected before a browser is chosen from the empty
+  // dropdown that follows) -- only persisted once cookiesBrowser is also set,
+  // by handleSelectBrowser below. Switching back to 'file' saves immediately
+  // since there's nothing further to pick.
+  const handleModeChange = async (_e: MouseEvent<HTMLElement>, mode: 'file' | 'browser' | null) => {
+    if (!mode || mode === cookiesMode) return;
+    setCookiesModeState(mode);
+    setBrowserSavedMessage('');
+    if (mode === 'file') {
+      await window.electronAPI.setCookiesConfig({ cookiesMode: 'file', cookiesBrowser });
+    }
+  };
+
+  const handleSelectBrowser = async (browser: string) => {
+    setCookiesBrowserState(browser);
+    await window.electronAPI.setCookiesConfig({ cookiesMode: 'browser', cookiesBrowser: browser });
+    const label = COOKIE_BROWSER_LABELS[browser] || browser;
+    setBrowserSavedMessage(`Downloads will now pull cookies live from ${label}.`);
   };
 
   return (
@@ -219,24 +271,73 @@ export default function OptionsScreen() {
       <Typography variant="h6" gutterBottom>Personal Cookie</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
         Loading a personal YouTube cookie lets requests authenticate as you, which can help avoid
-        "Sign in to confirm you're not a bot" errors. Paste either a Netscape-format cookies.txt
-        export or the raw cookie header value copied from your browser's developer tools.
+        "Sign in to confirm you're not a bot" errors.
       </Typography>
-      <Stack direction="row" spacing={2} alignItems="center">
-        <Button variant="contained" onClick={handleOpenDialog}>
-          Load personal cookie
-        </Button>
-        <Button variant="outlined" color="error" onClick={handleDelete} disabled={!cookieLoaded}>
-          Delete cookie
-        </Button>
-        <Chip
-          label={cookieLoaded ? `Cookie loaded (${cookieCount})` : 'No cookie loaded'}
-          color={cookieLoaded ? 'success' : 'default'}
-          variant="outlined"
-        />
-      </Stack>
-      {savedMessage &&
-        <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>{savedMessage}</Typography>}
+      <ToggleButtonGroup
+        value={cookiesMode}
+        exclusive
+        onChange={handleModeChange}
+        size="small"
+        sx={{ mb: 2 }}
+      >
+        <ToggleButton value="file">Paste cookie</ToggleButton>
+        <ToggleButton value="browser">Pull from browser</ToggleButton>
+      </ToggleButtonGroup>
+
+      {cookiesMode === 'file' ? (
+        <>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
+            Paste either a Netscape-format cookies.txt export or the raw cookie header value
+            copied from your browser's developer tools.
+          </Typography>
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Button variant="contained" onClick={handleOpenDialog}>
+              Load personal cookie
+            </Button>
+            <Button variant="outlined" color="error" onClick={handleDelete} disabled={!cookieLoaded}>
+              Delete cookie
+            </Button>
+            <Chip
+              label={cookieLoaded ? `Cookie loaded (${cookieCount})` : 'No cookie loaded'}
+              color={cookieLoaded ? 'success' : 'default'}
+              variant="outlined"
+            />
+          </Stack>
+          {savedMessage &&
+            <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>{savedMessage}</Typography>}
+        </>
+      ) : (
+        <>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
+            Reads cookies directly from an installed browser's own profile on every request --
+            nothing to export or re-paste when they expire. The browser may need to be closed for
+            this to work, since some browsers lock their cookie database while running.
+          </Typography>
+          <Stack direction="row" spacing={2} alignItems="center">
+            <TextField
+              select
+              size="small"
+              label="Browser"
+              value={cookiesBrowser}
+              onChange={(e) => handleSelectBrowser(e.target.value)}
+              sx={{ minWidth: 200 }}
+            >
+              {supportedBrowsers.map((browser) => (
+                <MenuItem key={browser} value={browser}>
+                  {COOKIE_BROWSER_LABELS[browser] || browser}
+                </MenuItem>
+              ))}
+            </TextField>
+            <Chip
+              label={cookiesBrowser ? `Using ${COOKIE_BROWSER_LABELS[cookiesBrowser] || cookiesBrowser}` : 'No browser selected'}
+              color={cookiesBrowser ? 'success' : 'default'}
+              variant="outlined"
+            />
+          </Stack>
+          {browserSavedMessage &&
+            <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>{browserSavedMessage}</Typography>}
+        </>
+      )}
 
       <Divider sx={{ my: 3 }} />
 
