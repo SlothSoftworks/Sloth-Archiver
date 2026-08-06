@@ -7,10 +7,11 @@ import './App.css'
 import MainPage from './MainPage';
 import Other from './other';
 import { electronAPIMock, electronAPIPythonDownloadMock } from '../../testing/mockData/electronAPIMocks.ts'
-import theme from './theme';
+import { getTheme } from './theme';
 import { YtdlpUpdaterProvider } from './hooks/useYtdlpUpdater';
 import { LibraryNotificationProvider } from './hooks/useLibraryNotifications';
 import { BulkAddProvider } from './hooks/useBulkAddQueue.tsx';
+import { ThemeModeProvider, useThemeMode } from './hooks/useThemeMode.tsx';
 
 // Forwards uncaught renderer errors to the same main.log a crashed main
 // process already writes to (see errorLog:report in main.js) -- the renderer
@@ -40,18 +41,14 @@ function useRendererErrorLogging() {
   }, []);
 }
 
-function App() {
-
-  if (!window.electronAPI) {
-    window.mockingElectron = "yes";
-    window.electronAPI = electronAPIMock;
-    window.electronAPIPythonDownload = electronAPIPythonDownloadMock;
-  }
-
-  useRendererErrorLogging();
+// Split out from App() so useThemeMode() (which needs ThemeModeProvider as an
+// ancestor) can pick the actual MUI theme object -- ThemeModeProvider has to
+// wrap this, not live inside it.
+function AppContent() {
+  const { mode } = useThemeMode();
 
   return (
-    <ThemeProvider theme={theme}>
+    <ThemeProvider theme={getTheme(mode)}>
       <CssBaseline />
       <YtdlpUpdaterProvider>
         <LibraryNotificationProvider>
@@ -64,6 +61,23 @@ function App() {
         </LibraryNotificationProvider>
       </YtdlpUpdaterProvider>
     </ThemeProvider>
+  );
+}
+
+function App() {
+
+  if (!window.electronAPI) {
+    window.mockingElectron = "yes";
+    window.electronAPI = electronAPIMock;
+    window.electronAPIPythonDownload = electronAPIPythonDownloadMock;
+  }
+
+  useRendererErrorLogging();
+
+  return (
+    <ThemeModeProvider>
+      <AppContent />
+    </ThemeModeProvider>
   )
 }
 

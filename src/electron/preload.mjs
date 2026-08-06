@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setLibraryDir: (dir) => ipcRenderer.invoke('settings:setLibraryDir', dir),
     getLibraryViewMode: () => ipcRenderer.invoke('settings:getLibraryViewMode'),
     setLibraryViewMode: (mode) => ipcRenderer.invoke('settings:setLibraryViewMode', mode),
+    getThemeMode: () => ipcRenderer.invoke('settings:getThemeMode'),
+    setThemeMode: (mode) => ipcRenderer.invoke('settings:setThemeMode', mode),
     getLibraryIndex: () => ipcRenderer.invoke('library:getIndex'),
     refreshLibraryIndex: () => ipcRenderer.invoke('library:refreshIndex'),
     refreshChannelIcon: (payload) => ipcRenderer.invoke('library:refreshChannelIcon', payload),

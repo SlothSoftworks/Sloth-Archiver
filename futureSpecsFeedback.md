@@ -55,12 +55,12 @@ flowchart LR
         direction LR
         p1["Auto-navigate to newly added video"]
         p2["Playlist refresh/versioning (snapshot done, refresh not wired up)"]
+        p3["Player UX (play icon + hide download done, buffered-look parked)"]
     end
 
     subgraph TODO["Not started"]
         direction LR
         t1["Video merger / re-upload link swap"]
-        t2["Player UX (play icon, hide download, remove buffered look)"]
         t3["Library view: small ffmpeg utilities"]
         t5["Theme support"]
         t6["Language support"]
@@ -70,7 +70,7 @@ flowchart LR
 
     DONE ~~~ PARTIAL ~~~ TODO
 
-    class d1,p1,t2,t3 library
+    class d1,p1,p3,t3 library
     class d2 updater
     class d3,p2 playlist
     class d4,t1 smallfeat
@@ -259,22 +259,25 @@ item needed is no longer a blocker.
 <a id="player-ux"></a>
 ### 2. Player UX
 
-Play-icon overlay on the embedded local player, hide the native "Download" option,
-remove the native "buffered" look from the scrub bar (added to the spec after the
-first two items were already assessed — it could confuse users into thinking a fully
-local file is streaming from the internet).
+Play-icon overlay on the embedded local player, hide the native "Download" option —
+✅ both done, 2026-08-05 (`controlsList="nodownload"` + a centered play button that
+disappears for good once playback starts, `LibraryVideoPlayer.tsx`).
 
-**Overall: Low** for the first two, **Medium** for the buffer-bar removal — the odd
-one out.
+Remove the native "buffered" look from the scrub bar — **tried and reverted,
+2026-08-05.** Confirmed empirically what the difficulty note below only suspected:
+flattening `::-webkit-media-controls-timeline`'s background didn't visibly change
+the buffered/played look at all — Chromium paints that distinction natively, on top
+of whatever the track's own CSS background is, not as a separate overridable layer.
+No further CSS-only attempts worth trying. Left open as a "maybe later" — see below.
 
-| Piece | Difficulty | Why |
+| Piece | Difficulty | Status |
 |---|---|---|
-| Hide the native "Download" option | Low | The "3 dot menu" is Chromium's own native `<video>` controls overlay, not custom UI — suppressing its Download entry is a one-line `controlsList="nodownload"` attribute on the `<video>` element (`LibraryVideoPlayer.tsx`), no new component needed. |
-| Play-icon overlay | Low | A small composition addition over the same element — a centered `IconButton`, hidden once playback starts. |
-| Remove the "buffered ahead" look on the scrub bar | Medium | This is native `<video controls>` styling, not anything this app draws itself — Chromium always renders a lighter buffered-range segment on the scrub bar for any `<video>` element, local file or not, since it has no concept of "this source is instant." There's no clean prop to disable just that one piece of native controls; the real options are (a) suppress it via `::-webkit-media-controls-*` CSS pseudo-elements — undocumented/unstable, Chromium-version-dependent, could silently break on an Electron upgrade — or (b) drop native `controls` entirely and build custom play/pause/seek/volume controls — more work, but the only fully reliable route. |
+| Hide the native "Download" option | Low | ✅ Done |
+| Play-icon overlay | Low | ✅ Done |
+| Remove the "buffered ahead" look on the scrub bar | Medium, and the CSS-only route is now ruled out | Tried, reverted -- see above |
 
-**Recommendation:** try the `::-webkit-media-controls-*` route first since it's cheap
-to attempt and this app already targets one pinned Chromium version via Electron
-(not "whatever browser the user happens to have"), which limits the usual fragility
-concern with that approach; fall back to fully custom controls only if that turns out
-not to work, or breaks on a future Electron version bump.
+**Recommendation, if this ever comes back:** the only route left is dropping native
+`controls` entirely and building custom play/pause/seek/volume controls (a real,
+standalone player-personalization task, not a quick follow-up) -- not worth doing
+just for this one visual detail on its own, but worth revisiting together with any
+future "personalize the player" push if one ever comes up.

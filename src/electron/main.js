@@ -324,6 +324,18 @@ ipcMain.handle('settings:setLibraryViewMode', async (e, mode) => {
     return { success: true, libraryViewMode: settings.libraryViewMode };
 });
 
+ipcMain.handle('settings:getThemeMode', async () => {
+    const { themeMode } = readSettings();
+    return { themeMode: themeMode === 'dark' ? 'dark' : 'light' };
+});
+
+ipcMain.handle('settings:setThemeMode', async (e, mode) => {
+    const settings = readSettings();
+    settings.themeMode = mode === 'dark' ? 'dark' : 'light';
+    writeSettings(settings);
+    return { success: true, themeMode: settings.themeMode };
+});
+
 ipcMain.handle('library:getIndex', async () => {
     const { libraryDir } = readSettings();
     return getLibraryIndex(libraryDir);

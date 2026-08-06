@@ -76,6 +76,8 @@ declare global {
             setLibraryDir: (dir: string) => Promise<{ success: boolean; libraryDir: string }>
             getLibraryViewMode: () => Promise<{ libraryViewMode: 'channel' | 'video' }>
             setLibraryViewMode: (mode: 'channel' | 'video') => Promise<{ success: boolean; libraryViewMode: 'channel' | 'video' }>
+            getThemeMode: () => Promise<{ themeMode: 'light' | 'dark' }>
+            setThemeMode: (mode: 'light' | 'dark') => Promise<{ success: boolean; themeMode: 'light' | 'dark' }>
             getLibraryIndex: () => Promise<LibraryIndex>
             refreshLibraryIndex: () => Promise<LibraryIndex>
             refreshChannelIcon: (payload: { channelFolderName: string; channelId: string | null }) => Promise<LibraryIndex>
