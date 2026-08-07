@@ -1,0 +1,85 @@
+// @vitest-environment jsdom
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import MainPage from './MainPage';
+import { LibraryNotificationProvider, useLibraryNotification } from './hooks/useLibraryNotifications';
+
+// Each tab's screen is a large, independently-tested component (its own
+// dedicated test file covers it) -- mocked out here so MainPage's tests stay
+// scoped to its own tab-switching/notification-badge/About-dialog logic.
+vi.mock('./screens/DownloaderScreen', () => ({ default: () => <div>Downloader Mock</div> }));
+vi.mock('./screens/LibraryScreen', () => ({ default: () => <div>Library Mock</div> }));
+vi.mock('./screens/OptionsScreen', () => ({ default: () => <div>Options Mock</div> }));
+vi.mock('./components/YtdlpUpdateDialog', () => ({ default: () => <div>YtdlpUpdateDialog Mock</div> }));
+vi.mock('./components/BulkAddSidePanel', () => ({
+  default: () => <div>BulkAddSidePanel Mock</div>,
+  BulkAddToggleButton: () => <button>Bulk add</button>,
+}));
+
+// The badge/reset count is only ever incremented from within DownloaderScreen
+// (mocked out above), so this stands in for "some notification arrived" to
+// exercise MainPage's own reset-on-tab-select behavior.
+function IncrementButton() {
+  const { increment } = useLibraryNotification();
+  return <button onClick={increment}>increment (test)</button>;
+}
+
+function renderMainPage() {
+  return render(
+    <LibraryNotificationProvider>
+      <IncrementButton />
+      <MainPage />
+    </LibraryNotificationProvider>,
+  );
+}
+
+describe('MainPage', () => {
+  it('shows the Downloader tab by default, with the other tabs unmounted', () => {
+    renderMainPage();
+    expect(screen.getByText('Downloader Mock')).toBeInTheDocument();
+    expect(screen.queryByText('Library Mock')).not.toBeInTheDocument();
+    expect(screen.queryByText('Options Mock')).not.toBeInTheDocument();
+  });
+
+  it('switches tabs, mounting only the selected screen', async () => {
+    const user = userEvent.setup();
+    renderMainPage();
+
+    await user.click(screen.getByRole('tab', { name: /Library/ }));
+    expect(screen.getByText('Library Mock')).toBeInTheDocument();
+    expect(screen.queryByText('Downloader Mock')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Options' }));
+    expect(screen.getByText('Options Mock')).toBeInTheDocument();
+    expect(screen.queryByText('Library Mock')).not.toBeInTheDocument();
+  });
+
+  it('resets the library notification badge when the Library tab is selected', async () => {
+    const user = userEvent.setup();
+    renderMainPage();
+
+    await user.click(screen.getByText('increment (test)'));
+    await user.click(screen.getByText('increment (test)'));
+    expect(screen.getByText('2')).toBeInTheDocument();
+
+    // MUI's Badge keeps rendering its last content when it drops to 0 --
+    // showZero is false, so it just hides the node behind an "invisible"
+    // class rather than removing it, hence the class check instead of an
+    // absence-of-text assertion.
+    await user.click(screen.getByRole('tab', { name: /Library/ }));
+    expect(screen.getByText('2')).toHaveClass('MuiBadge-invisible');
+  });
+
+  it('opens and closes the About dialog', async () => {
+    const user = userEvent.setup();
+    renderMainPage();
+
+    await user.click(screen.getByRole('button', { name: 'About' }));
+    expect(screen.getByText('About')).toBeInTheDocument();
+    expect(screen.getByAltText('LTX')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByText('LTX', { selector: 'img' })).not.toBeInTheDocument());
+  });
+});
