@@ -5,11 +5,11 @@ import path from 'path';
 // https://vite.dev/config/
 
 export default defineConfig ({
-  root: path.resolve(__dirname, 'src', 'ui'),
+  root: path.resolve(import.meta.dirname, 'src', 'ui'),
   plugins: [react()],
   base: './',
   build: {
-    outDir: path.resolve(__dirname, 'dist', 'renderer'),
+    outDir: path.resolve(import.meta.dirname, 'dist', 'renderer'),
     emptyOutDir: true,
   }
 })

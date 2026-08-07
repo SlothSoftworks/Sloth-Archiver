@@ -79,7 +79,7 @@ describe('BulkAddDialog', () => {
     renderDialog();
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('switch'));
     expect(screen.getByRole('combobox')).toBeInTheDocument();
   });
 
