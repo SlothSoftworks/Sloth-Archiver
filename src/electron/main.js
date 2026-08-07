@@ -63,7 +63,14 @@ function ensureYtdlpBinInUserData() {
         fs.cpSync(bundledYtdlpBinDir, userDataYtdlpBinDir, { recursive: true });
     }
 }
-ensureYtdlpBinInUserData();
+// Skipped under Vitest (which sets this env var in its own worker processes,
+// never in a real Electron launch) -- this is the one module-load-time side
+// effect in this file that would otherwise crash on import in a test, since
+// bundledYtdlpBinDir only exists in a built dist/ tree. Everything else here
+// only touches a mocked 'electron' module and is harmless to run on import.
+if (!process.env.VITEST) {
+    ensureYtdlpBinInUserData();
+}
 
 const ytdlpPath = path.join(userDataYtdlpBinDir, ytdlpBinaryName);
 const cookiesPath = path.join(app.getPath('userData'), 'cookies.txt');
@@ -81,7 +88,7 @@ const SUPPORTED_COOKIE_BROWSERS = ['brave', 'chrome', 'chromium', 'edge', 'firef
 // switching modes in Options doesn't delete the saved cookies.txt file, so a
 // leftover file from a previous 'file'-mode setup should never silently win
 // again once the user has moved to 'browser' mode.
-function cookiesArgs() {
+export function cookiesArgs() {
     const { cookiesMode, cookiesBrowser } = readSettings();
     if (cookiesMode === 'browser' && SUPPORTED_COOKIE_BROWSERS.includes(cookiesBrowser)) {
         return ['--cookies-from-browser', cookiesBrowser];
@@ -115,7 +122,7 @@ protocol.registerSchemesAsPrivileged([
     { scheme: 'app-video', privileges: { standard: true, secure: true, stream: true, bypassCSP: true, corsEnabled: true, supportFetchAPI: true } },
 ]);
 
-function mimeTypeForPath(filePath) {
+export function mimeTypeForPath(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     if (ext === '.html') return 'text/html';
     if (ext === '.js') return 'text/javascript';
@@ -552,7 +559,7 @@ ipcMain.handle('library:addVersion', async (e, { videoDir, videoMetaData }) => {
 // array is empty, and leaving uploadDate null when timestamp isn't resolved
 // (a full per-video fetch would be needed for that reliably, which defeats
 // the point of flat-listing an entire playlist cheaply).
-function pickBestThumbnail(id, thumbnails) {
+export function pickBestThumbnail(id, thumbnails) {
     if (Array.isArray(thumbnails) && thumbnails.length > 0) {
         const best = thumbnails.reduce((a, b) => ((b.width || 0) > (a.width || 0) ? b : a));
         if (best.url) return best.url;
@@ -735,11 +742,11 @@ ipcMain.handle('system:pathExists', async (e, filePath) => {
 // a raw "name=value; name2=value2" cookie-header string as copied straight
 // out of a browser's DevTools Network tab -- normalizing the latter into
 // Netscape format so yt-dlp's --cookies flag can consume it either way.
-function looksLikeNetscapeFormat(text) {
+export function looksLikeNetscapeFormat(text) {
     return /^\s*#/.test(text) || /^[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]*$/m.test(text);
 }
 
-function convertHeaderCookiesToNetscape(text) {
+export function convertHeaderCookiesToNetscape(text) {
     const farFutureExpiry = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 5;
     // A real cookie-header string is a single logical line. Pasting a long one
     // out of a wrapped display (e.g. a chat code block) can pick up stray
@@ -785,7 +792,7 @@ function convertHeaderCookiesToNetscape(text) {
 // own dual .youtube.com/.google.com registration, or a real export that has
 // entries for both youtube.com and www.youtube.com), and reporting raw line
 // counts back to the user would overstate how many cookies were loaded.
-function validateNetscapeLines(content) {
+export function validateNetscapeLines(content) {
     const validNames = new Set();
     let invalid = 0;
     for (const line of content.split('\n')) {
@@ -896,7 +903,7 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options)
 // encoded, or it's not an estimate of anything real.
 const MP3_BITRATE_KBPS = 192;
 
-function buildResolutions(info) {
+export function buildResolutions(info) {
     const seen = new Set();
     const resolutions = [];
 
@@ -950,7 +957,7 @@ function buildResolutions(info) {
     return resolutions;
 }
 
-function reshapeVideoInfo(info) {
+export function reshapeVideoInfo(info) {
     return {
         id: info.id,
         title: info.title,
@@ -987,7 +994,7 @@ function reshapeVideoInfo(info) {
 // today), or no channel/uploader at all -- yt-dlp can't resolve who
 // uploaded a video it can't actually load the real page for, so a real,
 // available video never has both null.
-function isDeadVideoInfo(response) {
+export function isDeadVideoInfo(response) {
     if (!response.resolutions || response.resolutions.length === 0) return true;
     if (!response.channelId && !response.uploader) return true;
     return false;
@@ -1077,7 +1084,7 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
     });
 });
 
-function needsDirectFfmpegPass({ format, resolution }) {
+export function needsDirectFfmpegPass({ format, resolution }) {
     if (resolution && resolution.toLowerCase() === 'mp3') return true;
     return !!format && !['undefined', 'dflt'].includes(format);
 }
@@ -1087,7 +1094,7 @@ function needsDirectFfmpegPass({ format, resolution }) {
 // regardless of whatever format dropdown value happens to be selected.
 // Returns null when no postprocessing happens (yt-dlp's own download/merge
 // picks its own correct extension in that case, untouched here).
-function ffmpegTargetExtension({ format, resolution }) {
+export function ffmpegTargetExtension({ format, resolution }) {
     if (resolution && resolution.toLowerCase() === 'mp3') return 'mp3';
     if (format && !['undefined', 'dflt'].includes(format)) return format.toLowerCase();
     return null;
@@ -1104,7 +1111,7 @@ function ffmpegTargetExtension({ format, resolution }) {
 // into a file merely *named* .mp4 (the "saves as video.mp4" bug). Stripping
 // whatever extension is already there and appending the real target one
 // fixes both regardless of which path the caller supplied.
-function withTargetExtension(outputPath, ext) {
+export function withTargetExtension(outputPath, ext) {
     const { dir, name } = path.parse(outputPath);
     return path.join(dir, `${name}.${ext}`);
 }
@@ -1117,7 +1124,7 @@ function withTargetExtension(outputPath, ext) {
 // chosen path (no postprocessing needed) or a raw intermediate path in a temp
 // dir (postprocessing needed) -- the caller decides which, this function just
 // downloads to whatever it's given.
-function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteMode }) {
+export function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteMode }) {
     // Note: --print (even "after_move:...") makes yt-dlp buffer ALL stdout/stderr
     // until the process is about to exit, defeating live progress reporting entirely.
     // The final file is instead located on disk after the process closes (see findFinalFile).
@@ -1177,7 +1184,7 @@ function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteMode }) 
 // outtmpl rather than swapping it (e.g. "video.mp4" + mp3 extraction ->
 // "video.mp4.mp3"), and that behavior isn't a documented, stable contract
 // worth hardcoding. Instead, look at what actually landed on disk.
-function findFinalFile(outputPath) {
+export function findFinalFile(outputPath) {
     const dir = path.dirname(outputPath);
     const base = path.basename(outputPath);
     try {
@@ -1196,7 +1203,7 @@ function findFinalFile(outputPath) {
 
 // yt-dlp downloaded to a raw.%(ext)s template in a dedicated per-download temp
 // dir (nothing else lives there), so whatever single file landed is the one we want.
-function findRawDownloadedFile(rawDir) {
+export function findRawDownloadedFile(rawDir) {
     const match = fs.readdirSync(rawDir).find((f) => f.startsWith('raw.'));
     if (!match) {
         throw new Error('yt-dlp finished but no raw downloaded file was found');

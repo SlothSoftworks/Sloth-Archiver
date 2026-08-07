@@ -1,15 +1,16 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import {
   Autocomplete,
   Box,
   Button,
+  Card,
   Chip,
   Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
   DialogTitle,
-  Divider,
+  Grid,
   IconButton,
   MenuItem,
   Stack,
@@ -48,6 +49,44 @@ const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
   'building',
   'verifying',
 ]);
+
+// Divider styles for the 2-column option grids below -- a real border keeps
+// each item visually distinct instead of relying on spacing alone. Position
+// in the grid decides which edges apply: an item beside another needs a left
+// border on sm+ (where it's a column neighbor) but a top border on xs (where
+// it stacks below instead); an item starting a new row always needs a top
+// border, on every breakpoint, since it's below the previous row either way.
+const dividerLeftOnSmTopOnXs = {
+  borderLeft: { xs: 'none', sm: '1px solid' },
+  borderTop: { xs: '1px solid', sm: 'none' },
+  borderColor: 'divider',
+  pl: { xs: 0, sm: 3 },
+  pt: { xs: 3, sm: 0 },
+};
+const dividerTop = { borderTop: '1px solid', borderColor: 'divider', pt: 3 };
+const dividerTopAndLeftOnSm = {
+  borderTop: '1px solid',
+  borderColor: 'divider',
+  pt: 3,
+  borderLeft: { xs: 'none', sm: '1px solid' },
+  pl: { xs: 0, sm: 3 },
+};
+
+// Each group (Media vs. General) renders as its own bordered Card rather
+// than just a text label -- an inline overline heading tried first turned
+// out too easy to miss against the same-page options below it, since
+// nothing about it visually separated one group's controls from the next.
+// A real container boundary makes the grouping obvious at a glance instead.
+function OptionsGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Card variant="outlined" sx={{ p: 2.5, mb: 3 }}>
+      <Typography variant="subtitle1" color="primary" sx={{ fontWeight: 700, letterSpacing: 0.5, mb: 2 }}>
+        {label}
+      </Typography>
+      {children}
+    </Card>
+  );
+}
 
 export default function OptionsScreen() {
   // Progress/error while updating is shown by the shared full-view overlay
@@ -223,236 +262,244 @@ export default function OptionsScreen() {
 
   return (
     <Box>
-      <Typography variant="h6" gutterBottom>Appearance</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
-        Choose the app's color theme. Saved between sessions.
-      </Typography>
-      <ToggleButtonGroup
-        value={themeMode}
-        exclusive
-        onChange={handleThemeModeChange}
-        size="small"
-        sx={{ mb: 2 }}
-      >
-        <ToggleButton value="light">Light</ToggleButton>
-        <ToggleButton value="dark">Dark</ToggleButton>
-      </ToggleButtonGroup>
-
-      <Divider sx={{ my: 3 }} />
-
-      <Typography variant="h6" gutterBottom>Conversion Formats</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
-        The Library view's "Convert to" tool always offers {POPULAR_CONVERT_FORMATS.map((f) => f.toUpperCase()).join(', ')}.
-        Add more here for your own use -- pick a suggestion or type any ffmpeg format name.
-      </Typography>
-      <Autocomplete
-        multiple
-        freeSolo
-        size="small"
-        options={SUGGESTED_EXTRA_CONVERT_FORMATS}
-        value={customConvertFormats}
-        inputValue={convertFormatInput}
-        onInputChange={(_e, newInputValue) => setConvertFormatInput(newInputValue)}
-        onChange={(_e, newValue) => {
-          handleCustomConvertFormatsChange(newValue);
-          setConvertFormatInput('');
-        }}
-        onKeyDown={(e) => {
-          if (e.key === ',') {
-            e.preventDefault();
-            commitConvertFormatInput();
-          }
-        }}
-        getOptionLabel={(option) => option.toUpperCase()}
-        renderTags={(value, getTagProps) =>
-          value.map((option, index) => {
-            const { key, ...tagProps } = getTagProps({ index });
-            return <Chip key={key} label={option.toUpperCase()} size="small" {...tagProps} />;
-          })
-        }
-        renderInput={(params) => <TextField {...params} placeholder="Add a format, then comma or Enter" />}
-        sx={{ maxWidth: 640, mb: 2 }}
-      />
-
-      <Divider sx={{ my: 3 }} />
-
-      <Typography variant="h6" gutterBottom>Default Download Folder</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
-        This folder is suggested as the starting location whenever the save dialog opens
-        for a new download.
-      </Typography>
-      <Stack direction="row" spacing={2} alignItems="center">
-        <Button variant="contained" onClick={handleChooseDownloadDir}>
-          Choose folder
-        </Button>
-        <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
-          {downloadDir || 'Using system default'}
-        </Typography>
-      </Stack>
-
-      <Divider sx={{ my: 3 }} />
-
-      <Typography variant="h6" gutterBottom>Library Folder</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
-        Where videos added to the Library tab are tracked and stored. Unlike the download
-        folder above, this isn't set to a default automatically -- choose it deliberately,
-        since it's meant to be a persistent archive location.
-      </Typography>
-      <Stack direction="row" spacing={2} alignItems="center">
-        <Button variant="contained" onClick={handleChooseLibraryDir}>
-          Choose folder
-        </Button>
-        <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
-          {libraryDir || 'Not set'}
-        </Typography>
-      </Stack>
-
-      <Divider sx={{ my: 3 }} />
-
-      <Stack direction="row" spacing={0.5} alignItems="center">
-        <Typography variant="h6" gutterBottom sx={{ mb: '0 !important' }}>yt-dlp Version</Typography>
-        <Tooltip title="What is yt-dlp?">
-          <IconButton size="small" onClick={() => setYtdlpInfoOpen(true)} aria-label="What is yt-dlp?">
-            <InfoOutlinedIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Stack>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
-        yt-dlp needs to change whenever YouTube does. Updating rebuilds it locally on this
-        machine, which can take a minute or two the first time.
-      </Typography>
-      <Dialog open={ytdlpInfoOpen} onClose={() => setYtdlpInfoOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>What is yt-dlp?</DialogTitle>
-        <DialogContent>
-          <DialogContentText component="div">
-            <Typography variant="body2" sx={{ mb: 1.5 }}>
-              yt-dlp is the tool this app uses behind the scenes to actually talk to
-              YouTube and download videos. It's separate from YT Archiver itself --
-              updating it here does <strong>not</strong> update the app.
+      <OptionsGroup label="Media Options">
+        <Grid container spacing={4}>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <Typography variant="h6" gutterBottom>Conversion Formats</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              The Library view's "Convert to" tool always offers {POPULAR_CONVERT_FORMATS.map((f) => f.toUpperCase()).join(', ')}.
+              Add more here for your own use -- pick a suggestion or type any ffmpeg format name.
             </Typography>
-            <Typography variant="body2">
-              YouTube changes how it works fairly often, and when it does, yt-dlp can
-              stop working correctly until it's updated to keep up. Keeping this
-              current is what keeps downloads working reliably.
-            </Typography>
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setYtdlpInfoOpen(false)}>Close</Button>
-        </DialogActions>
-      </Dialog>
-      <Stack direction="row" spacing={2} alignItems="center">
-        <Button variant="outlined" onClick={() => checkForUpdate()} disabled={checking || isUpdating}>
-          Check for updates
-        </Button>
-        {updateAvailable &&
-          <Button variant="contained" onClick={() => startUpdate()} disabled={isUpdating}>
-            Update to {latestVersion}
-          </Button>}
-        <Chip
-          label={currentVersion ? `Current: ${currentVersion}` : 'Version unknown'}
-          variant="outlined"
-        />
-        {!checking && !updateAvailable && !!currentVersion &&
-          <Chip label="Up to date" color="success" variant="outlined" />}
-      </Stack>
-      {checkError &&
-        <Typography variant="body2" color="error" sx={{ mt: 1 }}>{checkError}</Typography>}
-
-      <Divider sx={{ my: 3 }} />
-
-      <Typography variant="h6" gutterBottom>Personal Cookie</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
-        Loading a personal YouTube cookie lets requests authenticate as you, which can help avoid
-        "Sign in to confirm you're not a bot" errors.
-      </Typography>
-      <ToggleButtonGroup
-        value={cookiesMode}
-        exclusive
-        onChange={handleModeChange}
-        size="small"
-        sx={{ mb: 2 }}
-      >
-        <ToggleButton value="file">Paste cookie</ToggleButton>
-        <ToggleButton value="browser">Pull from browser</ToggleButton>
-      </ToggleButtonGroup>
-
-      {cookiesMode === 'file' ? (
-        <>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
-            Paste either a Netscape-format cookies.txt export or the raw cookie header value
-            copied from your browser's developer tools.
-          </Typography>
-          <Stack direction="row" spacing={2} alignItems="center">
-            <Button variant="contained" onClick={handleOpenDialog}>
-              Load personal cookie
-            </Button>
-            <Button variant="outlined" color="error" onClick={handleDelete} disabled={!cookieLoaded}>
-              Delete cookie
-            </Button>
-            <Chip
-              label={cookieLoaded ? `Cookie loaded (${cookieCount})` : 'No cookie loaded'}
-              color={cookieLoaded ? 'success' : 'default'}
-              variant="outlined"
-            />
-          </Stack>
-          {savedMessage &&
-            <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>{savedMessage}</Typography>}
-        </>
-      ) : (
-        <>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
-            Reads cookies directly from an installed browser's own profile on every request --
-            nothing to export or re-paste when they expire. The browser may need to be closed for
-            this to work, since some browsers lock their cookie database while running.
-          </Typography>
-          <Stack direction="row" spacing={2} alignItems="center">
-            <TextField
-              select
+            <Autocomplete
+              multiple
+              freeSolo
               size="small"
-              label="Browser"
-              value={cookiesBrowser}
-              onChange={(e) => handleSelectBrowser(e.target.value)}
-              sx={{ minWidth: 200 }}
-            >
-              {supportedBrowsers.map((browser) => (
-                <MenuItem key={browser} value={browser}>
-                  {COOKIE_BROWSER_LABELS[browser] || browser}
-                </MenuItem>
-              ))}
-            </TextField>
-            <Chip
-              label={cookiesBrowser ? `Using ${COOKIE_BROWSER_LABELS[cookiesBrowser] || cookiesBrowser}` : 'No browser selected'}
-              color={cookiesBrowser ? 'success' : 'default'}
-              variant="outlined"
+              options={SUGGESTED_EXTRA_CONVERT_FORMATS}
+              value={customConvertFormats}
+              inputValue={convertFormatInput}
+              onInputChange={(_e, newInputValue) => setConvertFormatInput(newInputValue)}
+              onChange={(_e, newValue) => {
+                handleCustomConvertFormatsChange(newValue);
+                setConvertFormatInput('');
+              }}
+              onKeyDown={(e) => {
+                if (e.key === ',') {
+                  e.preventDefault();
+                  commitConvertFormatInput();
+                }
+              }}
+              getOptionLabel={(option) => option.toUpperCase()}
+              renderTags={(value, getTagProps) =>
+                value.map((option, index) => {
+                  const { key, ...tagProps } = getTagProps({ index });
+                  return <Chip key={key} label={option.toUpperCase()} size="small" {...tagProps} />;
+                })
+              }
+              renderInput={(params) => <TextField {...params} placeholder="Add a format, then comma or Enter" />}
             />
-          </Stack>
-          {browserSavedMessage &&
-            <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>{browserSavedMessage}</Typography>}
-        </>
-      )}
+          </Grid>
 
-      <Divider sx={{ my: 3 }} />
+          <Grid size={{ xs: 12, sm: 6 }} sx={dividerLeftOnSmTopOnXs}>
+            <Typography variant="h6" gutterBottom>Default Download Folder</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              This folder is suggested as the starting location whenever the save dialog opens
+              for a new download.
+            </Typography>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <Button variant="contained" onClick={handleChooseDownloadDir}>
+                Choose folder
+              </Button>
+              <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
+                {downloadDir || 'Using system default'}
+              </Typography>
+            </Stack>
+          </Grid>
 
-      <Typography variant="h6" gutterBottom>Error Log</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 640 }}>
-        If something crashes or behaves unexpectedly, this file has the details -- useful to
-        check yourself or attach when reporting a bug.
-      </Typography>
-      <Stack direction="row" spacing={2} alignItems="center">
-        <Button
-          variant="outlined"
-          onClick={() => window.electronAPI.openErrorLog()}
-          disabled={!errorLogExists}
-        >
-          Open error log
-        </Button>
-        <Chip
-          label={errorLogExists ? 'Errors have been logged' : 'No errors logged yet'}
-          color={errorLogExists ? 'warning' : 'default'}
-          variant="outlined"
-        />
-      </Stack>
+          <Grid size={{ xs: 12, sm: 6 }} sx={dividerTop}>
+            <Typography variant="h6" gutterBottom>Library Folder</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Where videos added to the Library tab are tracked and stored. Unlike the download
+              folder above, this isn't set to a default automatically -- choose it deliberately,
+              since it's meant to be a persistent archive location.
+            </Typography>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <Button variant="contained" onClick={handleChooseLibraryDir}>
+                Choose folder
+              </Button>
+              <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
+                {libraryDir || 'Not set'}
+              </Typography>
+            </Stack>
+          </Grid>
+        </Grid>
+      </OptionsGroup>
+
+      <OptionsGroup label="General Options">
+        <Grid container spacing={4}>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <Typography variant="h6" gutterBottom>Appearance</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Choose the app's color theme. Saved between sessions.
+            </Typography>
+            <ToggleButtonGroup
+              value={themeMode}
+              exclusive
+              onChange={handleThemeModeChange}
+              size="small"
+            >
+              <ToggleButton value="light">Light</ToggleButton>
+              <ToggleButton value="dark">Dark</ToggleButton>
+            </ToggleButtonGroup>
+          </Grid>
+
+          <Grid size={{ xs: 12, sm: 6 }} sx={dividerLeftOnSmTopOnXs}>
+            <Stack direction="row" spacing={0.5} alignItems="center">
+              <Typography variant="h6" gutterBottom sx={{ mb: '0 !important' }}>yt-dlp Version</Typography>
+              <Tooltip title="What is yt-dlp?">
+                <IconButton size="small" onClick={() => setYtdlpInfoOpen(true)} aria-label="What is yt-dlp?">
+                  <InfoOutlinedIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Stack>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              yt-dlp needs to change whenever YouTube does. Updating rebuilds it locally on this
+              machine, which can take a minute or two the first time.
+            </Typography>
+            <Dialog open={ytdlpInfoOpen} onClose={() => setYtdlpInfoOpen(false)} maxWidth="xs" fullWidth>
+              <DialogTitle>What is yt-dlp?</DialogTitle>
+              <DialogContent>
+                <DialogContentText component="div">
+                  <Typography variant="body2" sx={{ mb: 1.5 }}>
+                    yt-dlp is the tool this app uses behind the scenes to actually talk to
+                    YouTube and download videos. It's separate from YT Archiver itself --
+                    updating it here does <strong>not</strong> update the app.
+                  </Typography>
+                  <Typography variant="body2">
+                    YouTube changes how it works fairly often, and when it does, yt-dlp can
+                    stop working correctly until it's updated to keep up. Keeping this
+                    current is what keeps downloads working reliably.
+                  </Typography>
+                </DialogContentText>
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setYtdlpInfoOpen(false)}>Close</Button>
+              </DialogActions>
+            </Dialog>
+            <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Button variant="outlined" onClick={() => checkForUpdate()} disabled={checking || isUpdating}>
+                Check for updates
+              </Button>
+              {updateAvailable &&
+                <Button variant="contained" onClick={() => startUpdate()} disabled={isUpdating}>
+                  Update to {latestVersion}
+                </Button>}
+              <Chip
+                label={currentVersion ? `Current: ${currentVersion}` : 'Version unknown'}
+                variant="outlined"
+              />
+              {!checking && !updateAvailable && !!currentVersion &&
+                <Chip label="Up to date" color="success" variant="outlined" />}
+            </Stack>
+            {checkError &&
+              <Typography variant="body2" color="error" sx={{ mt: 1 }}>{checkError}</Typography>}
+          </Grid>
+
+          <Grid size={{ xs: 12, sm: 6 }} sx={dividerTop}>
+            <Typography variant="h6" gutterBottom>Personal Cookie</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Loading a personal YouTube cookie lets requests authenticate as you, which can help avoid
+              "Sign in to confirm you're not a bot" errors.
+            </Typography>
+            <ToggleButtonGroup
+              value={cookiesMode}
+              exclusive
+              onChange={handleModeChange}
+              size="small"
+              sx={{ mb: 2 }}
+            >
+              <ToggleButton value="file">Paste cookie</ToggleButton>
+              <ToggleButton value="browser">Pull from browser</ToggleButton>
+            </ToggleButtonGroup>
+
+            {cookiesMode === 'file' ? (
+              <>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Paste either a Netscape-format cookies.txt export or the raw cookie header value
+                  copied from your browser's developer tools.
+                </Typography>
+                <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
+                  <Button variant="contained" onClick={handleOpenDialog}>
+                    Load personal cookie
+                  </Button>
+                  <Button variant="outlined" color="error" onClick={handleDelete} disabled={!cookieLoaded}>
+                    Delete cookie
+                  </Button>
+                  <Chip
+                    label={cookieLoaded ? `Cookie loaded (${cookieCount})` : 'No cookie loaded'}
+                    color={cookieLoaded ? 'success' : 'default'}
+                    variant="outlined"
+                  />
+                </Stack>
+                {savedMessage &&
+                  <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>{savedMessage}</Typography>}
+              </>
+            ) : (
+              <>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Reads cookies directly from an installed browser's own profile on every request --
+                  nothing to export or re-paste when they expire. The browser may need to be closed for
+                  this to work, since some browsers lock their cookie database while running.
+                </Typography>
+                <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
+                  <TextField
+                    select
+                    size="small"
+                    label="Browser"
+                    value={cookiesBrowser}
+                    onChange={(e) => handleSelectBrowser(e.target.value)}
+                    sx={{ minWidth: 200 }}
+                  >
+                    {supportedBrowsers.map((browser) => (
+                      <MenuItem key={browser} value={browser}>
+                        {COOKIE_BROWSER_LABELS[browser] || browser}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                  <Chip
+                    label={cookiesBrowser ? `Using ${COOKIE_BROWSER_LABELS[cookiesBrowser] || cookiesBrowser}` : 'No browser selected'}
+                    color={cookiesBrowser ? 'success' : 'default'}
+                    variant="outlined"
+                  />
+                </Stack>
+                {browserSavedMessage &&
+                  <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>{browserSavedMessage}</Typography>}
+              </>
+            )}
+          </Grid>
+
+          <Grid size={{ xs: 12, sm: 6 }} sx={dividerTopAndLeftOnSm}>
+            <Typography variant="h6" gutterBottom>Error Log</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              If something crashes or behaves unexpectedly, this file has the details -- useful to
+              check yourself or attach when reporting a bug.
+            </Typography>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <Button
+                variant="outlined"
+                onClick={() => window.electronAPI.openErrorLog()}
+                disabled={!errorLogExists}
+              >
+                Open error log
+              </Button>
+              <Chip
+                label={errorLogExists ? 'Errors have been logged' : 'No errors logged yet'}
+                color={errorLogExists ? 'warning' : 'default'}
+                variant="outlined"
+              />
+            </Stack>
+          </Grid>
+        </Grid>
+      </OptionsGroup>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Load personal cookie</DialogTitle>
