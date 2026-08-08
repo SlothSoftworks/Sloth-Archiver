@@ -14,7 +14,16 @@ you point it here.
 
 ### Big features
 
-(none currently open -- Library view's ffmpeg utilities shipped 2026-08-05, see futureSpecsFeedback.md)
+1. Export/Import  JSON feature
+   - A feature that let's you export the entire current scan of the library to a unified json that when imported in another instance of the app it will create the structures of the videos in the archive and load the metadata from the json into their corresponding files
+2. Select bulk controllers and download/download all:
+   - A dynamic UI feature that allows the user to click non downloaded videos in the video list of the library and click on a download all button that add all of the videos not downloaded to the bulk download list
+   - Ths requires introsucing an identifier between a download job in the side panel and a add to library job (that doesn't require a download)
+   - The bulk controllers section is this:
+      - A user can select one or more items and this will add a new option in the top menu where the other buttons of the video view are which will be a "delete all selected" feature that will delete the entries of the list of selected items and their files
+      - The same way there will be a "download selected" which will apply only when all of the items selected aren't downloaded. If even one of the items in the selection list is downloaded this control will dissapear.
+
+
 
 ### QoL features
 

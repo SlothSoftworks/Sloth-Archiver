@@ -347,6 +347,31 @@ ipcMain.handle('settings:setThemeMode', async (e, mode) => {
 // beyond the small hardcoded popular set (LibraryVideoDetail.tsx) -- kept as
 // a plain string list, no validation against ffmpeg's own real muxer list
 // here (that's a concern for whenever the actual conversion gets wired up).
+// Caps how many bulk-add items the renderer's queue (useBulkAddQueue.tsx)
+// will download at once -- clamped here too, not just in the Options UI,
+// since this value round-trips through a plain JSON settings file a user
+// could hand-edit. Default of 1 preserves today's sequential behavior for
+// anyone who never touches this setting.
+const MAX_SIMULTANEOUS_DOWNLOADS_CEILING = 5;
+
+function clampMaxSimultaneousDownloads(value) {
+    const n = Number(value);
+    if (!Number.isInteger(n)) return 1;
+    return Math.min(Math.max(n, 1), MAX_SIMULTANEOUS_DOWNLOADS_CEILING);
+}
+
+ipcMain.handle('settings:getMaxSimultaneousDownloads', async () => {
+    const { maxSimultaneousDownloads } = readSettings();
+    return { maxSimultaneousDownloads: clampMaxSimultaneousDownloads(maxSimultaneousDownloads ?? 1) };
+});
+
+ipcMain.handle('settings:setMaxSimultaneousDownloads', async (e, value) => {
+    const settings = readSettings();
+    settings.maxSimultaneousDownloads = clampMaxSimultaneousDownloads(value);
+    writeSettings(settings);
+    return { success: true, maxSimultaneousDownloads: settings.maxSimultaneousDownloads };
+});
+
 ipcMain.handle('settings:getCustomConvertFormats', async () => {
     const { customConvertFormats } = readSettings();
     return { customConvertFormats: Array.isArray(customConvertFormats) ? customConvertFormats : [] };

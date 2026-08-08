@@ -1,5 +1,6 @@
 import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import {
+  Alert,
   Autocomplete,
   Box,
   Button,
@@ -40,6 +41,12 @@ const COOKIE_BROWSER_LABELS: Record<string, string> = {
   vivaldi: 'Vivaldi',
   whale: 'Whale',
 };
+
+// Matches main.js's MAX_SIMULTANEOUS_DOWNLOADS_CEILING -- kept in sync by
+// hand (both are small, deliberately hardcoded, not worth a shared-constant
+// file for one number). useBulkAddQueue.tsx's fixed download-hook pool is
+// sized to this same ceiling.
+const MAX_SIMULTANEOUS_DOWNLOADS_OPTIONS = [1, 2, 3, 4, 5];
 
 const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
   'checking',
@@ -110,6 +117,7 @@ export default function OptionsScreen() {
   const [libraryDir, setLibraryDirState] = useState('');
   const [errorLogExists, setErrorLogExists] = useState(false);
   const [customConvertFormats, setCustomConvertFormatsState] = useState<string[]>([]);
+  const [maxSimultaneousDownloads, setMaxSimultaneousDownloadsState] = useState(1);
 
   const refreshStatus = async () => {
     const status = await window.electronAPI.getCookieStatus();
@@ -144,6 +152,11 @@ export default function OptionsScreen() {
     setCustomConvertFormatsState(customConvertFormats);
   };
 
+  const refreshMaxSimultaneousDownloads = async () => {
+    const { maxSimultaneousDownloads } = await window.electronAPI.getMaxSimultaneousDownloads();
+    setMaxSimultaneousDownloadsState(maxSimultaneousDownloads);
+  };
+
   useEffect(() => {
     refreshStatus();
     refreshCookiesConfig();
@@ -151,6 +164,7 @@ export default function OptionsScreen() {
     refreshLibraryDir();
     refreshErrorLogInfo();
     refreshCustomConvertFormats();
+    refreshMaxSimultaneousDownloads();
   }, []);
 
   // Autocomplete's own value normalization (lowercasing, de-duping against
@@ -175,6 +189,11 @@ export default function OptionsScreen() {
     if (!convertFormatInput.trim()) return;
     handleCustomConvertFormatsChange([...customConvertFormats, convertFormatInput]);
     setConvertFormatInput('');
+  };
+
+  const handleMaxSimultaneousDownloadsChange = async (value: number) => {
+    setMaxSimultaneousDownloadsState(value);
+    await window.electronAPI.setMaxSimultaneousDownloads(value);
   };
 
   const handleChooseDownloadDir = async () => {
@@ -330,6 +349,28 @@ export default function OptionsScreen() {
                 {libraryDir || 'Not set'}
               </Typography>
             </Stack>
+          </Grid>
+
+          <Grid size={{ xs: 12, sm: 6 }} sx={dividerTopAndLeftOnSm}>
+            <Typography variant="h6" gutterBottom>Maximum Simultaneous Downloads</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              How many bulk-add items are allowed to download at the same time.
+            </Typography>
+            <TextField
+              select
+              size="small"
+              value={maxSimultaneousDownloads}
+              onChange={(e) => handleMaxSimultaneousDownloadsChange(Number(e.target.value))}
+              sx={{ minWidth: 120, mb: 2 }}
+            >
+              {MAX_SIMULTANEOUS_DOWNLOADS_OPTIONS.map((n) => (
+                <MenuItem key={n} value={n}>{n}</MenuItem>
+              ))}
+            </TextField>
+            <Alert severity="warning" variant="outlined">
+              Downloading too many videos at once increases the risk of YouTube flagging
+              your connection as a bot. Keep this low if you run into that.
+            </Alert>
           </Grid>
         </Grid>
       </OptionsGroup>

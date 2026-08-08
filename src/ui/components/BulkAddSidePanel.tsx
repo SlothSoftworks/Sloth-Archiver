@@ -9,6 +9,7 @@ import {
   Divider,
   Drawer,
   IconButton,
+  LinearProgress,
   List,
   ListItem,
   ListItemText,
@@ -63,6 +64,28 @@ export function BulkAddToggleButton() {
         </Badge>
       </IconButton>
     </Tooltip>
+  );
+}
+
+// Same "value = postprocess once it's actually progressing, else fall back
+// to the raw download %" rule LibraryVideoDetail.tsx's own progress bar
+// uses -- kept as a separate, smaller copy here (no percentage label, this
+// list item doesn't have room) rather than a shared import, matching that
+// file's own stated reasoning for not sharing this widget.
+function BulkAddProgressBar({ downloadProgress, postprocessProgress }: { downloadProgress: number; postprocessProgress: number }) {
+  const displayValue = postprocessProgress > 0 ? postprocessProgress : downloadProgress;
+  return (
+    <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.75 }}>
+      <LinearProgress
+        variant="buffer"
+        value={postprocessProgress}
+        valueBuffer={downloadProgress}
+        sx={{ flexGrow: 1, height: 6, borderRadius: 1 }}
+      />
+      <Typography variant="caption" color="text.secondary" sx={{ minWidth: 30, textAlign: 'right' }}>
+        {Math.round(displayValue)}%
+      </Typography>
+    </Stack>
   );
 }
 
@@ -133,6 +156,11 @@ function BulkAddListItem({ item, stopping, onRetry, onRemove }: { item: BulkAddI
               icon={isActive ? <CircularProgress size={14} /> : undefined}
               sx={{ mt: 0.5 }}
             />
+            {item.status === 'downloading' &&
+              <BulkAddProgressBar
+                downloadProgress={item.downloadProgress ?? 0}
+                postprocessProgress={item.postprocessProgress ?? 0}
+              />}
             {item.error && <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>{item.error}</Typography>}
             {stopping &&
               <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 0.5 }}>
