@@ -28,6 +28,8 @@ import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
 import LibraryVideoDetail from './LibraryVideoDetail';
 import PlaylistsSection from '../components/PlaylistsSection';
+import LibrarySearchBar from '../components/LibrarySearchBar';
+import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 
 type LibraryViewMode = 'channel' | 'video';
 // Top-level split within the Library tab -- "Videos" is everything this
@@ -438,12 +440,17 @@ function FlatVideoList({ channels, libraryDir, viewMode, onViewModeChange, onSel
       .sort((a, b) => (a.video.metadata.title || a.video.videoFolderName)
         .localeCompare(b.video.metadata.title || b.video.videoFolderName, undefined, { sensitivity: 'base' }));
   }, [channels]);
+  const { query, setQuery, isSearching, filtered, clear } = useLibrarySearch(
+    flatVideos,
+    ({ video }) => video.metadata.title || video.videoFolderName,
+  );
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }} flexWrap="wrap" useFlexGap gap={1}>
         <Typography variant="h6">Library</Typography>
         <Stack direction="row" spacing={1} alignItems="center">
+          <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
           <LibraryViewModeToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
           <Tooltip title="Open library folder">
             <IconButton onClick={() => window.electronAPI.openDirectory(libraryDir)} size="small" aria-label="Open library folder">
@@ -457,12 +464,15 @@ function FlatVideoList({ channels, libraryDir, viewMode, onViewModeChange, onSel
           </Tooltip>
         </Stack>
       </Stack>
-      {flatVideos.length === 0 &&
+      {flatVideos.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
           Nothing in the library yet -- use the library-add button next to the URL field on the Downloader tab.
-        </Typography>}
+        </Typography>
+      ) : isSearching && filtered.length === 0 && (
+        <Typography variant="body2" color="text.secondary">No videos match "{query}".</Typography>
+      )}
       <Grid container spacing={2}>
-        {flatVideos.map(({ video, channelName }) => (
+        {filtered.map(({ video, channelName }) => (
           <Grid size={{ xs: 12, sm: 6, md: 4 }} key={video.videoDir}>
             <VideoCard video={video} onSelect={onSelectVideo} channelLabel={channelName} />
           </Grid>
@@ -480,11 +490,14 @@ function ChannelList({ channels, libraryDir, viewMode, onViewModeChange, onSelec
   onSelectChannel: (channel: LibraryChannel) => void;
   onRefresh: () => void;
 }) {
+  const { query, setQuery, isSearching, filtered, clear } = useLibrarySearch(channels, (channel) => channel.displayName);
+
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }} flexWrap="wrap" useFlexGap gap={1}>
         <Typography variant="h6">Library</Typography>
         <Stack direction="row" spacing={0.5} alignItems="center">
+          <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search channels..." />
           <LibraryViewModeToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
           <Tooltip title="Open library folder">
             <IconButton onClick={() => window.electronAPI.openDirectory(libraryDir)} size="small" aria-label="Open library folder">
@@ -498,12 +511,15 @@ function ChannelList({ channels, libraryDir, viewMode, onViewModeChange, onSelec
           </Tooltip>
         </Stack>
       </Stack>
-      {channels.length === 0 &&
+      {channels.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
           Nothing in the library yet -- use the library-add button next to the URL field on the Downloader tab.
-        </Typography>}
+        </Typography>
+      ) : isSearching && filtered.length === 0 && (
+        <Typography variant="body2" color="text.secondary">No channels match "{query}".</Typography>
+      )}
       <Grid container spacing={2}>
-        {channels.map((channel) => (
+        {filtered.map((channel) => (
           <Grid size={{ xs: 12, sm: 6, md: 4 }} key={channel.channelFolderName}>
             <Card variant="outlined">
               <CardActionArea onClick={() => onSelectChannel(channel)} sx={{ p: 2 }}>
@@ -536,6 +552,10 @@ function VideoGrid({ channel, onBack, onSelectVideo, onChannelsUpdated }: {
   onChannelsUpdated: (channels: LibraryChannel[]) => void;
 }) {
   const [refreshingIcon, setRefreshingIcon] = useState(false);
+  const { query, setQuery, isSearching, filtered, clear } = useLibrarySearch(
+    channel.videos,
+    (video) => video.metadata.title || video.videoFolderName,
+  );
 
   const handleRefreshIcon = async () => {
     setRefreshingIcon(true);
@@ -553,7 +573,7 @@ function VideoGrid({ channel, onBack, onSelectVideo, onChannelsUpdated }: {
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }} flexWrap="wrap" useFlexGap gap={1}>
         <Stack direction="row" spacing={1} alignItems="center">
           <IconButton onClick={onBack} size="small" aria-label="Back to channels">
             <ArrowBackIcon fontSize="small" />
@@ -562,16 +582,21 @@ function VideoGrid({ channel, onBack, onSelectVideo, onChannelsUpdated }: {
           {channel.channelIconPath &&
             <Avatar src={buildAppVideoUrl(channel.channelIconPath)} alt={channel.displayName} sx={{ width: 28, height: 28 }} />}
         </Stack>
-        <Tooltip title="Refresh channel icon">
-          <span>
-            <IconButton onClick={handleRefreshIcon} disabled={refreshingIcon} size="small" aria-label="Refresh channel icon">
-              {refreshingIcon ? <CircularProgress size={18} /> : <FaceRetouchingNaturalIcon fontSize="small" />}
-            </IconButton>
-          </span>
-        </Tooltip>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
+          <Tooltip title="Refresh channel icon">
+            <span>
+              <IconButton onClick={handleRefreshIcon} disabled={refreshingIcon} size="small" aria-label="Refresh channel icon">
+                {refreshingIcon ? <CircularProgress size={18} /> : <FaceRetouchingNaturalIcon fontSize="small" />}
+              </IconButton>
+            </span>
+          </Tooltip>
+        </Stack>
       </Stack>
+      {isSearching && filtered.length === 0 &&
+        <Typography variant="body2" color="text.secondary">No videos match "{query}".</Typography>}
       <Grid container spacing={2}>
-        {channel.videos.map((video) => (
+        {filtered.map((video) => (
           <Grid size={{ xs: 12, sm: 6, md: 4 }} key={video.videoFolderName}>
             <VideoCard video={video} onSelect={onSelectVideo} />
           </Grid>

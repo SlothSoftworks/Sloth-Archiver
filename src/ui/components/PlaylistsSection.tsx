@@ -25,6 +25,8 @@ import UndoIcon from '@mui/icons-material/Undo';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
+import LibrarySearchBar from './LibrarySearchBar';
+import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 
 // Kept local rather than imported from electron-api.d.ts -- matches how
 // every other library data shape in this app (LibraryScreen.tsx's own
@@ -71,7 +73,7 @@ function formatEpochLabel(epoch: number): string {
 }
 
 // Deliberately minimal for this first version -- a plain list and a plain
-// detail view, no extra polish (sorting/searching/filtering, bulk actions on
+// detail view, no extra polish beyond title search (sorting, bulk actions on
 // entries, etc). The user's own framing: this gets refined in a later pass
 // once the reconciliation logic underneath it has been used for a while.
 export default function PlaylistsSection() {
@@ -84,6 +86,10 @@ export default function PlaylistsSection() {
   const [undoing, setUndoing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [refreshSummary, setRefreshSummary] = useState<{ added: number; removed: number; updated: number } | null>(null);
+  const { query, setQuery, isSearching, filtered: filteredPlaylists, clear } = useLibrarySearch(
+    playlists,
+    (playlist) => playlist.title || playlist.playlistId,
+  );
 
   const loadList = async () => {
     setLoading(true);
@@ -264,7 +270,10 @@ export default function PlaylistsSection() {
 
   return (
     <Stack spacing={1.5}>
-      {playlists.map((playlist) => (
+      <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search playlists..." />
+      {isSearching && filteredPlaylists.length === 0 &&
+        <Typography variant="body2" color="text.secondary">No playlists match "{query}".</Typography>}
+      {filteredPlaylists.map((playlist) => (
         <Card key={playlist.playlistId} variant="outlined">
           <CardActionArea onClick={() => handleSelectPlaylist(playlist.playlistId)} sx={{ p: 1.5 }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
