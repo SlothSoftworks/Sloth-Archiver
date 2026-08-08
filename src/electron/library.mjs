@@ -470,6 +470,11 @@ export function writePlaylistSnapshot({ libraryDir, playlistId, title, uploader,
         uploader: uploader || null,
         originalUrl: originalUrl || null,
         addedEpoch,
+        // Set only by reconcilePlaylistSnapshot, once a refresh actually
+        // happens -- null here means "never refreshed since the initial
+        // save," which the UI treats as addedEpoch itself being the most
+        // recent update.
+        lastRefreshedEpoch: null,
         entries: entries.map((e) => ({
             videoId: e.videoId,
             title: isDeadTitle(e.title, e.videoId) ? null : e.title,
@@ -523,4 +528,193 @@ export function enrichPlaylistEntry({ libraryDir, playlistId, videoId, title, up
 
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
     return metadata;
+}
+
+// Shared by every playlist-refresh/read function below -- a playlist only
+// ever has the one epoch writePlaylistSnapshot created, but reads whichever
+// is newest by name rather than assuming a specific one, same defensive
+// stance enrichPlaylistEntry already takes above.
+function resolvePlaylistEpochDir(playlistDir) {
+    if (!fs.existsSync(playlistDir)) return null;
+    const epochNames = fs.readdirSync(playlistDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+        .sort((a, b) => Number(b) - Number(a));
+    if (epochNames.length === 0) return null;
+    return path.join(playlistDir, epochNames[0]);
+}
+
+// Summary list for the Library tab's new Playlists section -- nothing before
+// this read a saved playlist snapshot back into the renderer at all.
+export function listPlaylistSnapshots({ libraryDir }) {
+    const playlistsRoot = path.join(libraryDir, PLAYLISTS_DIR_NAME);
+    if (!fs.existsSync(playlistsRoot)) return [];
+
+    const summaries = [];
+    for (const dirEntry of fs.readdirSync(playlistsRoot, { withFileTypes: true })) {
+        if (!dirEntry.isDirectory()) continue;
+        const epochDir = resolvePlaylistEpochDir(path.join(playlistsRoot, dirEntry.name));
+        if (!epochDir) continue;
+        let metadata;
+        try {
+            metadata = JSON.parse(fs.readFileSync(path.join(epochDir, 'metadata.json'), 'utf-8'));
+        } catch {
+            continue;
+        }
+        summaries.push({
+            playlistId: metadata.playlistId,
+            title: metadata.title,
+            uploader: metadata.uploader,
+            entryCount: metadata.entries.length,
+            addedEpoch: metadata.addedEpoch,
+            lastRefreshedEpoch: metadata.lastRefreshedEpoch || null,
+            hasPreviousMetadata: fs.existsSync(path.join(epochDir, 'previousMetadata.json')),
+        });
+    }
+    summaries.sort((a, b) => (b.addedEpoch || 0) - (a.addedEpoch || 0));
+    return summaries;
+}
+
+// Full detail for one saved playlist -- backs the Playlists section's detail
+// view (entries, localFiles) and tells the UI whether Undo has anything to
+// act on.
+export function getPlaylistSnapshot({ libraryDir, playlistId }) {
+    const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
+    const epochDir = resolvePlaylistEpochDir(playlistDir);
+    if (!epochDir) return null;
+
+    let metadata;
+    try {
+        metadata = JSON.parse(fs.readFileSync(path.join(epochDir, 'metadata.json'), 'utf-8'));
+    } catch {
+        return null;
+    }
+
+    // previousMetadataSavedEpoch tells the UI exactly what Undo would revert
+    // to and when that version was itself last current -- read straight off
+    // previousMetadata.json's own lastRefreshedEpoch (or addedEpoch, if that
+    // backed-up version had itself never been refreshed before).
+    let previousMetadataSavedEpoch = null;
+    try {
+        const previous = JSON.parse(fs.readFileSync(path.join(epochDir, 'previousMetadata.json'), 'utf-8'));
+        previousMetadataSavedEpoch = previous.lastRefreshedEpoch || previous.addedEpoch || null;
+    } catch {
+        // No previousMetadata.json (nothing to undo) -- stays null.
+    }
+
+    return {
+        ...metadata,
+        hasPreviousMetadata: previousMetadataSavedEpoch !== null,
+        previousMetadataSavedEpoch,
+    };
+}
+
+// Refresh, not a new version -- versioning was explicitly ruled out in favor
+// of reconciling in place with a single undo step (see futureSpecsFeedback.md
+// once updated, and the plan this landed under). Matched by videoId (stable
+// even for a video YouTube has since killed):
+//   - a *dead* fresh entry (isDeadTitle) whose videoId already has a saved
+//     entry keeps the saved entry's data untouched -- a placeholder must
+//     never clobber real data.
+//   - a fresh entry with real data always wins (missing individual fields
+//     fall back to the saved entry's own value) -- "keep it as updated as
+//     possible" is the whole point, and the only protection asked for is
+//     specifically against dead data, not against a legitimate retitle.
+//   - a saved entry whose videoId is *entirely absent* from the fresh fetch
+//     (not even as a dead placeholder) is dropped -- that absence, as
+//     opposed to a dead-but-present slot, is the signal the playlist owner
+//     removed it themselves on YouTube, not that YouTube killed the video.
+// Before any of this, the current metadata.json is copied verbatim to a
+// sibling previousMetadata.json (overwriting any earlier one -- this is a
+// single undo step, not a history) so undoPlaylistRefresh can revert it. The
+// live metadata.json is only ever touched via the same temp-then-rename
+// pattern swapLibraryDownload already established, so a crash mid-refresh
+// never leaves it partially written.
+export function reconcilePlaylistSnapshot({ libraryDir, playlistId, freshEntries, freshTitle, freshUploader, index }) {
+    const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
+    const epochDir = resolvePlaylistEpochDir(playlistDir);
+    if (!epochDir) {
+        throw new Error('This playlist has no saved snapshot to refresh.');
+    }
+
+    const metadataPath = path.join(epochDir, 'metadata.json');
+    const oldMetadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+
+    // Backed up first -- only proceeds to actually reconcile once this
+    // succeeds, since a refresh that can't guarantee an undo path shouldn't
+    // be allowed to mutate anything.
+    fs.writeFileSync(path.join(epochDir, 'previousMetadata.json'), JSON.stringify(oldMetadata, null, 2), 'utf-8');
+
+    const oldByVideoId = new Map(oldMetadata.entries.map((e) => [e.videoId, e]));
+    let added = 0;
+    let updated = 0;
+
+    const reconciledEntries = freshEntries.map((fresh) => {
+        const old = oldByVideoId.get(fresh.videoId);
+        if (isDeadTitle(fresh.title, fresh.videoId)) {
+            if (old) return old;
+            added++;
+            return { videoId: fresh.videoId, title: null, url: fresh.url, thumbnailUrl: fresh.thumbnailUrl || null, uploadDate: fresh.uploadDate || null };
+        }
+        const reconciled = {
+            videoId: fresh.videoId,
+            title: fresh.title,
+            url: fresh.url,
+            thumbnailUrl: fresh.thumbnailUrl || old?.thumbnailUrl || null,
+            uploadDate: fresh.uploadDate || old?.uploadDate || null,
+        };
+        if (!old) {
+            added++;
+        } else if (old.title !== reconciled.title || old.thumbnailUrl !== reconciled.thumbnailUrl || old.uploadDate !== reconciled.uploadDate) {
+            updated++;
+        }
+        return reconciled;
+    });
+
+    const freshVideoIds = new Set(freshEntries.map((e) => e.videoId));
+    const removed = oldMetadata.entries.filter((e) => !freshVideoIds.has(e.videoId)).length;
+
+    const localFiles = {};
+    for (const entry of reconciledEntries) {
+        const match = findVideoInIndex(index, entry.videoId);
+        localFiles[entry.videoId] = match ? match.video.videoDir : null;
+    }
+
+    const lastRefreshedEpoch = Date.now();
+    const newMetadata = {
+        ...oldMetadata,
+        title: freshTitle || oldMetadata.title,
+        uploader: freshUploader || oldMetadata.uploader,
+        lastRefreshedEpoch,
+        entries: reconciledEntries,
+        localFiles,
+    };
+
+    const tempPath = `${metadataPath}.new`;
+    fs.writeFileSync(tempPath, JSON.stringify(newMetadata, null, 2), 'utf-8');
+    fs.renameSync(tempPath, metadataPath);
+
+    return { success: true, added, removed, updated, lastRefreshedEpoch, entries: reconciledEntries };
+}
+
+// One-shot undo -- reverts to previousMetadata.json (written by the most
+// recent reconcilePlaylistSnapshot call) and then deletes it, so a second
+// Undo click has nothing left to act on rather than toggling back and forth.
+export function undoPlaylistRefresh({ libraryDir, playlistId }) {
+    const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
+    const epochDir = resolvePlaylistEpochDir(playlistDir);
+    if (!epochDir) return { success: false, message: 'This playlist has no saved snapshot.' };
+
+    const previousPath = path.join(epochDir, 'previousMetadata.json');
+    if (!fs.existsSync(previousPath)) {
+        return { success: false, message: 'Nothing to undo.' };
+    }
+
+    const metadataPath = path.join(epochDir, 'metadata.json');
+    const tempPath = `${metadataPath}.new`;
+    fs.copyFileSync(previousPath, tempPath);
+    fs.renameSync(tempPath, metadataPath);
+    fs.rmSync(previousPath, { force: true });
+
+    return { success: true, metadata: JSON.parse(fs.readFileSync(metadataPath, 'utf-8')) };
 }

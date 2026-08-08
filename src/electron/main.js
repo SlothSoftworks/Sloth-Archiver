@@ -9,7 +9,7 @@ import https from 'node:https';
 
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, sanitizeForFilesystem } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, sanitizeForFilesystem } from './library.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -700,6 +700,70 @@ ipcMain.handle('library:enrichPlaylistEntry', async (e, { playlistId, videoId, t
     try {
         enrichPlaylistEntry({ libraryDir, playlistId, videoId, title, uploadDate, thumbnailUrl });
         return { success: true };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// Backs the Library tab's Playlists section -- list/detail read straight off
+// whatever's already saved, no network call.
+ipcMain.handle('library:listPlaylists', async () => {
+    const { libraryDir } = readSettings();
+    if (!libraryDir) return { playlists: [] };
+    return { playlists: listPlaylistSnapshots({ libraryDir }) };
+});
+
+ipcMain.handle('library:getPlaylist', async (e, playlistId) => {
+    const { libraryDir } = readSettings();
+    if (!libraryDir) return { playlist: null };
+    return { playlist: getPlaylistSnapshot({ libraryDir, playlistId }) };
+});
+
+// The explicit "Refresh" action -- re-fetches the playlist fresh from
+// yt-dlp using its own saved originalUrl, then reconciles (see
+// reconcilePlaylistSnapshot, library.mjs, for the actual merge rules).
+// Deliberately separate from library:fetchPlaylistEntries above, which stays
+// exactly as it is today (still a no-op past the first save) -- refresh only
+// ever happens through this explicit action, never silently.
+ipcMain.handle('library:refreshPlaylist', async (e, playlistId) => {
+    const { libraryDir } = readSettings();
+    if (!libraryDir) {
+        return { success: false, message: 'No library folder configured.' };
+    }
+    try {
+        const saved = getPlaylistSnapshot({ libraryDir, playlistId });
+        if (!saved || !saved.originalUrl) {
+            return { success: false, message: 'This playlist has no saved snapshot to refresh.' };
+        }
+        const fresh = await fetchPlaylistEntries(saved.originalUrl);
+        const index = await getLibraryIndex(libraryDir);
+        const result = reconcilePlaylistSnapshot({
+            libraryDir,
+            playlistId,
+            freshEntries: fresh.entries.map((entry) => ({
+                videoId: entry.id,
+                title: entry.title,
+                url: entry.url,
+                thumbnailUrl: entry.thumbnailUrl,
+                uploadDate: entry.uploadDate,
+            })),
+            freshTitle: fresh.title,
+            freshUploader: fresh.uploader,
+            index,
+        });
+        return result;
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+ipcMain.handle('library:undoPlaylistRefresh', async (e, playlistId) => {
+    const { libraryDir } = readSettings();
+    if (!libraryDir) {
+        return { success: false, message: 'No library folder configured.' };
+    }
+    try {
+        return undoPlaylistRefresh({ libraryDir, playlistId });
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }

@@ -24,10 +24,20 @@ import FaceRetouchingNaturalIcon from '@mui/icons-material/FaceRetouchingNatural
 import FolderIcon from '@mui/icons-material/Folder';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
+import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
 import LibraryVideoDetail from './LibraryVideoDetail';
+import PlaylistsSection from '../components/PlaylistsSection';
 
 type LibraryViewMode = 'channel' | 'video';
+// Top-level split within the Library tab -- "Videos" is everything this
+// screen already did; "Playlists" is the new reconciliation-based archive
+// view (PlaylistsSection). Deliberately its own top-level toggle rather than
+// folded into the channel/video LibraryViewMode above, matching library.mjs's
+// own long-standing comment that playlists are "deliberately not surfaced in
+// the channel/video view." Plain local state, not URL-routed -- same as the
+// LibraryViewMode toggle already below.
+type LibrarySection = 'videos' | 'playlists';
 
 // Mirrors the shape returned by window.electronAPI.getLibraryIndex() -- kept
 // local rather than imported, matching how video-metadata shapes are already
@@ -97,6 +107,7 @@ export default function LibraryScreen() {
   const [selectedChannel, setSelectedChannel] = useState<LibraryChannel | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<LibraryVideo | null>(null);
   const [viewMode, setViewMode] = useState<LibraryViewMode>('channel');
+  const [librarySection, setLibrarySection] = useState<LibrarySection>('videos');
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
   const deepLinkMatch = useMatch('/library/video/:videoId');
   const navigate = useNavigate();
@@ -207,6 +218,12 @@ export default function LibraryScreen() {
       const targetChannel = index.channels.find((c) => c.videos.some((v) => v.videoDir === result.videoDir));
       const targetVideo = targetChannel?.videos.find((v) => v.videoDir === result.videoDir);
       if (targetChannel && targetVideo) {
+        // The link may have been clicked from inside the Playlists section
+        // (PlaylistsSection's own "go to library" links use this same
+        // route) -- without this, librarySection staying 'playlists' would
+        // keep rendering that section instead of the video detail below,
+        // since that check runs before the selectedVideo check in `content`.
+        setLibrarySection('videos');
         setSelectedChannel(targetChannel);
         setSelectedVideo(targetVideo);
       } else {
@@ -255,6 +272,8 @@ export default function LibraryScreen() {
         Set a library folder in the Options tab to get started.
       </Typography>
     </Box>
+  ) : librarySection === 'playlists' ? (
+    <PlaylistsSection />
   ) : selectedVideo ? (
     <LibraryVideoDetail
       video={selectedVideo}
@@ -292,6 +311,27 @@ export default function LibraryScreen() {
 
   return (
     <>
+      {/* Only shown at the root level -- hidden while drilled into a
+          channel's video grid or a video's own detail, same as the
+          channel/video LibraryViewMode toggle further down only shows at
+          the root too. */}
+      {!loading && libraryDir && !selectedVideo && !selectedChannel &&
+        <ToggleButtonGroup
+          value={librarySection}
+          exclusive
+          size="small"
+          onChange={(_e, value: LibrarySection | null) => value && setLibrarySection(value)}
+          sx={{ mb: 2 }}
+        >
+          <ToggleButton value="videos">
+            <VideoLibraryIcon fontSize="small" sx={{ mr: 0.5 }} />
+            Videos
+          </ToggleButton>
+          <ToggleButton value="playlists">
+            <PlaylistPlayIcon fontSize="small" sx={{ mr: 0.5 }} />
+            Playlists
+          </ToggleButton>
+        </ToggleButtonGroup>}
       {content}
       <Snackbar
         open={!!deepLinkError}

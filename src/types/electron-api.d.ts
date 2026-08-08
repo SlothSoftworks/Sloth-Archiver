@@ -49,6 +49,40 @@ type LibraryIndex = {
     }[];
 };
 
+type PlaylistEntry = {
+    videoId: string;
+    title: string | null;
+    url: string;
+    thumbnailUrl: string | null;
+    uploadDate: string | null;
+};
+
+type PlaylistSummary = {
+    playlistId: string;
+    title: string | null;
+    uploader: string | null;
+    entryCount: number;
+    addedEpoch: number;
+    lastRefreshedEpoch: number | null;
+    hasPreviousMetadata: boolean;
+};
+
+type PlaylistSnapshot = {
+    schemaVersion: number;
+    playlistId: string;
+    title: string | null;
+    uploader: string | null;
+    originalUrl: string | null;
+    addedEpoch: number;
+    lastRefreshedEpoch: number | null;
+    entries: PlaylistEntry[];
+    localFiles: Record<string, string | null>;
+    hasPreviousMetadata: boolean;
+    // What Undo would revert to, and when that version was itself last
+    // current -- null when there's nothing to undo.
+    previousMetadataSavedEpoch: number | null;
+};
+
 declare global {
     interface Window {
         electronAPI: {
@@ -91,6 +125,10 @@ declare global {
             findLibraryVideo: (videoId: string) => Promise<{ found: boolean; channelDisplayName?: string; videoDir?: string }>
             fetchPlaylistEntries: (playlistUrl: string) => Promise<{ success: boolean; entries?: { id: string; title: string | null; url: string; thumbnailUrl: string; uploadDate: string | null }[]; playlistId?: string; message?: string }>
             enrichPlaylistEntry: (payload: { playlistId: string; videoId: string; title?: string | null; uploadDate?: string | null; thumbnailUrl?: string | null }) => Promise<{ success: boolean; message?: string }>
+            listPlaylists: () => Promise<{ playlists: PlaylistSummary[] }>
+            getPlaylist: (playlistId: string) => Promise<{ playlist: PlaylistSnapshot | null }>
+            refreshPlaylist: (playlistId: string) => Promise<{ success: boolean; added?: number; removed?: number; updated?: number; lastRefreshedEpoch?: number; entries?: PlaylistEntry[]; message?: string }>
+            undoPlaylistRefresh: (playlistId: string) => Promise<{ success: boolean; metadata?: PlaylistSnapshot; message?: string }>
             recordLibraryDownload: (payload: { videoDir: string; epoch: string; filePath: string; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<{ success: boolean }>
             swapLibraryDownload: (payload: { videoDir: string; epoch: string; tempFilePath: string; oldFilePath: string | null; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<LibraryVideoMetadata>
             deleteLibraryEntry: (videoDir: string, epoch?: string) => Promise<{ success: boolean; videoDeleted: boolean }>

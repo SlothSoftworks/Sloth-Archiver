@@ -90,11 +90,36 @@ export function BasicTabs() {
   const value = pathToTabIndex(location.pathname);
   const [infoOpen, setInfoOpen] = useState(false);
   const { count: libraryNotificationCount, reset: resetLibraryNotifications } = useLibraryNotification();
+  // Bumped to force LibraryScreen to remount (see its `key` below) -- every
+  // OTHER tab already gets this exact reset for free, since CustomTabPanel
+  // only renders a tab's content while it's active (switching away and back
+  // unmounts/remounts it). Library's own channel/video drill-down and
+  // Videos/Playlists toggle are local state, not URL-driven, so navigating
+  // to the same /library path a second time (clicking the already-active
+  // Library tab) is normally a no-op location change that leaves that state
+  // untouched -- this key bump is what makes clicking Library while already
+  // on it behave the same as any other tab: back to that tab's own start.
+  const [libraryResetKey, setLibraryResetKey] = useState(0);
 
   const handleChange = (event: React.SyntheticEvent, newValue: number) => {
     navigate(TAB_PATHS[newValue]);
     if (newValue === LIBRARY_TAB_INDEX) {
       resetLibraryNotifications();
+    }
+  };
+
+  // MUI's Tab only calls the Tabs-level onChange when the clicked tab isn't
+  // already selected (see @mui/material/Tab/Tab.js's handleClick: `if
+  // (!selected && onChange)`) -- clicking the already-active Library tab
+  // never reaches handleChange above at all, which is exactly the click this
+  // feature needs to catch. Tab's own onClick prop, unlike onChange, fires
+  // unconditionally regardless of selected state, so the reset lives here
+  // instead, gated on "was already on Library" so it doesn't double-fire
+  // (and double-bump the key) on a genuine tab switch into Library, which
+  // already gets a real remount from CustomTabPanel for free.
+  const handleLibraryTabClick = () => {
+    if (value === LIBRARY_TAB_INDEX) {
+      setLibraryResetKey((prev) => prev + 1);
     }
   };
 
@@ -109,6 +134,7 @@ export function BasicTabs() {
                 Library
               </Badge>
             }
+            onClick={handleLibraryTabClick}
             {...a11yProps(LIBRARY_TAB_INDEX)}
           />
           <Tab label="Options" {...a11yProps(2)} />
@@ -126,7 +152,7 @@ export function BasicTabs() {
         <DownloaderScreen/>
       </CustomTabPanel>
       <CustomTabPanel value={value} index={1}>
-        <LibraryScreen/>
+        <LibraryScreen key={libraryResetKey}/>
       </CustomTabPanel>
       <CustomTabPanel value={value} index={2}>
         <OptionsScreen/>
