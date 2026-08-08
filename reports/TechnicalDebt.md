@@ -144,7 +144,7 @@ _, stderr, returncode = Popen.run(
 
 ---
 
-## TD-008 — 2026-08-03 — Download progress isn't scoped per-download, so only one download can run at a time app-wide
+## TD-008 — [RESOLVED] — 2026-08-07 — Download progress isn't scoped per-download, so only one download can run at a time app-wide
 
 **Where:** `src/electron/main.js`'s `downloadVideoWithProgressUpdates` IPC handler broadcasts progress via `BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', msg)` — a single, unlabeled event channel, not tagged with which download it belongs to. `useDownloadVideo.tsx` (the renderer-side hook every download flow uses) subscribes with `ipcRenderer.on('progressUpdate', ...)` and tears down with `ipcRenderer.removeAllListeners('progressUpdate')` — a global removal, not scoped to just its own listener.
 
@@ -155,6 +155,8 @@ _, stderr, returncode = Popen.run(
 **Why it's debt:** Any future feature wanting two genuinely simultaneous downloads (the MP3-coexistence feature above deliberately avoided needing this by making video/audio downloads mutually exclusive in time instead) would require this to be fixed first — it's an architectural ceiling on the whole download system, not something a single feature can safely work around by itself.
 
 **Suggested future fix:** Tag every download with a request id at the point `downloadVideoWithProgressUpdates` is invoked (renderer generates one, passes it through `options`), include it in every progress/postprocess/done/error message, and filter on it in `useDownloadVideo.tsx`'s listener (or move to `ipcRenderer.invoke`-per-chunk / a dedicated `MessageChannel` per download instead of one shared broadcast). Worth doing once there's an actual feature that needs concurrent downloads, rather than speculatively now.
+
+**Resolved — 2026-08-07:** This stopped being theoretical and became a real, reported bug once the always-mounted `BulkAddProvider` (2026-08-04) gave the app a *fourth* `useDownloadVideo()` consumer that's mounted for the entire app lifetime: a bulk download's item got permanently stuck showing "downloading" the moment any other `useDownloadVideo()`-using component (`VideoDetailCard.tsx`, `LibraryVideoDetail.tsx`) mounted and then unmounted during the run — its cleanup called `removeProgressListener()` → `ipcRenderer.removeAllListeners('progressUpdate')`, which silently killed every other instance's listener too, including the bulk queue's permanent one, which then never fired again for the rest of the session. Fixed exactly as suggested above: `useDownloadVideo.tsx`'s `startDownload()` now generates a `requestId` (`crypto.randomUUID()`) per call, threaded through `DownloadVideoParams` → the `downloadVideoWithProgressUpdates` IPC handler → every `send()`'d message (`main.js`, one-line wrapper change) → filtered on in the listener (`if (msg.requestId !== requestIdRef.current) return`) before touching any state. Also fixed the listener-removal half directly: `preload.mjs`'s `onProgressUpdate` now returns the actual listener function it attached, and `removeProgressListener(listener)` calls `ipcRenderer.removeListener` (scoped) instead of `removeAllListeners` (global) — belt-and-suspenders with the requestId filter, since this alone would already have stopped one instance's unmount from killing another's listener.
 
 ---
 

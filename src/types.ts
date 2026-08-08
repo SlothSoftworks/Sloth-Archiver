@@ -17,6 +17,12 @@ export type VideoDataProps = {
 
 export type DownloadProgressMessage = {
     type: string;
+    // Echoed straight back from the DownloadVideoParams that started this
+    // download (TD-008, reports/TechnicalDebt.md) -- 'progressUpdate' is one
+    // shared broadcast channel, not scoped per-download, so every
+    // useDownloadVideo() instance listening has to filter to just the
+    // request it itself started rather than reacting to every message.
+    requestId: string;
     payload: {
       filename: string;
       downloadedBytes: string;
@@ -40,4 +46,9 @@ export type DownloadProgressMessage = {
     resolution: string;
     overwriteMode?: 'overwrite' | 'resume';
     additionalOptions?: object;
+    // Generated fresh by useDownloadVideo.tsx's startDownload() on every call
+    // -- not caller-supplied -- so it's optional here (present at runtime,
+    // but callers building a DownloadVideoParams themselves shouldn't need
+    // to invent one).
+    requestId?: string;
   }

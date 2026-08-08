@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { DownloadProgressMessage, DownloadVideoParams } from '../../types'
 
 function useDownloadVideo() {
@@ -9,10 +9,20 @@ function useDownloadVideo() {
   const [isDone, setIsDone] = useState(false);
   const [isError, setIsError] = useState(false);
   const [downloadError, setDownloadError] = useState<object | null> ();
+  // 'progressUpdate' is one shared broadcast channel, not scoped per-download
+  // (TD-008) -- this hook can be mounted several times at once (manual
+  // download, a Library-view download, the always-mounted bulk-add queue),
+  // so every message needs to be checked against *this* instance's own
+  // in-flight request before touching state, or one download's progress
+  // would bleed into another's UI. A ref (not state) since the listener
+  // closure needs the current value without re-subscribing on every change.
+  const requestIdRef = useRef<string | null>(null);
 
 
     const startDownload = (props: DownloadVideoParams) => {
         const { videoUrl, outputPath, format, resolution, overwriteMode, additionalOptions } = props;
+        const requestId = crypto.randomUUID();
+        requestIdRef.current = requestId;
 
         setDownloadProgress(0);
         setPostprocessProgress(0);
@@ -22,11 +32,12 @@ function useDownloadVideo() {
         setIsError(false);
         setDownloadError(null);
 
-        window.electronAPIPythonDownload.startDownloadPython({ videoUrl, outputPath, format, resolution, overwriteMode, additionalOptions })
+        window.electronAPIPythonDownload.startDownloadPython({ videoUrl, outputPath, format, resolution, overwriteMode, additionalOptions, requestId })
     }
 
     useEffect(() => {
-      window.electronAPIPythonDownload.onProgressUpdate((msg: DownloadProgressMessage) => {
+      const listener = window.electronAPIPythonDownload.onProgressUpdate((msg: DownloadProgressMessage) => {
+        if (msg.requestId !== requestIdRef.current) return;
         const { type, payload } = msg;
         let accumErr = msg;
         switch(type) {
@@ -87,9 +98,9 @@ function useDownloadVideo() {
             break;
         }
       });
-  
+
       return () => {
-        window.electronAPIPythonDownload.removeProgressListener();
+        window.electronAPIPythonDownload.removeProgressListener(listener);
       }
 
     }, [])

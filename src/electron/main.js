@@ -1338,7 +1338,12 @@ let activeDownloadCount = 0;
 
 ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     activeDownloadCount++;
-    const send = (msg) => BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', msg);
+    // requestId is echoed onto every message on this shared/unscoped
+    // broadcast channel (TD-008) -- generated renderer-side by
+    // useDownloadVideo.tsx's startDownload(), not here, so every consumer of
+    // this handler (manual download, Library-view download, the bulk-add
+    // queue) can filter to just its own in-flight download.
+    const send = (msg) => BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', { ...msg, requestId: options.requestId });
 
     // MP3 extraction and format recode need our own ffmpeg pass afterward (TD-004),
     // so yt-dlp downloads to a raw intermediate file in a dedicated temp dir instead

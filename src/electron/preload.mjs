@@ -59,7 +59,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
 contextBridge.exposeInMainWorld('electronAPIPythonDownload', {
     startDownloadPython: (options) => ipcRenderer.invoke('downloadVideoWithProgressUpdates', options),
-    onProgressUpdate: (callback) => ipcRenderer.on('progressUpdate', (_event, data) => callback(data)),
-    removeProgressListener: () => ipcRenderer.removeAllListeners('progressUpdate')
+    // Returns the actual listener function that got attached so
+    // removeProgressListener can remove just this one -- multiple
+    // useDownloadVideo() instances can be mounted at once (manual download,
+    // Library-view download, the always-mounted bulk-add queue), all on this
+    // same shared 'progressUpdate' channel, and removeAllListeners would
+    // silently kill every other instance's listener too the moment any one
+    // of them unmounts (the actual bug this fixes -- see TD-008).
+    onProgressUpdate: (callback) => {
+        const listener = (_event, data) => callback(data);
+        ipcRenderer.on('progressUpdate', listener);
+        return listener;
+    },
+    removeProgressListener: (listener) => ipcRenderer.removeListener('progressUpdate', listener),
 });
 
