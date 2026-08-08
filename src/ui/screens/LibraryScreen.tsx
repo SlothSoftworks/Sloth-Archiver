@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useMatch, useNavigate } from 'react-router';
 import {
+  Alert,
   Avatar,
   Box,
   Card,
@@ -9,6 +11,7 @@ import {
   CircularProgress,
   Grid,
   IconButton,
+  Snackbar,
   Stack,
   ToggleButton,
   ToggleButtonGroup,
@@ -94,6 +97,9 @@ export default function LibraryScreen() {
   const [selectedChannel, setSelectedChannel] = useState<LibraryChannel | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<LibraryVideo | null>(null);
   const [viewMode, setViewMode] = useState<LibraryViewMode>('channel');
+  const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
+  const deepLinkMatch = useMatch('/library/video/:videoId');
+  const navigate = useNavigate();
 
   const load = async () => {
     setLoading(true);
@@ -172,6 +178,45 @@ export default function LibraryScreen() {
     });
   };
 
+  // Consumes an internal "hyperlink" to a specific video -- the add-success
+  // toast (DownloaderScreen) and a finished bulk-add item (BulkAddSidePanel)
+  // both just navigate to /library/video/:videoId; this is what turns that
+  // into actually landing on the video's detail screen. useMatch (not
+  // useParams) since LibraryScreen isn't rendered under a literal
+  // <Route path="/library/video/:videoId"> -- there's no such nested route
+  // (see App.tsx's single "/*" route), so this reads the param straight off
+  // the current location instead. Fires correctly whether this is a fresh
+  // mount (switching to the Library tab, which currently does remount this
+  // screen -- CustomTabPanel in MainPage.tsx only renders a tab's content
+  // while it's active) or an already-mounted Library tab receiving a new
+  // target. Always navigates back to the plain /library path afterward
+  // (replace: true) so this is a one-shot jump, not a redirect that would
+  // keep re-triggering if the user then clicks back to the channel grid.
+  const videoIdToOpen = deepLinkMatch?.params.videoId;
+  useEffect(() => {
+    if (!videoIdToOpen) return;
+    (async () => {
+      const result = await window.electronAPI.findLibraryVideo(videoIdToOpen);
+      if (!result.found || !result.videoDir) {
+        setDeepLinkError('This video is no longer in your library.');
+        navigate('/library', { replace: true });
+        return;
+      }
+      const index = await window.electronAPI.refreshLibraryIndex();
+      setChannels(index.channels);
+      const targetChannel = index.channels.find((c) => c.videos.some((v) => v.videoDir === result.videoDir));
+      const targetVideo = targetChannel?.videos.find((v) => v.videoDir === result.videoDir);
+      if (targetChannel && targetVideo) {
+        setSelectedChannel(targetChannel);
+        setSelectedVideo(targetVideo);
+      } else {
+        setDeepLinkError('This video is no longer in your library.');
+      }
+      navigate('/library', { replace: true });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoIdToOpen]);
+
   // Fire-and-forget channel-icon/video-thumbnail fetches (main.js) only get
   // picked up on the *next* index refresh -- without this, an already-
   // mounted Library tab would silently never show a newly-added video's
@@ -199,49 +244,33 @@ export default function LibraryScreen() {
     setSelectedChannel(null);
   };
 
-  if (loading) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 6 }}>
-        <CircularProgress />
-      </Box>
-    );
-  }
-
-  if (!libraryDir) {
-    return (
-      <Box sx={{ textAlign: 'center', mt: 6 }}>
-        <Typography variant="h6" gutterBottom>No library folder set</Typography>
-        <Typography variant="body2" color="text.secondary">
-          Set a library folder in the Options tab to get started.
-        </Typography>
-      </Box>
-    );
-  }
-
-  if (selectedVideo) {
-    return (
-      <LibraryVideoDetail
-        video={selectedVideo}
-        onBack={() => setSelectedVideo(null)}
-        onLibraryChanged={refreshChannelsSilently}
-        onDeleted={handleVideoDeleted}
-        onVersionsChanged={handleVersionsChanged}
-      />
-    );
-  }
-
-  if (selectedChannel) {
-    return (
-      <VideoGrid
-        channel={selectedChannel}
-        onBack={() => setSelectedChannel(null)}
-        onSelectVideo={setSelectedVideo}
-        onChannelsUpdated={handleChannelsUpdated}
-      />
-    );
-  }
-
-  return viewMode === 'video' ? (
+  const content = loading ? (
+    <Box sx={{ display: 'flex', justifyContent: 'center', mt: 6 }}>
+      <CircularProgress />
+    </Box>
+  ) : !libraryDir ? (
+    <Box sx={{ textAlign: 'center', mt: 6 }}>
+      <Typography variant="h6" gutterBottom>No library folder set</Typography>
+      <Typography variant="body2" color="text.secondary">
+        Set a library folder in the Options tab to get started.
+      </Typography>
+    </Box>
+  ) : selectedVideo ? (
+    <LibraryVideoDetail
+      video={selectedVideo}
+      onBack={() => setSelectedVideo(null)}
+      onLibraryChanged={refreshChannelsSilently}
+      onDeleted={handleVideoDeleted}
+      onVersionsChanged={handleVersionsChanged}
+    />
+  ) : selectedChannel ? (
+    <VideoGrid
+      channel={selectedChannel}
+      onBack={() => setSelectedChannel(null)}
+      onSelectVideo={setSelectedVideo}
+      onChannelsUpdated={handleChannelsUpdated}
+    />
+  ) : viewMode === 'video' ? (
     <FlatVideoList
       channels={channels}
       libraryDir={libraryDir}
@@ -259,6 +288,22 @@ export default function LibraryScreen() {
       onSelectChannel={setSelectedChannel}
       onRefresh={handleRefresh}
     />
+  );
+
+  return (
+    <>
+      {content}
+      <Snackbar
+        open={!!deepLinkError}
+        autoHideDuration={4000}
+        onClose={() => setDeepLinkError(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setDeepLinkError(null)} severity="error" variant="filled">
+          {deepLinkError}
+        </Alert>
+      </Snackbar>
+    </>
   );
 }
 

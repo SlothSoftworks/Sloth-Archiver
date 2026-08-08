@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useState } from 'react'
+import { useLocation, useNavigate } from 'react-router';
 import Button from '@mui/material/Button';
 import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
@@ -25,6 +26,20 @@ import { useLibraryNotification } from './hooks/useLibraryNotifications';
 import ltxImage from '../assets/ltx.jpeg';
 
 const LIBRARY_TAB_INDEX = 1;
+const OPTIONS_TAB_INDEX = 2;
+const TAB_PATHS = ['/', '/library', '/options'];
+
+// The active tab is derived from the current location rather than its own
+// local state -- lets an internal "hyperlink" (the add-success toast, a
+// finished bulk-add item) switch tabs just by navigating, e.g. to
+// /library/video/:videoId, without a separate imperative "switch tab" call.
+// Deep-link paths under /library (like the one above) still count as the
+// Library tab being active.
+function pathToTabIndex(pathname: string): number {
+  if (pathname.startsWith('/library')) return LIBRARY_TAB_INDEX;
+  if (pathname === '/options') return OPTIONS_TAB_INDEX;
+  return 0;
+}
 
 function MainPage() {
 
@@ -70,12 +85,14 @@ function a11yProps(index: number) {
 }
 
 export function BasicTabs() {
-  const [value, setValue] = React.useState(0);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const value = pathToTabIndex(location.pathname);
   const [infoOpen, setInfoOpen] = useState(false);
   const { count: libraryNotificationCount, reset: resetLibraryNotifications } = useLibraryNotification();
 
   const handleChange = (event: React.SyntheticEvent, newValue: number) => {
-    setValue(newValue);
+    navigate(TAB_PATHS[newValue]);
     if (newValue === LIBRARY_TAB_INDEX) {
       resetLibraryNotifications();
     }

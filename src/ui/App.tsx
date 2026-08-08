@@ -54,7 +54,14 @@ function AppContent() {
         <LibraryNotificationProvider>
           <BulkAddProvider>
             <Routes>
-              <Route path="/" element={<MainPage />}></Route>
+              {/* "/*" (not "/") so MainPage -- and everything that lives
+                  alongside its tabs, like BulkAddSidePanel and the
+                  yt-dlp-update dialog -- stays mounted for every nested path
+                  this app's internal navigation uses (e.g.
+                  /library/video/:videoId). Those aren't separate <Route>s
+                  with their own element; they're just locations MainPage's
+                  own tab logic reads reactively (see MainPage.tsx). */}
+              <Route path="/*" element={<MainPage />}></Route>
               <Route path="/other" element={<Other />}/>
             </Routes>
           </BulkAddProvider>

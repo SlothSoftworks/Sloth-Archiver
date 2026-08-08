@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link as RouterLink } from 'react-router';
 import {
   Badge,
   Box,
@@ -24,6 +25,7 @@ import ReplayIcon from '@mui/icons-material/Replay';
 import StopIcon from '@mui/icons-material/Stop';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import CancelIcon from '@mui/icons-material/Cancel';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { getRetryStage, useBulkAddQueue, type BulkAddItem, type BulkAddStatus } from '../hooks/useBulkAddQueue.tsx';
 import BulkAddDialog from './BulkAddDialog';
 
@@ -78,6 +80,17 @@ function BulkAddListItem({ item, stopping, onRetry, onRemove }: { item: BulkAddI
       sx={{ minHeight: 72, py: 1 }}
       secondaryAction={
         <Stack direction="row" spacing={0.5}>
+          {item.status === 'done' && item.videoId &&
+            <Tooltip title="Go to library">
+              <IconButton
+                size="small"
+                component={RouterLink}
+                to={`/library/video/${item.videoId}`}
+                aria-label="Go to library"
+              >
+                <OpenInNewIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>}
           {item.status === 'failed' &&
             <Tooltip title={retryLabel}>
               <IconButton size="small" onClick={onRetry} aria-label={retryLabel}>

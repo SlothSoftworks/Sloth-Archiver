@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link as RouterLink } from 'react-router';
 import {
   Alert,
   Box,
@@ -11,6 +12,7 @@ import {
   DialogContentText,
   DialogTitle,
   InputAdornment,
+  Link,
   Stack,
   IconButton,
   Snackbar,
@@ -44,6 +46,10 @@ export default function DownloaderScreen() {
   const [libraryAddStatus, setLibraryAddStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
   const [libraryErrorMessage, setLibraryErrorMessage] = useState<string | null>(null);
   const [librarySuccessSnackbarOpen, setLibrarySuccessSnackbarOpen] = useState(false);
+  // Captured alongside the snackbar open (not read from videoInfo later) since
+  // all three add paths below clear videoInfo right after a successful add --
+  // this is what the toast's "View" link navigates to.
+  const [lastAddedVideoId, setLastAddedVideoId] = useState<string | null>(null);
   const [duplicateMatch, setDuplicateMatch] = useState<{ channelDisplayName: string | null; videoDir: string } | null>(null);
 
 
@@ -69,6 +75,7 @@ export default function DownloaderScreen() {
     try {
       await window.electronAPI.addLibraryEntry(videoInfo);
       incrementLibraryNotifications();
+      setLastAddedVideoId(videoInfo.id);
       setLibrarySuccessSnackbarOpen(true);
       // Clear the search result now that it's been added -- a placeholder for
       // a more refined post-add flow later.
@@ -116,6 +123,7 @@ export default function DownloaderScreen() {
     try {
       await window.electronAPI.overrideLibraryEntry(videoInfo, existingVideoDir);
       incrementLibraryNotifications();
+      setLastAddedVideoId(videoInfo.id);
       setLibrarySuccessSnackbarOpen(true);
       setVideoUrl('');
       setVideoInfo(null);
@@ -140,6 +148,7 @@ export default function DownloaderScreen() {
     try {
       await window.electronAPI.addLibraryVersion(videoInfo, existingVideoDir);
       incrementLibraryNotifications();
+      setLastAddedVideoId(videoInfo.id);
       setLibrarySuccessSnackbarOpen(true);
       setVideoUrl('');
       setVideoInfo(null);
@@ -289,6 +298,17 @@ export default function DownloaderScreen() {
     >
       <Alert onClose={() => setLibrarySuccessSnackbarOpen(false)} severity="success" variant="filled">
         Added to library
+        {lastAddedVideoId &&
+          <Link
+            component={RouterLink}
+            to={`/library/video/${lastAddedVideoId}`}
+            onClick={() => setLibrarySuccessSnackbarOpen(false)}
+            color="inherit"
+            underline="always"
+            sx={{ ml: 1, fontWeight: 'bold', cursor: 'pointer' }}
+          >
+            View
+          </Link>}
       </Alert>
     </Snackbar>
     </>
