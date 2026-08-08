@@ -77,6 +77,13 @@ flowchart LR
     class t7,t8 longshot
 ```
 
+**Recently shipped (2026-08-07):**
+- Polish pass on the already-shipped Library view ffmpeg utilities (`LibraryVideoDetail.tsx`, `main.js`), all from real-usage feedback: clip start/end fields are now digit-only, auto-formatting into `HH:MM:SS` as you type (needed since archived videos regularly run past an hour), with small up/down spinner arrows that nudge by 1 second and always re-render fully zero-padded; a client-side check now blocks extraction unless the end timestamp is at least 1 second past the start (previously this reached ffmpeg and produced a crash-length raw error); and ffmpeg failure messages are now summarized instead of dumped raw — `summarizeFfmpegError()` strips banner/build-config/stream-metadata noise, extracts the first line matching real error keywords as the root cause, and translates the handful of causes this app can actually produce (bad clip range, permission denied, unsupported output format, disk full, corrupted source) into plain language, falling back to the raw extracted line or a generic message rather than ever showing the full dump again.
+
+**Recently shipped (2026-08-06):**
+- Dependency-freshness pass, prompted by bumping the dev Node version to 24.19.0 LTS for the new Vitest suite. Applied every safe bump within existing semver ranges, each verified with lint + `tsc -b` + `npm test` + build before keeping it — including two full majors (`vite` 6→8, `@vitejs/plugin-react` 4→6) that turned out clean. Caught and fixed one real regression along the way: MUI's `Switch` component's rendered ARIA role changed from `checkbox` to `switch` in a *minor* version bump, breaking one test (`BulkAddDialog.test.tsx`) — found by diffing test results before/after via `git stash`, not by trusting the version bump was safe just because semver said so.
+- Individually tried and reverted three further major bumps (`@mui/material`/`@mui/icons-material` v9, `typescript` 7, `eslint` 10) after each produced real, reproduced breakage — logged in full with exact evidence as **TD-009** (`reports/TechnicalDebt.md`), including the specific re-check command to use before trying again later rather than trusting the changelog alone.
+
 **Recently shipped (2026-08-05):**
 - Options UX grouping shipped: `OptionsScreen.tsx`'s sections are now split under two headers, "Media Options" (Conversion Formats, Default Download Folder, Library Folder) and "General Options" (Appearance, yt-dlp Version, Personal Cookie, Error Log), matching the spec's own grouping exactly. Pure JSX reorder plus a small `OptionsGroupHeader` label component — no state/IPC changes.
 - Theme support shipped: a dark/light selector in Options, persisted via a `settings:getThemeMode`/`setThemeMode` IPC pair (same `readSettings`/`writeSettings` pattern as `libraryViewMode`/`cookiesMode`), with `App.tsx`'s `ThemeProvider` now driven by a `useMemo`'d theme instead of a static import (`useThemeMode.tsx`) — closes out `futureSpecs.md`'s QoL item 1.
@@ -249,9 +256,9 @@ No further CSS-only attempts worth trying. Left open as a "maybe later" — see 
 
 | Piece | Difficulty | Status |
 |---|---|---|
-| Hide the native "Download" option | Low | ✅ Done |
-| Play-icon overlay | Low | ✅ Done |
-| Remove the "buffered ahead" look on the scrub bar | Medium, and the CSS-only route is now ruled out | Tried, reverted -- see above |
+| Hide the native "Download" option | Low | ✅ Done, 2026-08-05 — sub-item removed from `futureSpecs.md`'s item 2 |
+| Play-icon overlay | Low | ✅ Done, 2026-08-05 — sub-item removed from `futureSpecs.md`'s item 2 |
+| Remove the "buffered ahead" look on the scrub bar | Medium, and the CSS-only route is now ruled out | Tried, reverted -- still the only sub-item left under `futureSpecs.md`'s item 2 |
 
 **Recommendation, if this ever comes back:** the only route left is dropping native
 `controls` entirely and building custom play/pause/seek/volume controls (a real,

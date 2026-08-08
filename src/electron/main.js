@@ -1234,6 +1234,49 @@ function getMediaDurationSeconds(filePath) {
     });
 }
 
+// ffmpeg's stderr is a wall of banner/build-config/stream-metadata noise even
+// on success, and on failure the real cause is buried in there as plain text
+// (there's no separate structured error output). This extracts just the
+// root-cause line rather than surfacing the whole dump to the user: strip
+// every line that's recognizably banner/metadata/progress noise, then take
+// the *first* remaining line that looks like an actual error -- the first
+// one is the root cause, later ones tend to be consequences of it (e.g. "-to
+// value smaller than -ss; aborting." followed by "Error opening output
+// file..." -- the first line is the fix-worthy one). Falls back to a plain
+// generic message if nothing recognizable survives the filtering, rather
+// than risk dumping something huge/useless.
+const FFMPEG_NOISE_LINE = /^(ffmpeg version|built with|configuration:|lib(avutil|avcodec|avformat|avdevice|avfilter|swscale|swresample|postproc)|Input #\d|Duration:|Stream #|Stream mapping:|Press \[q\]|frame=|size=|time=|bitrate=|speed=|\s*Metadata:$|\s*(major_brand|minor_version|compatible_brands|title|artist|date|encoder|description|handler_name|vendor_id|comment|composer|genre)\s*:)/i;
+const FFMPEG_ERROR_KEYWORDS = /\b(error|invalid|cannot|could not|no such|permission denied|failed|unable|aborting|not found|no space|unknown|unrecognized)\b/i;
+const FFMPEG_LINE_PREFIX = /^\[[^\]]*\]\s*/;
+
+// The extracted root-cause line is still raw ffmpeg jargon ("-to value
+// smaller than -ss; aborting." means nothing to a non-technical user) --
+// this translates the handful of causes we can actually expect to hit from
+// this app's own ffmpeg invocations into plain language. Matched against the
+// already-extracted single line, not the full dump, so each pattern only
+// needs to account for ffmpeg's own wording, not where it appears.
+const FFMPEG_FRIENDLY_ERRORS = [
+    { pattern: /-to value smaller than -ss/i, message: 'The clip end time must be after the start time.' },
+    { pattern: /permission denied/i, message: 'Permission denied while writing the output file -- check that the destination folder is writable.' },
+    { pattern: /no space left on device/i, message: 'Not enough free disk space to finish this operation.' },
+    { pattern: /(unknown output format|unable to find a suitable output format|unknown encoder|unknown codec)/i, message: 'This output format isn\'t supported by the bundled ffmpeg build -- try a different format.' },
+    { pattern: /no such file or directory/i, message: 'A required file could not be found (it may have been moved or deleted).' },
+    { pattern: /moov atom not found|invalid data found when processing input/i, message: 'The source file appears to be corrupted or incomplete.' },
+];
+
+function summarizeFfmpegError(stderr, code) {
+    const candidateLines = (stderr || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line && !FFMPEG_NOISE_LINE.test(line));
+    const rootCause = candidateLines.find((line) => FFMPEG_ERROR_KEYWORDS.test(line));
+    const message = (rootCause || candidateLines.at(-1) || '').replace(FFMPEG_LINE_PREFIX, '').trim();
+    if (!message) return `ffmpeg failed to process this file (exit code ${code}).`;
+    const friendly = FFMPEG_FRIENDLY_ERRORS.find(({ pattern }) => pattern.test(message));
+    if (friendly) return friendly.message;
+    return message.length > 300 ? `${message.slice(0, 300)}...` : message;
+}
+
 // Bypasses yt-dlp's own postprocessing entirely -- see TD-004. yt-dlp runs its
 // postprocessing ffmpeg subprocess with a blocking call that only reads output
 // after the process exits, so it can never report real progress; spawning
@@ -1261,7 +1304,7 @@ function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDuration
         proc.on('error', reject);
         proc.on('close', (code) => {
             if (code !== 0) {
-                reject(new Error(stderr || `ffmpeg exited with code ${code}`));
+                reject(new Error(summarizeFfmpegError(stderr, code)));
             } else {
                 resolve();
             }

@@ -38,6 +38,8 @@ import AudiotrackIcon from '@mui/icons-material/Audiotrack';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import ContentCutIcon from '@mui/icons-material/ContentCut';
 import LabelOutlinedIcon from '@mui/icons-material/LabelOutlined';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
 import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
@@ -86,6 +88,43 @@ function formatEpochLabel(epoch: string): string {
 function getExtension(filePath: string): string {
   const lastDot = filePath.lastIndexOf('.');
   return lastDot === -1 ? '' : filePath.slice(lastDot + 1).toLowerCase();
+}
+
+// Digit-only, auto-formatting clip-timestamp input -- strips anything that
+// isn't a digit (so there's no way to type a stray letter or extra colon)
+// and right-aligns the typed digits into HH:MM:SS as they come in, growing
+// an hours group once there's more than 4 digits. Needed because archived
+// videos can easily run past an hour, so a plain MM:SS field isn't enough.
+function formatClipTimestampInput(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 6);
+  const len = digits.length;
+  if (len <= 2) return digits;
+  if (len <= 4) return `${digits.slice(0, len - 2)}:${digits.slice(len - 2)}`;
+  return `${digits.slice(0, len - 4)}:${digits.slice(len - 4, len - 2)}:${digits.slice(len - 2)}`;
+}
+
+// Backs the clip fields' up/down spinner arrows -- parses whatever's
+// currently typed (any of the SS / MM:SS / HH:MM:SS shapes the formatter
+// above can produce, plus empty) down to a plain second count, nudges it,
+// and always renders back out fully zero-padded HH:MM:SS so the result stays
+// unambiguous once the spinner's been used.
+function parseClipTimestampSeconds(value: string): number {
+  const parts = value.split(':').map((p) => parseInt(p, 10) || 0);
+  while (parts.length < 3) parts.unshift(0);
+  const [h, m, s] = parts.slice(-3);
+  return h * 3600 + m * 60 + s;
+}
+
+function formatSecondsAsClipTimestamp(totalSeconds: number): string {
+  const clamped = Math.max(0, totalSeconds);
+  const h = Math.floor(clamped / 3600);
+  const m = Math.floor((clamped % 3600) / 60);
+  const s = clamped % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function stepClipTimestamp(value: string, deltaSeconds: number): string {
+  return formatSecondsAsClipTimestamp(parseClipTimestampSeconds(value) + deltaSeconds);
 }
 
 // Sentinel Select value for "Other" -- a one-off custom format typed for
@@ -463,7 +502,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   };
 
   const handleExtractClip = async () => {
-    if (!metadata.downloadedFilePath || !clipStart.trim() || !clipEnd.trim()) return;
+    if (!metadata.downloadedFilePath || !clipStart.trim() || !clipEnd.trim() || clipRangeInvalid) return;
     const ext = getExtension(metadata.downloadedFilePath) || 'mp4';
     const result = await window.electronAPI.saveExportedFile({
       defaultName: `${metadata.title || video.videoFolderName} (clip).${ext}`,
@@ -607,6 +646,12 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // enabled whenever either one is downloaded, not gated on isVideoDownloaded
   // like the rest of the panel.
   const embedMetadataDisabled = (!isVideoDownloaded && !metadata.downloadedAudioFilePath) || ffmpegAction !== null;
+  // ffmpeg's -to is an absolute end timestamp, not a duration -- if it isn't
+  // at least a second past -ss, ffmpeg aborts immediately with "-to value
+  // smaller than -ss" (a real error a tester hit). Caught here instead, since
+  // there's nothing useful to extract from an end <= start request anyway.
+  const clipRangeInvalid = !!clipStart.trim() && !!clipEnd.trim()
+    && parseClipTimestampSeconds(clipEnd) < parseClipTimestampSeconds(clipStart) + 1;
   const resolutions = metadata.resolutions || [];
   // MP3 is rendered in its own Audio sub-section below, not mixed into the
   // video quality grid -- see the Library-view MP3-coexistence design.
@@ -952,38 +997,94 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 <TextField
                   size="small"
                   variant="standard"
-                  placeholder="0:00"
+                  placeholder="HH:MM:SS"
                   value={clipStart}
-                  onChange={(e) => setClipStart(e.target.value)}
+                  onChange={(e) => setClipStart(formatClipTimestampInput(e.target.value))}
                   disabled={ffmpegControlsDisabled}
-                  sx={{ width: 56 }}
-                  slotProps={{ htmlInput: { 'aria-label': 'Clip start' } }}
+                  sx={{ width: 96 }}
+                  slotProps={{
+                    htmlInput: { inputMode: 'numeric', 'aria-label': 'Clip start (HH:MM:SS)' },
+                    input: {
+                      endAdornment: (
+                        <Stack sx={{ ml: 0.5 }}>
+                          <IconButton
+                            size="small"
+                            sx={{ p: 0 }}
+                            disabled={ffmpegControlsDisabled}
+                            onClick={() => setClipStart((v) => stepClipTimestamp(v, 1))}
+                            aria-label="Increase clip start by 1 second"
+                          >
+                            <KeyboardArrowUpIcon sx={{ fontSize: 14 }} />
+                          </IconButton>
+                          <IconButton
+                            size="small"
+                            sx={{ p: 0 }}
+                            disabled={ffmpegControlsDisabled}
+                            onClick={() => setClipStart((v) => stepClipTimestamp(v, -1))}
+                            aria-label="Decrease clip start by 1 second"
+                          >
+                            <KeyboardArrowDownIcon sx={{ fontSize: 14 }} />
+                          </IconButton>
+                        </Stack>
+                      ),
+                    },
+                  }}
                 />
                 <Typography variant="body2" color="text.secondary">–</Typography>
                 <TextField
                   size="small"
                   variant="standard"
-                  placeholder="0:00"
+                  placeholder="HH:MM:SS"
                   value={clipEnd}
-                  onChange={(e) => setClipEnd(e.target.value)}
+                  onChange={(e) => setClipEnd(formatClipTimestampInput(e.target.value))}
                   disabled={ffmpegControlsDisabled}
-                  sx={{ width: 56 }}
-                  slotProps={{ htmlInput: { 'aria-label': 'Clip end' } }}
+                  sx={{ width: 96 }}
+                  slotProps={{
+                    htmlInput: { inputMode: 'numeric', 'aria-label': 'Clip end (HH:MM:SS)' },
+                    input: {
+                      endAdornment: (
+                        <Stack sx={{ ml: 0.5 }}>
+                          <IconButton
+                            size="small"
+                            sx={{ p: 0 }}
+                            disabled={ffmpegControlsDisabled}
+                            onClick={() => setClipEnd((v) => stepClipTimestamp(v, 1))}
+                            aria-label="Increase clip end by 1 second"
+                          >
+                            <KeyboardArrowUpIcon sx={{ fontSize: 14 }} />
+                          </IconButton>
+                          <IconButton
+                            size="small"
+                            sx={{ p: 0 }}
+                            disabled={ffmpegControlsDisabled}
+                            onClick={() => setClipEnd((v) => stepClipTimestamp(v, -1))}
+                            aria-label="Decrease clip end by 1 second"
+                          >
+                            <KeyboardArrowDownIcon sx={{ fontSize: 14 }} />
+                          </IconButton>
+                        </Stack>
+                      ),
+                    },
+                  }}
                 />
                 <Box sx={{ flexGrow: 1 }} />
-                <Tooltip title="Extract clip">
+                <Tooltip title={clipRangeInvalid ? 'End must be at least 1 second after start' : 'Extract clip'}>
                   <span>
                     <IconButton
                       size="small"
                       aria-label="Extract clip"
                       onClick={handleExtractClip}
-                      disabled={ffmpegControlsDisabled || !clipStart.trim() || !clipEnd.trim()}
+                      disabled={ffmpegControlsDisabled || !clipStart.trim() || !clipEnd.trim() || clipRangeInvalid}
                     >
                       <ContentCutIcon fontSize="small" />
                     </IconButton>
                   </span>
                 </Tooltip>
               </Stack>
+              {clipRangeInvalid &&
+                <Typography variant="caption" color="error">
+                  End must be at least 1 second after start.
+                </Typography>}
 
               <Stack direction="row" spacing={1} alignItems="center">
                 <Typography variant="body2" sx={{ flexGrow: 1 }}>Embed metadata</Typography>

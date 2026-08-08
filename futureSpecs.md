@@ -24,6 +24,4 @@ you point it here.
 
 1. Video merger (requires video versioning first): Sometimes videos get re-edited and reuploaded and this causes them to have a different link. This feature would add an option to add the new link in the video library view and the metadata will replace the main link to the video (to keep updating and downloading if he wants to) but keep the original video data in a version marked (legacy/deleted from youtube)
 2. Small improvements to the embedded local player:
-   - Add a "play" icon in the middle of the player to indicate the user they can begin playback
-   - remove the "download" option from the list of options that appear n the 3 dot menu on the corner. It feels redundant
    - remove the buffer looking effect in the local player it could confuse users thinking they are watching the video online

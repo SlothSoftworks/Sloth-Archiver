@@ -310,12 +310,12 @@ describe('LibraryVideoDetail', () => {
     renderDetail(video);
     const user = userEvent.setup();
 
-    await user.type(screen.getByLabelText('Clip start'), '0:10');
-    await user.type(screen.getByLabelText('Clip end'), '0:20');
+    await user.type(screen.getByLabelText('Clip start (HH:MM:SS)'), '000010');
+    await user.type(screen.getByLabelText('Clip end (HH:MM:SS)'), '000020');
     await user.click(screen.getByRole('button', { name: 'Extract clip' }));
 
     await waitFor(() => expect(window.electronAPI.extractClipFromFile).toHaveBeenCalledWith({
-      inputPath: '/v/video.mp4', outputPath: '/exported/out', start: '0:10', end: '0:20',
+      inputPath: '/v/video.mp4', outputPath: '/exported/out', start: '00:00:10', end: '00:00:20',
     }));
   });
 
