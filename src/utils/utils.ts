@@ -10,6 +10,49 @@ function isValidUrl(string: string) {
     }
   };
 
+// Drives DownloaderScreen.tsx's choice between the full YouTube flow
+// (VideoDetailCard -- resolution picker, add-to-library) and the simplified
+// multi-platform one (OtherPlatformDownloadCard -- basic info + a single
+// Download button). Deliberately a plain hostname check, not an allowlist of
+// "supported" other platforms -- yt-dlp itself already decides what it can
+// actually extract from (1800+ sites), this only decides which *UI* to show.
+function isYouTubeUrl(string: string): boolean {
+  try {
+    const hostname = new URL(string).hostname.replace(/^www\./, '');
+    return hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'music.youtube.com' || hostname === 'youtu.be';
+  } catch {
+    return false;
+  }
+}
+
+// Covers the platforms the multi-platform downloads feature has actually
+// been tested against so far -- not meant to be a complete list (yt-dlp
+// itself supports 1800+ sites), just the ones worth a friendly name instead
+// of a bare hostname. Falls back to a capitalized first hostname segment for
+// anything else, e.g. "vimeo.com" -> "Vimeo".
+const KNOWN_PLATFORM_LABELS: Record<string, string> = {
+  'soundcloud.com': 'SoundCloud',
+  'instagram.com': 'Instagram',
+  'facebook.com': 'Facebook',
+  'fb.watch': 'Facebook',
+  'tiktok.com': 'TikTok',
+  'twitter.com': 'Twitter/X',
+  'x.com': 'Twitter/X',
+};
+
+// Backs OtherPlatformDownloadCard's small platform tag, and its SoundCloud-
+// specific defaults (always-MP3 download, offering "embed metadata" after).
+function getPlatformLabel(url: string): string {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '').replace(/^m\./, '');
+    if (KNOWN_PLATFORM_LABELS[hostname]) return KNOWN_PLATFORM_LABELS[hostname];
+    const base = hostname.split('.')[0] || hostname;
+    return base.charAt(0).toUpperCase() + base.slice(1);
+  } catch {
+    return 'Other';
+  }
+}
+
 function convertYYYYMMDDStringToDate(stringDate: string, format = 'YYYY / MMM / DD') {
   if (stringDate?.length != 8) {
     return null;
@@ -35,5 +78,5 @@ function buildAppVideoUrl(filePath: string, cacheBustKey = 0): string {
   return `app-video://local/${encodeURIComponent(filePath)}?v=${cacheBustKey}`;
 }
 
-export { isValidUrl, convertYYYYMMDDStringToDate, buildAppVideoUrl };
+export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, buildAppVideoUrl };
 

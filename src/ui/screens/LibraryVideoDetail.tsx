@@ -322,13 +322,28 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     if (!metadata.originalUrl) return;
     setCreatingVersion(true);
     setCreateVersionError(null);
+    // Tracks whether addLibraryVersion has actually created a new epoch on
+    // disk yet -- if anything fails after that point (e.g. the resync below),
+    // this lets the catch block roll it back instead of leaving an orphaned
+    // epoch folder around that the UI never surfaced.
+    let createdEpoch: string | null = null;
     try {
       await window.electronAPI.deleteVideoInfoCacheEntry(metadata.originalUrl);
       const result = await window.electronAPI.getVideoInfoPython(metadata.originalUrl);
       if (!result.success) {
         throw new Error('Failed to fetch fresh video data.');
       }
-      const added = await window.electronAPI.addLibraryVersion(result.data.response, video.videoDir);
+      // getVideoInfoPython already rejects a genuinely dead video server-side
+      // (main.js's own isDeadVideoInfo) before ever resolving success -- this
+      // is a defense-in-depth repeat of that exact same check, so "the fetch
+      // technically resolved but the data is dead" can never slip through to
+      // actually creating a new version.
+      const freshResponse = result.data.response;
+      if (!freshResponse.channelId && !freshResponse.uploader) {
+        throw new Error('This video appears to be unavailable on YouTube (private, deleted, or removed) -- no new version was created.');
+      }
+      const added = await window.electronAPI.addLibraryVersion(freshResponse, video.videoDir);
+      createdEpoch = added.epoch;
       // Needs the deeper resync (not plain onLibraryChanged) -- this just
       // added a new epoch, so the version selector's option list (read
       // straight from the `video` prop's `epochs` array) needs a fresh
@@ -339,6 +354,10 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
       setSelectedResolution('');
       setSwappingQuality(false);
     } catch (err) {
+      if (createdEpoch) {
+        await window.electronAPI.deleteLibraryEntry(video.videoDir, createdEpoch);
+        await onVersionsChanged();
+      }
       setCreateVersionError(err instanceof Error ? err.message : 'Failed to create a new version.');
     } finally {
       setCreatingVersion(false);

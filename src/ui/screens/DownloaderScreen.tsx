@@ -23,8 +23,9 @@ import './screens.css'
 import TextField from '@mui/material/TextField';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import { isValidUrl } from '../../utils/utils.ts';
+import { isValidUrl, isYouTubeUrl } from '../../utils/utils.ts';
 import VideoDetailCard from './VideoDetailCard';
+import OtherPlatformDownloadCard from './OtherPlatformDownloadCard';
 
 import { useDebounce } from '../../utils/useDebounce';
 
@@ -51,6 +52,11 @@ export default function DownloaderScreen() {
   // this is what the toast's "View" link navigates to.
   const [lastAddedVideoId, setLastAddedVideoId] = useState<string | null>(null);
   const [duplicateMatch, setDuplicateMatch] = useState<{ channelDisplayName: string | null; videoDir: string } | null>(null);
+  // Drives both which card renders below (VideoDetailCard vs. the simplified
+  // OtherPlatformDownloadCard) and whether "add to library" can activate at
+  // all -- multi-platform downloads are Downloader-tab-only and download-only
+  // for v1 (no library entry), see OtherPlatformDownloadCard.tsx.
+  const isYouTube = isYouTubeUrl(debouncedVideoUrl);
 
 
   useEffect(() => {
@@ -215,6 +221,7 @@ export default function DownloaderScreen() {
             />
             <Tooltip title={
               !videoInfo ? 'Load a video first' :
+              !isYouTube ? 'Only YouTube videos can be added to the library' :
               libraryAddStatus === 'saving' ? 'Adding...' :
               libraryAddStatus === 'done' ? 'Added to library' :
               libraryAddStatus === 'error' ? 'Failed to add -- click to retry' :
@@ -223,7 +230,7 @@ export default function DownloaderScreen() {
               <span>
                 <IconButton
                   onClick={handleAddToLibrary}
-                  disabled={!videoInfo || libraryAddStatus === 'saving'}
+                  disabled={!videoInfo || !isYouTube || libraryAddStatus === 'saving'}
                   sx={{
                     width: 56,
                     height: 56,
@@ -234,7 +241,7 @@ export default function DownloaderScreen() {
                     // render invisibly, even though its Tooltip still worked (the
                     // span wrapper it needs to show a tooltip on a disabled button
                     // doesn't depend on the button itself being visible).
-                    ...(videoInfo && {
+                    ...(videoInfo && isYouTube && {
                       bgcolor: libraryAddStatus === 'error' ? 'error.main' : libraryAddStatus === 'done' ? 'success.main' : 'primary.main',
                       color: 'primary.contrastText',
                       '&:hover': { bgcolor: libraryAddStatus === 'error' ? 'error.dark' : libraryAddStatus === 'done' ? 'success.dark' : 'primary.dark' },
@@ -263,7 +270,7 @@ export default function DownloaderScreen() {
           </Box>}
         {videoInfo &&
           <Box sx={{ mt: 2 }}>
-            <VideoDetailCard videoMetaData={videoInfo}/>
+            {isYouTube ? <VideoDetailCard videoMetaData={videoInfo}/> : <OtherPlatformDownloadCard videoMetaData={videoInfo}/>}
           </Box>}
         </Box>
     </Box>

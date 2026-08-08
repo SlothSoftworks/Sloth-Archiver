@@ -49,6 +49,7 @@ type PlaylistEntry = {
   url: string;
   thumbnailUrl: string | null;
   uploadDate: string | null;
+  unavailable?: boolean;
 };
 
 type PlaylistSnapshot = {
@@ -223,9 +224,16 @@ export default function PlaylistsSection() {
                     <Avatar variant="rounded" src={entry.thumbnailUrl || undefined} sx={{ width: 64, height: 36, mr: 1 }} />
                   </ListItemAvatar>
                   <ListItemText
-                    primary={entry.title || <em>Video unavailable (removed or private on YouTube)</em>}
+                    primary={
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Typography component="span" noWrap>
+                          {entry.title || <em>Unknown title</em>}
+                        </Typography>
+                        {entry.unavailable &&
+                          <Chip size="small" color="warning" variant="outlined" label="Not on YouTube" sx={{ flexShrink: 0 }} />}
+                      </Stack>
+                    }
                     secondary={entry.uploadDate ? convertYYYYMMDDStringToDate(entry.uploadDate) || entry.uploadDate : null}
-                    slotProps={{ primary: { noWrap: true } }}
                   />
                 </ListItem>
               );

@@ -6,6 +6,7 @@ import fs from "fs";
 import crypto from 'crypto';
 import http from 'node:http';
 import https from 'node:https';
+import os from 'node:os';
 
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
@@ -1077,16 +1078,95 @@ export function reshapeVideoInfo(info) {
 // even when yt-dlp still exits 0 and hands back a parseable info dict --
 // --ignore-no-formats-error (below) exists specifically to let that
 // non-fatal case through rather than hard-failing on format-selector
-// resolution. Two independent signals, either one enough on its own:
-// no downloadable formats at all (buildResolutions came back empty -- not
-// even MP3, which itself requires at least one real video-height entry
-// today), or no channel/uploader at all -- yt-dlp can't resolve who
-// uploaded a video it can't actually load the real page for, so a real,
-// available video never has both null.
+// resolution. The remaining signal: no channel/uploader at all -- yt-dlp
+// can't resolve who uploaded a video it can't actually load the real page
+// for, so a real, available video never has both null.
+//
+// This used to *also* treat zero height-having resolutions as dead -- removed
+// (multi-platform downloads): that's not actually a "this video is broken"
+// signal, it's the normal, valid shape of an audio-only source like
+// SoundCloud (confirmed via a real live fetch: every format has no `height`
+// at all, differentiated by bitrate instead). The genuinely-no-formats-
+// whatsoever case is already caught earlier, before reshapeVideoInfo even
+// runs (see the `info.formats.length === 0` check below) -- that's the real
+// "yt-dlp got nothing at all" signal, not this function's job.
 export function isDeadVideoInfo(response) {
-    if (!response.resolutions || response.resolutions.length === 0) return true;
     if (!response.channelId && !response.uploader) return true;
     return false;
+}
+
+// Drives which error message the empty-formats check below shows -- kept as
+// its own small local copy rather than importing the renderer's
+// src/utils/utils.ts one (this process and the renderer are different
+// worlds in this codebase; nothing else crosses that boundary either, e.g.
+// sanitizeForFilesystem lives in library.mjs, not shared from anywhere).
+function isYouTubeUrl(url) {
+    try {
+        const hostname = new URL(url).hostname.replace(/^www\./, '');
+        return hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'music.youtube.com' || hostname === 'youtu.be';
+    } catch {
+        return false;
+    }
+}
+
+// Matches yt-dlp's own real error strings for a genuinely dead video --
+// confirmed live against a real private video (yt-dlp: "Private video. Sign
+// in if you've been granted access..."). Deliberately distinct from a
+// bot-check failure (e.g. "Sign in to confirm you're not a bot"), which is a
+// transient request-level block, not a fact about the video itself.
+const DEAD_VIDEO_ERROR_PATTERNS = [
+    /private video/i,
+    /video (is |has been )?(unavailable|removed|deleted)/i,
+    /this video is no longer available/i,
+    /video does not exist/i,
+    /account associated with this video has been terminated/i,
+    /removed by the uploader/i,
+    /removed for violating/i,
+    /copyright grounds/i,
+    /content is not available/i,
+    /members-only|join this channel/i,
+];
+
+// getVideoInfoPython's main fetch always passes --ignore-no-formats-error
+// (see its own comment), which swallows yt-dlp's real error message
+// entirely -- confirmed live: exit 0, empty stderr, degraded JSON, whether
+// the actual cause is a private/deleted video or a bot-check block. There is
+// no way to tell those apart from that call's own output. This makes one
+// extra, short-lived call *without* that flag, purely to read yt-dlp's real
+// error string -- only ever triggered on the already-unusual "formats came
+// back empty" path for a YouTube URL, never on a normal successful fetch.
+function classifyDeadYouTubeVideo(url) {
+    return new Promise((resolve) => {
+        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), url]);
+        let stderrOutput = '';
+        let settled = false;
+        // This only ever runs on a path that already failed once (the
+        // primary fetch's formats came back empty), so a real dead-video
+        // error is expected to surface fast -- guards against this
+        // classification-only call hanging the whole getVideoInfoPython
+        // response if the network stalls instead of erroring outright.
+        const timeout = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            script.kill();
+            resolve(false);
+        }, 20000);
+        const finish = (value) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            resolve(value);
+        };
+        script.on('error', () => finish(false));
+        script.stderr.on('data', (chunk) => { stderrOutput += chunk.toString(); });
+        script.on('close', (code) => {
+            if (code === 0) {
+                finish(false);
+                return;
+            }
+            finish(DEAD_VIDEO_ERROR_PATTERNS.some((pattern) => pattern.test(stderrOutput)));
+        });
+    });
 }
 
 ipcMain.handle('getVideoInfoPython', async (event, url) => {
@@ -1132,7 +1212,7 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
             error += err.toString();
         });
 
-        script.on('close', (code) => {
+        script.on('close', async (code) => {
             if (code !== 0) {
                 reject(new Error(error || `yt-dlp exited with code ${code}`));
             } else {
@@ -1150,7 +1230,14 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
                     // always leaves formats non-empty, so this only catches genuine
                     // extraction failures.
                     if (!info.formats || info.formats.length === 0) {
-                        reject(new Error('yt-dlp could not retrieve any downloadable formats for this video. This usually means YouTube blocked the request (e.g. "Sign in to confirm you\'re not a bot") -- load a cookie or enable "cookies from browser" in Options and try again.'));
+                        if (isYouTubeUrl(url) && await classifyDeadYouTubeVideo(url)) {
+                            reject(new Error('This video is unavailable on YouTube -- it may be private, deleted, or removed by the uploader.'));
+                            return;
+                        }
+                        const message = isYouTubeUrl(url)
+                            ? 'yt-dlp could not retrieve any downloadable formats for this video. This usually means YouTube blocked the request (e.g. "Sign in to confirm you\'re not a bot") -- load a cookie or enable "cookies from browser" in Options and try again.'
+                            : 'yt-dlp could not retrieve any downloadable formats for this URL.';
+                        reject(new Error(message));
                         return;
                     }
                     const response = reshapeVideoInfo(info);
@@ -1240,7 +1327,16 @@ export function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteM
         // download video at all.
         args.push('-f', 'bestaudio/best');
     } else {
-        args.push('-f', `bestvideo[height<=${resolution}]+bestaudio/best`);
+        // 'best' (not a number) is the Downloader tab's simplified
+        // multi-platform download flow (OtherPlatformDownloadCard.tsx) --
+        // there's no resolution picker there, since a real per-height
+        // quality ladder isn't consistently available outside YouTube
+        // (confirmed: SoundCloud has none at all -- audio-only, bitrate-
+        // differentiated formats; TikTok/Instagram typically expose only one
+        // real quality). yt-dlp's own generic "best video+audio, merge if
+        // needed" selector is the correct default when there's no
+        // meaningful height to constrain against.
+        args.push('-f', resolution === 'best' ? 'bestvideo*+bestaudio/best' : `bestvideo[height<=${resolution}]+bestaudio/best`);
         // Without this, yt-dlp's own merge step picks MKV by default whenever the
         // chosen video+audio pair isn't natively MP4-safe (e.g. Opus audio) --
         // which Chromium's <video> element (this app's own Library player) can't
@@ -1683,6 +1779,14 @@ ipcMain.handle('library:extractClip', async (e, { inputPath, outputPath, start, 
 // thumbnail isn't a valid embedded-cover codec for ID3/mov -- everything
 // else stays -c copy, no quality loss.
 ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thumbnailPath, kind }) => {
+    // Downloader-tab callers (OtherPlatformDownloadCard.tsx) don't have a
+    // library entry with a pre-cached video-thumbnail.* file -- they only
+    // have yt-dlp's remote thumbnail URL. Rather than push a separate
+    // download+cleanup step onto every caller, fetch it here into a temp
+    // file (reusing the same downloadImageToFile the library's own
+    // thumbnail caching uses) whenever thumbnailPath looks like a URL
+    // instead of a local path already on disk.
+    let downloadedThumbnailPath = null;
     try {
         const ext = path.extname(inputPath);
         const tempPath = `${inputPath.slice(0, -ext.length)}.new${ext}`;
@@ -1690,6 +1794,16 @@ ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thu
         const metadataArgs = Object.entries(metadataTags || {})
             .filter(([, value]) => !!value)
             .flatMap(([key, value]) => ['-metadata', `${key}=${value}`]);
+
+        if (thumbnailPath && /^https?:\/\//i.test(thumbnailPath)) {
+            try {
+                downloadedThumbnailPath = await downloadImageToFile(thumbnailPath, os.tmpdir(), `embed-thumb-${crypto.randomUUID()}`);
+                thumbnailPath = downloadedThumbnailPath;
+            } catch (err) {
+                log('[embed-metadata] thumbnail fetch failed', String(err));
+                thumbnailPath = null;
+            }
+        }
 
         const hasThumbnail = !!thumbnailPath && fs.existsSync(thumbnailPath);
         // Audio (mp3) has no pre-existing video stream, so the embedded cover
@@ -1722,6 +1836,8 @@ ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thu
         return { success: true };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
+    } finally {
+        if (downloadedThumbnailPath) fs.rmSync(downloadedThumbnailPath, { force: true });
     }
 });
 

@@ -481,6 +481,11 @@ export function writePlaylistSnapshot({ libraryDir, playlistId, title, uploader,
             url: e.url,
             thumbnailUrl: e.thumbnailUrl || null,
             uploadDate: e.uploadDate || null,
+            // Flagged explicitly (rather than the UI just inferring it from a
+            // null title) so a future refresh has a reliable signal to clear
+            // once the video is confirmed alive again, independent of
+            // whatever ends up in title.
+            unavailable: isDeadTitle(e.title, e.videoId),
         })),
         localFiles,
     };
@@ -522,7 +527,10 @@ export function enrichPlaylistEntry({ libraryDir, playlistId, videoId, title, up
     const entry = metadata.entries.find((e) => e.videoId === videoId);
     if (!entry) return null;
 
-    if (!isDeadTitle(title, videoId)) entry.title = title;
+    if (!isDeadTitle(title, videoId)) {
+        entry.title = title;
+        entry.unavailable = false;
+    }
     if (uploadDate) entry.uploadDate = uploadDate;
     if (thumbnailUrl) entry.thumbnailUrl = thumbnailUrl;
 
@@ -652,9 +660,18 @@ export function reconcilePlaylistSnapshot({ libraryDir, playlistId, freshEntries
     const reconciledEntries = freshEntries.map((fresh) => {
         const old = oldByVideoId.get(fresh.videoId);
         if (isDeadTitle(fresh.title, fresh.videoId)) {
-            if (old) return old;
+            // A fresh fetch turning up dead is exactly the "removed/private on
+            // YouTube" signal the (not on YouTube) tag exists for -- flagged
+            // here even when an already-saved entry's own (real) data is kept
+            // untouched, since the placeholder-preservation rule above is only
+            // about not clobbering title/thumbnail/uploadDate, not about
+            // hiding the fact that this refresh just found it dead.
+            if (old) {
+                if (!old.unavailable) updated++;
+                return { ...old, unavailable: true };
+            }
             added++;
-            return { videoId: fresh.videoId, title: null, url: fresh.url, thumbnailUrl: fresh.thumbnailUrl || null, uploadDate: fresh.uploadDate || null };
+            return { videoId: fresh.videoId, title: null, url: fresh.url, thumbnailUrl: fresh.thumbnailUrl || null, uploadDate: fresh.uploadDate || null, unavailable: true };
         }
         const reconciled = {
             videoId: fresh.videoId,
@@ -662,10 +679,11 @@ export function reconcilePlaylistSnapshot({ libraryDir, playlistId, freshEntries
             url: fresh.url,
             thumbnailUrl: fresh.thumbnailUrl || old?.thumbnailUrl || null,
             uploadDate: fresh.uploadDate || old?.uploadDate || null,
+            unavailable: false,
         };
         if (!old) {
             added++;
-        } else if (old.title !== reconciled.title || old.thumbnailUrl !== reconciled.thumbnailUrl || old.uploadDate !== reconciled.uploadDate) {
+        } else if (old.title !== reconciled.title || old.thumbnailUrl !== reconciled.thumbnailUrl || old.uploadDate !== reconciled.uploadDate || old.unavailable) {
             updated++;
         }
         return reconciled;
