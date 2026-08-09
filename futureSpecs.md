@@ -32,6 +32,8 @@ you point it here.
 1. Video merger (requires video versioning first): Sometimes videos get re-edited and reuploaded and this causes them to have a different link. This feature would add an option to add the new link in the video library view and the metadata will replace the main link to the video (to keep updating and downloading if he wants to) but keep the original video data in a version marked (legacy/deleted from youtube)
 2. Small improvements to the embedded local player:
    - remove the buffer looking effect in the local player it could confuse users thinking they are watching the video online
+3. Versioning in the internal metadata structures of the saved files, this would allow to identify the structures that might be obsolete when newer features are added and add a notice to the user that they might want to refresh their data or might be missing features
+4. A "copy link" button on every resource with a lik (videos, playlists) to that the user can copy it for any purpose
 
 ### Bugs found
 
