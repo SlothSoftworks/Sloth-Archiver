@@ -20,10 +20,8 @@ you point it here.
    - A dynamic UI feature that allows the user to click non downloaded videos in the video list of the library and click on a download all button that add all of the videos not downloaded to the bulk download list
    - Ths requires introsucing an identifier between a download job in the side panel and a add to library job (that doesn't require a download)
    - The bulk controllers section is this:
-      - A user can select one or more items and this will add a new option in the top menu where the other buttons of the video view are which will be a "delete all selected" feature that will delete the entries of the list of selected items and their files
-      - The same way there will be a "download selected" which will apply only when all of the items selected aren't downloaded. If even one of the items in the selection list is downloaded this control will dissapear.
-
-
+     - A user can select one or more items and this will add a new option in the top menu where the other buttons of the video view are which will be a "delete all selected" feature that will delete the entries of the list of selected items and their files
+     - The same way there will be a "download selected" which will apply only when all of the items selected aren't downloaded. If even one of the items in the selection list is downloaded this control will dissapear.
 
 ### QoL features
 
@@ -34,3 +32,8 @@ you point it here.
 1. Video merger (requires video versioning first): Sometimes videos get re-edited and reuploaded and this causes them to have a different link. This feature would add an option to add the new link in the video library view and the metadata will replace the main link to the video (to keep updating and downloading if he wants to) but keep the original video data in a version marked (legacy/deleted from youtube)
 2. Small improvements to the embedded local player:
    - remove the buffer looking effect in the local player it could confuse users thinking they are watching the video online
+
+### Bugs found
+
+* When a list is being added as bulk add and the user chooses to click on "stop after item" the downloads stop but the stop after item spinner never stops spinning and the resume buttons don't show up again
+* On the first pass of bulk add the playlist data saved doesn't create or link to the library entry of the added videos. The user needs to move to the playlist view and hit refresh to be able to see the little go to video icon.

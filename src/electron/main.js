@@ -48,6 +48,17 @@ const ffprobeBinaryName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprob
 const ffmpegBinaryPath = path.join(ffmpegDir, ffmpegBinaryName);
 const ffprobeBinaryPath = path.join(ffmpegDir, ffprobeBinaryName);
 
+// Bundled the same way as ffmpeg/ffprobe above -- yt-dlp needs an actual JS
+// runtime to solve YouTube's nsig signature challenge (TD-010, reports/
+// TechnicalDebt.md); without one, every real video/audio format silently
+// disappears the moment a request is authenticated (cookies loaded), leaving
+// only storyboard formats behind. Bundled rather than relying on the user
+// having Node/Deno installed themselves, matching this app's existing
+// zero-external-dependency approach for ffmpeg and yt-dlp itself.
+const denoDir = isDev ? path.resolve(__dirname, '../deno') : path.join(process.resourcesPath, 'deno');
+const denoBinaryName = process.platform === 'win32' ? 'deno.exe' : 'deno';
+const denoBinaryPath = path.join(denoDir, denoBinaryName);
+
 // The bundled ytdlp-bin lives under extraResources (Contents/Resources on
 // mac, the installed resources dir on Windows), which isn't reliably
 // writable without elevation -- so the updater can never swap a fresh binary
@@ -95,6 +106,14 @@ export function cookiesArgs() {
         return ['--cookies-from-browser', cookiesBrowser];
     }
     return fs.existsSync(cookiesPath) ? ['--cookies', cookiesPath] : [];
+}
+
+// Points yt-dlp at the bundled deno binary rather than letting it search the
+// system PATH (which the "js-runtimes" default probe does on its own, but
+// only for a runtime it happens to find -- not guaranteed on a real user's
+// machine). See denoBinaryPath's own comment (TD-010) for why this exists.
+export function jsRuntimeArgs() {
+    return ['--js-runtimes', `deno:${denoBinaryPath}`];
 }
 
 function readSettings() {
@@ -411,7 +430,7 @@ function fetchChannelAvatarUrl(channelId) {
         const channelUrl = `https://www.youtube.com/channel/${channelId}`;
         const script = spawn(ytdlpPath, [
             '-J', '--no-warnings', '--flat-playlist', '--playlist-end', '1',
-            '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), channelUrl,
+            '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), channelUrl,
         ]);
         let data = '';
         script.on('error', () => resolve(null));
@@ -605,7 +624,7 @@ function fetchPlaylistEntries(playlistUrl) {
     return new Promise((resolve, reject) => {
         const script = spawn(ytdlpPath, [
             '-J', '--no-warnings', '--flat-playlist',
-            '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), playlistUrl,
+            '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), playlistUrl,
         ]);
         let data = '';
         let error = '';
@@ -1137,7 +1156,7 @@ const DEAD_VIDEO_ERROR_PATTERNS = [
 // back empty" path for a YouTube URL, never on a normal successful fetch.
 function classifyDeadYouTubeVideo(url) {
     return new Promise((resolve) => {
-        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), url]);
+        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url]);
         let stderrOutput = '';
         let settled = false;
         // This only ever runs on a path that already failed once (the
@@ -1197,7 +1216,7 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
         // that failure mode non-fatal. Verified directly: reproduced this
         // exact error with a deliberately-unmatchable -f selector (no cookies
         // needed) and confirmed this flag alone makes -J succeed regardless.
-        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ignore-no-formats-error', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), url]);
+        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ignore-no-formats-error', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url]);
         let data = '';
         let error = '';
 
@@ -1317,6 +1336,7 @@ export function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteM
         '--progress-template', 'postprocess:POSTPROCESS|%(progress.status)s|%(progress.postprocessor)s',
         '--ffmpeg-location', ffmpegDir,
         ...cookiesArgs(),
+        ...jsRuntimeArgs(),
         '-o', outputPath || '%(title)s.%(ext)s',
     ];
 

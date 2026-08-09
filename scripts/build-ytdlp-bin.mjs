@@ -66,6 +66,12 @@ run(venvPyinstaller, [
     '--workpath', pyinstallerWorkDir,
     '--specpath', pyinstallerWorkDir,
     '--collect-all', 'yt_dlp',
+    // Bundles yt-dlp's JS-challenge solver scripts (TD-010, reports/TechnicalDebt.md)
+    // so solving YouTube's nsig challenge doesn't require the app to fetch them
+    // from GitHub at runtime (yt-dlp's own --remote-components ejs:github
+    // fallback). requirements-build.txt installs yt-dlp[default] specifically
+    // to pull this package in.
+    '--collect-all', 'yt_dlp_ejs',
     '--noconfirm',
     path.join(rootDir, 'src', 'python', 'ytdlp_entrypoint.py'),
 ]);

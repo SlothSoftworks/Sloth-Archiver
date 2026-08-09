@@ -189,7 +189,11 @@ async function ensurePyinstaller(pythonExe, onProgress) {
 
 async function rebuildYtdlp({ pythonExe, pythonSrcDir, stagingWorkDir, onProgress }) {
     onProgress?.('fetching-yt-dlp');
-    await run(pythonExe, ['-m', 'pip', 'install', '--quiet', '--upgrade', 'yt-dlp']);
+    // [default] pulls in yt-dlp-ejs (TD-010, reports/TechnicalDebt.md) -- the
+    // JS-challenge solver scripts YouTube's nsig challenge needs, mirroring
+    // scripts/build-ytdlp-bin.mjs's own requirements-build.txt pin so a
+    // self-updated binary doesn't regress back to the un-bundled state.
+    await run(pythonExe, ['-m', 'pip', 'install', '--quiet', '--upgrade', 'yt-dlp[default]']);
 
     onProgress?.('building');
     const rawDist = path.join(stagingWorkDir, 'raw');
@@ -205,6 +209,7 @@ async function rebuildYtdlp({ pythonExe, pythonSrcDir, stagingWorkDir, onProgres
         '--workpath', pyinstallerWorkDir,
         '--specpath', pyinstallerWorkDir,
         '--collect-all', 'yt_dlp',
+        '--collect-all', 'yt_dlp_ejs',
         '--noconfirm',
         path.join(pythonSrcDir, 'ytdlp_entrypoint.py'),
     ]);
