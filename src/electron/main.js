@@ -10,7 +10,7 @@ import os from 'node:os';
 
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, sanitizeForFilesystem } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, sanitizeForFilesystem } from './library.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -594,6 +594,21 @@ ipcMain.handle('library:addVersion', async (e, { videoDir, videoMetaData }) => {
     return { success: true, videoDir: result.videoDir, epoch: result.epoch, metadata: result.metadata };
 });
 
+// "Refresh from YouTube" on the version currently displayed -- the renderer
+// already fetched fresh videoMetaData (getVideoInfoPython, same as every
+// other refresh/add path) before calling this; this just writes it into the
+// existing epoch in place, see refreshLibraryEntryMetadata's own comment.
+ipcMain.handle('library:refreshEntry', async (e, { videoDir, epoch, videoMetaData }) => {
+    const { libraryDir } = readSettings();
+    const metadata = refreshLibraryEntryMetadata({ libraryDir, videoDir, epoch, videoMetaData });
+    await refreshLibraryIndex(libraryDir);
+    Promise.all([
+        ensureChannelIcon(path.dirname(videoDir), videoMetaData.channelId),
+        ensureVideoThumbnail(videoDir, videoMetaData.thumbnail),
+    ]).then(() => refreshLibraryIndex(libraryDir)).then(notifyLibraryBackgroundUpdate);
+    return { success: true, metadata };
+});
+
 // Flat-playlist entries carry more than just id/title/url for free (no extra
 // per-video fetch) -- confirmed directly against a real playlist: each entry
 // already has its own `thumbnails[]` array and (when YouTube happens to
@@ -736,7 +751,7 @@ ipcMain.handle('library:listPlaylists', async () => {
 ipcMain.handle('library:getPlaylist', async (e, playlistId) => {
     const { libraryDir } = readSettings();
     if (!libraryDir) return { playlist: null };
-    return { playlist: getPlaylistSnapshot({ libraryDir, playlistId }) };
+    return { playlist: await getPlaylistSnapshot({ libraryDir, playlistId }) };
 });
 
 // The explicit "Refresh" action -- re-fetches the playlist fresh from
@@ -751,12 +766,12 @@ ipcMain.handle('library:refreshPlaylist', async (e, playlistId) => {
         return { success: false, message: 'No library folder configured.' };
     }
     try {
-        const saved = getPlaylistSnapshot({ libraryDir, playlistId });
+        const index = await getLibraryIndex(libraryDir);
+        const saved = await getPlaylistSnapshot({ libraryDir, playlistId, index });
         if (!saved || !saved.originalUrl) {
             return { success: false, message: 'This playlist has no saved snapshot to refresh.' };
         }
         const fresh = await fetchPlaylistEntries(saved.originalUrl);
-        const index = await getLibraryIndex(libraryDir);
         const result = reconcilePlaylistSnapshot({
             libraryDir,
             playlistId,

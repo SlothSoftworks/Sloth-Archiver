@@ -37,3 +37,4 @@ you point it here.
 
 * When a list is being added as bulk add and the user chooses to click on "stop after item" the downloads stop but the stop after item spinner never stops spinning and the resume buttons don't show up again
 * On the first pass of bulk add the playlist data saved doesn't create or link to the library entry of the added videos. The user needs to move to the playlist view and hit refresh to be able to see the little go to video icon.
+* Not exactly a bug but a gap in the features. In some scenarios a "refresh youtube" button is needed in the view view. This feature was around before basically a version of download new version but that explaces the version selected. Add it back to help the user refresh data easiert

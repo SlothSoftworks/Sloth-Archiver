@@ -122,6 +122,7 @@ declare global {
             addLibraryEntry: (videoMetaData: T) => Promise<{ success: boolean; videoDir: string; epoch: string }>
             overrideLibraryEntry: (videoMetaData: T, existingVideoDir: string) => Promise<{ success: boolean; videoDir: string }>
             addLibraryVersion: (videoMetaData: T, videoDir: string) => Promise<{ success: boolean; videoDir: string; epoch: string; metadata: LibraryVideoMetadata }>
+            refreshLibraryEntry: (videoDir: string, epoch: string, videoMetaData: T) => Promise<{ success: boolean; metadata: LibraryVideoMetadata }>
             findLibraryVideo: (videoId: string) => Promise<{ found: boolean; channelDisplayName?: string; videoDir?: string }>
             fetchPlaylistEntries: (playlistUrl: string) => Promise<{ success: boolean; entries?: { id: string; title: string | null; url: string; thumbnailUrl: string; uploadDate: string | null }[]; playlistId?: string; message?: string }>
             enrichPlaylistEntry: (payload: { playlistId: string; videoId: string; title?: string | null; uploadDate?: string | null; thumbnailUrl?: string | null }) => Promise<{ success: boolean; message?: string }>

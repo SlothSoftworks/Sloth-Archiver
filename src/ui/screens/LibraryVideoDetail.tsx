@@ -33,6 +33,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import DownloadDoneIcon from '@mui/icons-material/DownloadDone';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import AudiotrackIcon from '@mui/icons-material/Audiotrack';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
@@ -224,6 +225,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const [swappingQuality, setSwappingQuality] = useState(false);
   const [creatingVersion, setCreatingVersion] = useState(false);
   const [createVersionError, setCreateVersionError] = useState<string | null>(null);
+  const [refreshingMetadata, setRefreshingMetadata] = useState(false);
+  const [refreshMetadataError, setRefreshMetadataError] = useState<string | null>(null);
   // 'initial' vs 'swap' decides which backend call the isDone effect below
   // makes -- both flows reuse the same useDownloadVideo() instance below
   // (startDownload resets isDone/isError/progress at the start of every
@@ -361,6 +364,36 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
       setCreateVersionError(err instanceof Error ? err.message : 'Failed to create a new version.');
     } finally {
       setCreatingVersion(false);
+    }
+  };
+
+  // "Refresh from YouTube" -- re-fetches live data the same way "Download new
+  // version" does, but writes it into the *currently selected* version in
+  // place (refreshLibraryEntry) instead of adding a new one. For when the
+  // version itself hasn't changed (still the video you want), just its
+  // metadata has gone stale -- a retitled video, a description edit, or one
+  // that's since gone private/unlisted and should be flagged as such.
+  const handleRefreshFromYouTube = async () => {
+    if (!metadata.originalUrl || !selectedEpoch) return;
+    setRefreshingMetadata(true);
+    setRefreshMetadataError(null);
+    try {
+      await window.electronAPI.deleteVideoInfoCacheEntry(metadata.originalUrl);
+      const result = await window.electronAPI.getVideoInfoPython(metadata.originalUrl);
+      if (!result.success) {
+        throw new Error('Failed to fetch fresh video data.');
+      }
+      const freshResponse = result.data.response;
+      if (!freshResponse.channelId && !freshResponse.uploader) {
+        throw new Error('This video appears to be unavailable on YouTube (private, deleted, or removed) -- nothing was changed.');
+      }
+      const refreshed = await window.electronAPI.refreshLibraryEntry(video.videoDir, selectedEpoch, freshResponse);
+      setMetadata(refreshed.metadata);
+      await onVersionsChanged();
+    } catch (err) {
+      setRefreshMetadataError(err instanceof Error ? err.message : 'Failed to refresh this version from YouTube.');
+    } finally {
+      setRefreshingMetadata(false);
     }
   };
 
@@ -693,12 +726,24 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           />
         </Stack>
         <Stack direction="row" spacing={0.5}>
+          <Tooltip title="Refresh this version from YouTube (updates its data in place)">
+            <span>
+              <IconButton
+                size="small"
+                onClick={handleRefreshFromYouTube}
+                disabled={refreshingMetadata || creatingVersion || !metadata.originalUrl}
+                aria-label="Refresh from YouTube"
+              >
+                {refreshingMetadata ? <CircularProgress size={18} /> : <RefreshIcon fontSize="small" />}
+              </IconButton>
+            </span>
+          </Tooltip>
           <Tooltip title="Download new version (re-fetches live data)">
             <span>
               <IconButton
                 size="small"
                 onClick={handleDownloadNewVersion}
-                disabled={creatingVersion || !metadata.originalUrl}
+                disabled={creatingVersion || refreshingMetadata || !metadata.originalUrl}
                 aria-label="Download new version"
               >
                 {creatingVersion ? <CircularProgress size={18} /> : <AddCircleOutlineIcon fontSize="small" />}
@@ -724,6 +769,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
       </Stack>
       {createVersionError &&
         <Typography color="error" variant="body2" sx={{ mb: 2 }}>{createVersionError}</Typography>}
+      {refreshMetadataError &&
+        <Typography color="error" variant="body2" sx={{ mb: 2 }}>{refreshMetadataError}</Typography>}
 
       {/* Keyed on the selected version so switching versions always forces a
           full remount of the player + download panel below, instead of

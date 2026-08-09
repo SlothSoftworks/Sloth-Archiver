@@ -321,14 +321,24 @@ function useBulkAddQueueState() {
     if (result.isError) {
       updateItem(itemId, { status: 'failed', error: 'Download failed.' });
     } else {
-      await window.electronAPI.recordLibraryDownload({
-        videoDir: meta.videoDir,
-        epoch: meta.epoch,
-        filePath: result.finalFilePath,
-        resolution: meta.resolution,
-        kind: meta.kind,
-      });
-      updateItem(itemId, { status: 'done' });
+      // recordLibraryDownload is a real IPC call (writes metadata to disk) and
+      // can reject -- an uncaught rejection here used to throw out of this
+      // async function entirely, skipping freeSlot below and leaving this
+      // slot permanently marked busy. Since freeSlot is what lets
+      // isRunning/stopRequested ever reset, that wedged the whole queue's
+      // "stop after current item"/resume UI forever, not just this one item.
+      try {
+        await window.electronAPI.recordLibraryDownload({
+          videoDir: meta.videoDir,
+          epoch: meta.epoch,
+          filePath: result.finalFilePath,
+          resolution: meta.resolution,
+          kind: meta.kind,
+        });
+        updateItem(itemId, { status: 'done' });
+      } catch (err) {
+        updateItem(itemId, { status: 'failed', error: err instanceof Error ? err.message : String(err) });
+      }
     }
     await sleep(ITEM_DELAY_MS);
     freeSlot(slot);

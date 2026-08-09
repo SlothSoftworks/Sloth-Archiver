@@ -34,6 +34,7 @@ export const electronAPIMock = {
     addLibraryEntry: async () => ({ success: true, videoDir: '', epoch: '' }),
     overrideLibraryEntry: async () => ({ success: true, videoDir: '' }),
     addLibraryVersion: async () => ({ success: true, videoDir: '', epoch: '', metadata: {} }),
+    refreshLibraryEntry: async () => ({ success: true, metadata: {} }),
     findLibraryVideo: async () => ({ found: false }),
     fetchPlaylistEntries: async () => ({ success: true, entries: [] }),
     enrichPlaylistEntry: async () => ({ success: true }),

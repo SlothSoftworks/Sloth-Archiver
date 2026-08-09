@@ -141,6 +141,40 @@ export function addLibraryVersion({ libraryDir, videoDir, videoMetaData }) {
     return { videoDir: resolvedVideoDir, epochDir, epoch: String(addedEpoch), metadata };
 }
 
+// "Refresh from YouTube" on a single already-tracked version -- re-fetches
+// current metadata (title/description/thumbnail/upload date/resolutions,
+// etc.) and writes it into the *same* epoch, rather than either of the two
+// existing update paths: overrideLibraryEntry replaces the whole video
+// (every version, a fresh videoDir derivation and all), and addLibraryVersion
+// adds a brand new epoch. Neither fits "the data for this specific version
+// went stale (title changed, video went private/unlisted, etc.) -- update it
+// in place." download bookkeeping (downloadedFilePath/downloadedResolution/
+// downloadedFormat/downloadedAudioFilePath) is deliberately carried over from
+// the existing metadata rather than reset to null the way a brand-new
+// epoch's would be -- refreshing metadata never touches whatever's already
+// on disk for this version.
+export function refreshLibraryEntryMetadata({ libraryDir, videoDir, epoch, videoMetaData }) {
+    const resolvedLibraryDir = path.resolve(libraryDir || '');
+    const resolvedVideoDir = path.resolve(videoDir || '');
+    const relative = path.relative(resolvedLibraryDir, resolvedVideoDir);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('Refusing to refresh a path outside the configured library folder.');
+    }
+
+    const metadataPath = path.join(resolvedVideoDir, epoch, 'metadata.json');
+    const existing = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    const fresh = buildEpochMetadata(videoMetaData, existing.addedEpoch);
+    const merged = {
+        ...fresh,
+        downloadedFilePath: existing.downloadedFilePath ?? null,
+        downloadedResolution: existing.downloadedResolution ?? null,
+        downloadedFormat: existing.downloadedFormat ?? null,
+        downloadedAudioFilePath: existing.downloadedAudioFilePath ?? null,
+    };
+    fs.writeFileSync(metadataPath, JSON.stringify(merged, null, 2), 'utf-8');
+    return merged;
+}
+
 // Called after a download into the library completes -- updates the specific
 // epoch's metadata.json in place rather than writing a new epoch, since
 // fulfilling an already-tracked entry isn't itself a new version (unlike the
@@ -586,7 +620,17 @@ export function listPlaylistSnapshots({ libraryDir }) {
 // Full detail for one saved playlist -- backs the Playlists section's detail
 // view (entries, localFiles) and tells the UI whether Undo has anything to
 // act on.
-export function getPlaylistSnapshot({ libraryDir, playlistId }) {
+//
+// localFiles is recomputed fresh against the current library index on every
+// read here, rather than trusting whatever was last written to disk (by
+// writePlaylistSnapshot or reconcilePlaylistSnapshot) -- it's a purely local
+// "is this video in my library right now" lookup (findVideoInIndex), cheap
+// enough to redo on every read, and disk staleness was a real bug: a video
+// bulk-added *after* this playlist was first saved (the common case -- the
+// snapshot is written before the bulk-add loop has added anything yet) had
+// no "go to library" link until the user explicitly hit "Refresh from
+// YouTube", which does a full re-fetch from yt-dlp for a purely local fact.
+export async function getPlaylistSnapshot({ libraryDir, playlistId, index }) {
     const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
     const epochDir = resolvePlaylistEpochDir(playlistDir);
     if (!epochDir) return null;
@@ -610,8 +654,16 @@ export function getPlaylistSnapshot({ libraryDir, playlistId }) {
         // No previousMetadata.json (nothing to undo) -- stays null.
     }
 
+    const resolvedIndex = index || await getLibraryIndex(libraryDir);
+    const localFiles = {};
+    for (const entry of metadata.entries || []) {
+        const match = findVideoInIndex(resolvedIndex, entry.videoId);
+        localFiles[entry.videoId] = match ? match.video.videoDir : null;
+    }
+
     return {
         ...metadata,
+        localFiles,
         hasPreviousMetadata: previousMetadataSavedEpoch !== null,
         previousMetadataSavedEpoch,
     };
