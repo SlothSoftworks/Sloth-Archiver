@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import DownloaderScreen from './DownloaderScreen';
 import { LibraryNotificationProvider } from '../hooks/useLibraryNotifications';
 
@@ -38,7 +39,11 @@ beforeEach(() => {
 });
 
 function renderScreen() {
-  return render(<LibraryNotificationProvider><DownloaderScreen /></LibraryNotificationProvider>);
+  return render(
+    <MemoryRouter>
+      <LibraryNotificationProvider><DownloaderScreen /></LibraryNotificationProvider>
+    </MemoryRouter>,
+  );
 }
 
 describe('DownloaderScreen', () => {

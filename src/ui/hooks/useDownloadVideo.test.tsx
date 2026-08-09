@@ -18,8 +18,13 @@ beforeEach(() => {
   } as unknown as typeof window.electronAPIPythonDownload;
 });
 
-function emit(msg: DownloadProgressMessage) {
-  act(() => registeredCallback?.(msg));
+// requestId defaults to null (matching requestIdRef's own initial value,
+// before startDownload has ever been called) so these events pass
+// useDownloadVideo's TD-008 requestId filter for a hook under test that
+// never actually started a download -- these tests are only exercising the
+// message-type switch/reducer logic itself, not requestId routing.
+function emit(msg: Omit<DownloadProgressMessage, 'requestId'> & { requestId?: string | null }) {
+  act(() => registeredCallback?.({ requestId: null, ...msg } as DownloadProgressMessage));
 }
 
 describe('useDownloadVideo', () => {
@@ -30,6 +35,7 @@ describe('useDownloadVideo', () => {
 
     expect(window.electronAPIPythonDownload.startDownloadPython).toHaveBeenCalledWith({
       videoUrl: 'u', outputPath: 'o', format: undefined, resolution: '720', overwriteMode: undefined, additionalOptions: undefined,
+      requestId: expect.any(String),
     });
     expect(result.current.downloadProgress).toBe(0);
     expect(result.current.isDone).toBe(false);
@@ -75,8 +81,8 @@ describe('useDownloadVideo', () => {
 
   it('sets isError and downloadError on an error event', () => {
     const { result } = renderHook(() => useDownloadVideo());
-    const errorMsg = { type: 'error', payload: { message: 'boom' } as unknown as DownloadProgressMessage['payload'] };
-    emit(errorMsg as DownloadProgressMessage);
+    const errorMsg = { requestId: null, type: 'error', payload: { message: 'boom' } as unknown as DownloadProgressMessage['payload'] };
+    emit(errorMsg as unknown as DownloadProgressMessage);
     expect(result.current.isError).toBe(true);
     expect(result.current.downloadError).toEqual(errorMsg);
   });

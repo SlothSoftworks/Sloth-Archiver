@@ -10,6 +10,7 @@ beforeEach(() => {
     ...window.electronAPI,
     fetchPlaylistEntries: vi.fn(),
     getVideoInfoPython: vi.fn(() => new Promise(() => {})),
+    getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
   };
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),

@@ -10,16 +10,17 @@ import { describe, it, expect, vi } from 'vitest';
 // including plain `const` declarations -- vi.hoisted() is what lets these
 // mock fns exist early enough for the factory below to close over them
 // without hitting a temporal-dead-zone ReferenceError.
-const { invoke, on, removeAllListeners, exposeInMainWorld } = vi.hoisted(() => ({
+const { invoke, on, removeAllListeners, removeListener, exposeInMainWorld } = vi.hoisted(() => ({
   invoke: vi.fn(),
   on: vi.fn(),
   removeAllListeners: vi.fn(),
+  removeListener: vi.fn(),
   exposeInMainWorld: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld },
-  ipcRenderer: { invoke, on, removeAllListeners },
+  ipcRenderer: { invoke, on, removeAllListeners, removeListener },
 }));
 
 // vi.mock calls are hoisted above imports, so this static import runs against
@@ -147,13 +148,13 @@ describe('electronAPIPythonDownload', () => {
   it('onProgressUpdate/removeProgressListener wire to the progressUpdate channel', () => {
     on.mockClear();
     const callback = vi.fn();
-    electronAPIPythonDownload.onProgressUpdate(callback);
+    const listener = electronAPIPythonDownload.onProgressUpdate(callback);
     expect(on).toHaveBeenCalledWith('progressUpdate', expect.any(Function));
     on.mock.calls[0][1]({}, { type: 'progress' });
     expect(callback).toHaveBeenCalledWith({ type: 'progress' });
 
-    removeAllListeners.mockClear();
-    electronAPIPythonDownload.removeProgressListener();
-    expect(removeAllListeners).toHaveBeenCalledWith('progressUpdate');
+    removeListener.mockClear();
+    electronAPIPythonDownload.removeProgressListener(listener);
+    expect(removeListener).toHaveBeenCalledWith('progressUpdate', listener);
   });
 });

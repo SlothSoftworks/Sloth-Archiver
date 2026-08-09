@@ -6,11 +6,18 @@ import type { DownloadProgressMessage } from '../../types';
 
 const ITEM_DELAY_MS = 2000;
 
-let registeredDownloadCallback: ((msg: DownloadProgressMessage) => void) | null = null;
+// A real array, not a single slot -- the queue mounts one useDownloadVideo()
+// instance per download slot (MAX_DOWNLOAD_SLOTS), each registering its own
+// onProgressUpdate listener on this one shared channel, same as real
+// Electron's ipcRenderer.on() supports several simultaneous listeners.
+// Overwriting a single captured callback (as this used to) meant
+// emitDownloadEvent below only ever reached whichever slot mounted last,
+// never the one that actually started a real download.
+let registeredDownloadCallbacks: ((msg: DownloadProgressMessage) => void)[] = [];
 
 beforeEach(() => {
   vi.useFakeTimers();
-  registeredDownloadCallback = null;
+  registeredDownloadCallbacks = [];
 
   window.electronAPI = {
     ...window.electronAPI,
@@ -19,16 +26,32 @@ beforeEach(() => {
     findLibraryVideo: vi.fn(),
     addLibraryEntry: vi.fn(),
     recordLibraryDownload: vi.fn().mockResolvedValue({ success: true }),
+    getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
   };
   // Cast needed at this boundary because electron-api.d.ts's onProgressUpdate
   // signature is typed with a loose, unbound `T` generic (a pre-existing
   // looseness in that file, not something worth fighting per test file).
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),
-    onProgressUpdate: vi.fn((cb: (msg: DownloadProgressMessage) => void) => { registeredDownloadCallback = cb; }),
-    removeProgressListener: vi.fn(),
+    onProgressUpdate: vi.fn((cb: (msg: DownloadProgressMessage) => void) => {
+      registeredDownloadCallbacks.push(cb);
+      return cb;
+    }),
+    removeProgressListener: vi.fn((cb: (msg: DownloadProgressMessage) => void) => {
+      registeredDownloadCallbacks = registeredDownloadCallbacks.filter((l) => l !== cb);
+    }),
   } as unknown as typeof window.electronAPIPythonDownload;
 });
+
+// The requestId of the most recently started download -- generated
+// internally by useDownloadVideo's startDownload (crypto.randomUUID()), not
+// something a test can predict up front, so this reads it back off the
+// startDownloadPython mock instead. Needed because useDownloadVideo (TD-008)
+// filters every incoming message against its own in-flight requestId.
+function getLastStartedRequestId(): string {
+  const calls = (window.electronAPIPythonDownload.startDownloadPython as ReturnType<typeof vi.fn>).mock.calls;
+  return calls[calls.length - 1][0].requestId;
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -48,8 +71,9 @@ async function advancePastItemDelay() {
   await act(async () => { await vi.advanceTimersByTimeAsync(ITEM_DELAY_MS); });
 }
 
-function emitDownloadEvent(msg: DownloadProgressMessage) {
-  act(() => registeredDownloadCallback?.(msg));
+function emitDownloadEvent(msg: Omit<DownloadProgressMessage, 'requestId'> & { requestId?: string }) {
+  const fullMsg = { requestId: getLastStartedRequestId(), ...msg } as DownloadProgressMessage;
+  act(() => registeredDownloadCallbacks.forEach((cb) => cb(fullMsg)));
 }
 
 describe('getRetryStage', () => {

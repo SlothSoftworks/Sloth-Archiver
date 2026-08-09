@@ -36,8 +36,16 @@ beforeEach(() => {
   } as unknown as typeof window.electronAPIPythonDownload;
 });
 
-function emit(msg: DownloadProgressMessage) {
-  registeredCallback?.(msg);
+// requestId echoes back whatever startDownload actually generated
+// (crypto.randomUUID(), TD-008) -- useDownloadVideo filters every incoming
+// message against it, so a message emitted without one is silently dropped.
+function getLastRequestId(): string {
+  const calls = (window.electronAPIPythonDownload.startDownloadPython as ReturnType<typeof vi.fn>).mock.calls;
+  return calls[calls.length - 1][0].requestId;
+}
+
+function emit(msg: Omit<DownloadProgressMessage, 'requestId'> & { requestId?: string }) {
+  registeredCallback?.({ requestId: getLastRequestId(), ...msg } as DownloadProgressMessage);
 }
 
 describe('VideoDetailCard', () => {
@@ -127,12 +135,13 @@ describe('VideoDetailCard', () => {
     render(<VideoDetailCard videoMetaData={videoMetaData} />);
     await user.click(screen.getByRole('button', { name: /720p/ }));
 
+    const requestId = getLastRequestId();
     emit({ type: 'error', payload: { message: 'network gone' } as unknown as DownloadProgressMessage['payload'] });
     expect(await screen.findByText('Download failed')).toBeInTheDocument();
 
     const detailsButton = screen.getByRole('button', { name: /Details/ });
     await user.click(detailsButton);
     expect(screen.getByText('A bug has been encountered')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Bug trace')).toHaveValue(JSON.stringify({ type: 'error', payload: { message: 'network gone' } }));
+    expect(screen.getByPlaceholderText('Bug trace')).toHaveValue(JSON.stringify({ requestId, type: 'error', payload: { message: 'network gone' } }));
   });
 });

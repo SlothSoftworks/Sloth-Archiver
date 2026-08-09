@@ -30,6 +30,8 @@ beforeEach(() => {
     removeYtdlpUpdateProgressListener: vi.fn(),
     getThemeMode: vi.fn().mockResolvedValue({ themeMode: 'light' }),
     setThemeMode: vi.fn().mockResolvedValue({ success: true, themeMode: 'dark' }),
+    getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
+    setMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ success: true, maxSimultaneousDownloads: 1 }),
   };
 });
 

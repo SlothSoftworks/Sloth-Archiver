@@ -44,8 +44,16 @@ function makeVideo(metadataOverrides: Record<string, unknown> = {}, videoOverrid
   };
 }
 
-function emit(msg: DownloadProgressMessage) {
-  registeredCallback?.(msg);
+// requestId echoes back whatever startDownload actually generated
+// (crypto.randomUUID(), TD-008) -- useDownloadVideo filters every incoming
+// message against it, so a message emitted without one is silently dropped.
+function getLastRequestId(): string {
+  const calls = (window.electronAPIPythonDownload.startDownloadPython as ReturnType<typeof vi.fn>).mock.calls;
+  return calls[calls.length - 1][0].requestId;
+}
+
+function emit(msg: Omit<DownloadProgressMessage, 'requestId'> & { requestId?: string }) {
+  registeredCallback?.({ requestId: getLastRequestId(), ...msg } as DownloadProgressMessage);
 }
 
 beforeEach(() => {
@@ -247,7 +255,7 @@ describe('LibraryVideoDetail', () => {
 
   it('downloads a new version by re-fetching live data', async () => {
     const video = makeVideo();
-    const newMetadata = baseMetadata({ title: 'Alpha Video V2' });
+    const newMetadata = baseMetadata({ title: 'Alpha Video V2', channelId: 'UC1' });
     (window.electronAPI.getVideoInfoPython as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: true, data: { response: newMetadata, fromCache: false },
     });

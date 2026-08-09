@@ -205,8 +205,8 @@ describe('reshapeVideoInfo', () => {
 });
 
 describe('isDeadVideoInfo', () => {
-  it('is dead when there are no resolutions', () => {
-    expect(isDeadVideoInfo({ resolutions: [], channelId: 'UC1' })).toBe(true);
+  it('is alive with no resolutions as long as channelId/uploader is set (e.g. an audio-only SoundCloud source)', () => {
+    expect(isDeadVideoInfo({ resolutions: [], channelId: 'UC1' })).toBe(false);
   });
 
   it('is dead when there is no channelId and no uploader', () => {

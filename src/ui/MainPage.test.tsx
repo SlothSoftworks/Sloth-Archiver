@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import MainPage from './MainPage';
 import { LibraryNotificationProvider, useLibraryNotification } from './hooks/useLibraryNotifications';
 
@@ -27,10 +28,12 @@ function IncrementButton() {
 
 function renderMainPage() {
   return render(
-    <LibraryNotificationProvider>
-      <IncrementButton />
-      <MainPage />
-    </LibraryNotificationProvider>,
+    <MemoryRouter>
+      <LibraryNotificationProvider>
+        <IncrementButton />
+        <MainPage />
+      </LibraryNotificationProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -63,12 +66,14 @@ describe('MainPage', () => {
     await user.click(screen.getByText('increment (test)'));
     expect(screen.getByText('2')).toBeInTheDocument();
 
-    // MUI's Badge keeps rendering its last content when it drops to 0 --
-    // showZero is false, so it just hides the node behind an "invisible"
-    // class rather than removing it, hence the class check instead of an
-    // absence-of-text assertion.
+    // showZero is false, so the reset badgeContent=0 doesn't remove the node,
+    // just hides it behind an "invisible" class -- queried directly rather
+    // than by text, since whether MUI's badge still shows its last content
+    // ("2") or the new one ("0") mid-transition is a cosmetic implementation
+    // detail, not something this feature's actual contract (the count resets
+    // and the badge hides) depends on.
     await user.click(screen.getByRole('tab', { name: /Library/ }));
-    expect(screen.getByText('2')).toHaveClass('MuiBadge-invisible');
+    expect(document.querySelector('.MuiBadge-badge')).toHaveClass('MuiBadge-invisible');
   });
 
   it('opens and closes the About dialog', async () => {

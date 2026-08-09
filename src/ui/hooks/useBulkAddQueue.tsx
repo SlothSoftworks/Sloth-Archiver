@@ -193,7 +193,14 @@ function useBulkAddQueueState() {
   // its first await, so the itemsRef.current.find() below never hands the
   // same item to two slots in the same call.
   const fillFreeSlots = () => {
-    if (stopRequestedRef.current) return;
+    // Still has to reach maybeFinishRun below even when stopped -- without
+    // it, isRunning/stopRequested never reset once the last in-flight slot
+    // actually drains post-stop, leaving the UI stuck showing a "stop
+    // requested" queue that never visibly finishes stopping.
+    if (stopRequestedRef.current) {
+      maybeFinishRun();
+      return;
+    }
     const max = Math.min(optionsRef.current.maxSimultaneous, MAX_DOWNLOAD_SLOTS);
     for (let slot = 0; slot < max; slot++) {
       if (slotItemRef.current[slot]) continue;
@@ -350,9 +357,17 @@ function useBulkAddQueueState() {
   // Appends rather than replaces -- pasting a second batch while the first
   // is still running (or sitting finished in the list) queues up after it
   // instead of losing it.
-  const start = async (entries: BulkAddEntry[], options: StartOptions) => {
-    const { maxSimultaneousDownloads } = await window.electronAPI.getMaxSimultaneousDownloads();
-    optionsRef.current = { ...options, maxSimultaneous: maxSimultaneousDownloads };
+  // Deliberately not async, even though it kicks off an async settings fetch
+  // below -- a user pasting a batch and hitting "Add" should see the panel
+  // and "fetching" status appear immediately, in the same tick, not after an
+  // awaited settings fetch (an async start with an await up front previously
+  // regressed exactly this). maxSimultaneous keeps whatever value a previous
+  // start() run (or the initial default of 1) already resolved to for
+  // fillFreeSlots below; the real, current setting is fetched in the
+  // background and applied the moment it's back, re-running fillFreeSlots in
+  // case that unlocks more capacity than the stale/default value allowed for.
+  const start = (entries: BulkAddEntry[], options: StartOptions) => {
+    optionsRef.current = { ...options, maxSimultaneous: optionsRef.current.maxSimultaneous };
     stopRequestedRef.current = false;
     setStopRequested(false);
     const newItems: BulkAddItem[] = entries.map((entry, idx) => ({
@@ -374,6 +389,11 @@ function useBulkAddQueueState() {
     setPanelOpen(true);
     setIsRunning(true);
     fillFreeSlots();
+
+    window.electronAPI.getMaxSimultaneousDownloads().then(({ maxSimultaneousDownloads }) => {
+      optionsRef.current.maxSimultaneous = maxSimultaneousDownloads;
+      fillFreeSlots();
+    });
   };
 
   // Lets every in-flight slot finish its current item (their own promise

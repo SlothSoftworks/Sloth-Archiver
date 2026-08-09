@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
+import type { ReactElement } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import LibraryScreen from './LibraryScreen';
+
+// LibraryScreen reads/matches deep-link routes (useMatch/useNavigate, for
+// /library/video/:videoId) -- needs a real Router context, same reason
+// App.test.tsx already wraps with one.
+function render(ui: ReactElement) {
+  return rtlRender(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 // LibraryVideoDetail is the biggest, most complex file in the app (its own
 // dedicated test file covers it) -- mocked out here so LibraryScreen's tests

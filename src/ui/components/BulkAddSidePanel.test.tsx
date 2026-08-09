@@ -22,6 +22,7 @@ beforeEach(() => {
     enrichPlaylistEntry: vi.fn().mockResolvedValue({ success: true }),
     recordLibraryDownload: vi.fn().mockResolvedValue({ success: true }),
     fetchPlaylistEntries: vi.fn(),
+    getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
   };
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),
