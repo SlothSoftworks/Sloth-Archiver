@@ -18,14 +18,18 @@ you point it here.
    - A feature that let's you export the entire current scan of the library to a unified json that when imported in another instance of the app it will create the structures of the videos in the archive and load the metadata from the json into their corresponding files
 2. Select bulk controllers and download/download all:
    - A dynamic UI feature that allows the user to click non downloaded videos in the video list of the library and click on a download all button that add all of the videos not downloaded to the bulk download list
-   - Ths requires introsucing an identifier between a download job in the side panel and a add to library job (that doesn't require a download)
+   - Ths requires introducing an identifier between a download job in the side panel and a add to library job (that doesn't require a download)
    - The bulk controllers section is this:
      - A user can select one or more items and this will add a new option in the top menu where the other buttons of the video view are which will be a "delete all selected" feature that will delete the entries of the list of selected items and their files
      - The same way there will be a "download selected" which will apply only when all of the items selected aren't downloaded. If even one of the items in the selection list is downloaded this control will dissapear.
+3. Customization of embedded player: this to ad features like "pick timestamp" to the player an communicate it to the clip extractor tool. If possible maybe even have the user select the start and end point of the clip via buttons. Assess both scenarios
+4. Implementation of a more resilient embedded player that supports more codecs like MKV
 
 ### QoL features
 
 1. Language support. Add support for language and set up the ability add more languages in the future via a "strings" style file that the app can reado n startup and load all the messages in the app in any language.
+2. Currently the select from browser cookie option has a quirk where if you select away from it to the paste cookie option and then back to the select from browser option selected and the label "Using Firefox" but in reality it's not selected because the label "executor-android/app/build" is not visible. Let's make it so clicking to the other option removes all these labels and also so there's a "Clear" button so that it revets the selection back to none of the browsers are selecteds
+3. Delete feature for playlist. It's a gap we haven't filled. The delete should be simple just delete the entry in the library and the metadata related. For now don't bother about doing anything with the videos related to the playlist. Add a notice that the videos will not be removed from the library
 
 ### Small features and corrections
 
@@ -34,6 +38,8 @@ you point it here.
    - remove the buffer looking effect in the local player it could confuse users thinking they are watching the video online
 3. Versioning in the internal metadata structures of the saved files, this would allow to identify the structures that might be obsolete when newer features are added and add a notice to the user that they might want to refresh their data or might be missing features
 4. A "copy link" button on every resource with a lik (videos, playlists) to that the user can copy it for any purpose
+5. More ordering options and an "order by" filter button which can include date published, date added to library, channel, title, downloded status, and maybe quality depending on how easy it is to filter for. All of this only in the view by videos option of the library view
+6. Add a small thumbnail to the playlist. It can be the first video on the list or whatever thumbnail can be extracted from the playlist itself. The thumbnail should be updated with the first video on the playlist dynamically if possible but have a fallback thumbnail saved on the playlist directory itself just in case
 
 ### Bugs found
 

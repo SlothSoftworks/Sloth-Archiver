@@ -973,7 +973,12 @@ ipcMain.handle('cookies:getConfig', async () => {
 });
 
 ipcMain.handle('cookies:setConfig', async (e, { cookiesMode, cookiesBrowser }) => {
-    if (cookiesMode === 'browser' && !SUPPORTED_COOKIE_BROWSERS.includes(cookiesBrowser)) {
+    // An empty cookiesBrowser is allowed through even in 'browser' mode --
+    // it's the explicit "Clear" state (no browser selected yet/anymore),
+    // which cookiesArgs() already treats as a no-op fallback to file-mode
+    // cookies (or none). Only a real, non-empty, *unsupported* value is
+    // rejected.
+    if (cookiesMode === 'browser' && cookiesBrowser && !SUPPORTED_COOKIE_BROWSERS.includes(cookiesBrowser)) {
         throw new Error(`Unsupported browser: ${cookiesBrowser}`);
     }
     const settings = readSettings();

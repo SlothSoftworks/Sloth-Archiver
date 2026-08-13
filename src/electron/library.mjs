@@ -19,6 +19,19 @@ const WINDOWS_RESERVED_NAMES = new Set([
 // channel/video view -- a playlist view is future work).
 export const PLAYLISTS_DIR_NAME = 'playlists';
 
+// Bumped whenever buildEpochMetadata's/writePlaylistSnapshot's own written
+// shape gains a field a stale entry won't have (e.g. `resolutions` at 2,
+// `unavailable` on playlist entries at... still 1, tracked separately below
+// since playlist entries are a nested array, not the top-level shape this
+// number describes). Exported so the renderer can compare an entry's own
+// stored `schemaVersion` against "what would get written today" and surface
+// a "this entry predates newer features, refresh it" notice -- see
+// LibraryVideoDetail.tsx/PlaylistsSection.tsx's own duplicated copy of these
+// two numbers (main.js/library.mjs and the renderer never cross-import,
+// matching every other small shared constant in this codebase).
+export const CURRENT_VIDEO_SCHEMA_VERSION = 3;
+export const CURRENT_PLAYLIST_SCHEMA_VERSION = 1;
+
 // One cross-platform sanitizer using Windows' illegal-character set as the
 // superset (rather than branching per-OS) -- keeps folder names identical if
 // the library is ever copied between a Mac and a Windows machine, which
@@ -64,7 +77,7 @@ export function videoFolderName(videoId) {
 function buildEpochMetadata(videoMetaData, addedEpoch) {
     const { id, title, fullTitle, description, thumbnail, originalUrl, duration, durationString, uploadDate, channelId, uploader, resolutions } = videoMetaData;
     return {
-        schemaVersion: 3,
+        schemaVersion: CURRENT_VIDEO_SCHEMA_VERSION,
         videoId: id,
         channelId: channelId || null,
         channel: uploader || null,
@@ -498,7 +511,7 @@ export function writePlaylistSnapshot({ libraryDir, playlistId, title, uploader,
     }
 
     const metadata = {
-        schemaVersion: 1,
+        schemaVersion: CURRENT_PLAYLIST_SCHEMA_VERSION,
         playlistId,
         title: title || null,
         uploader: uploader || null,

@@ -263,12 +263,19 @@ export default function OptionsScreen() {
   // dropdown that follows) -- only persisted once cookiesBrowser is also set,
   // by handleSelectBrowser below. Switching back to 'file' saves immediately
   // since there's nothing further to pick.
+  //
+  // cookiesBrowser is explicitly cleared (both here and persisted) whenever
+  // the user switches away from browser mode -- previously it just sat in
+  // state untouched, so switching to paste-cookie mode and back showed a
+  // stale "Using Firefox" chip/dropdown value even though nothing was
+  // actually selected anymore (a real reported quirk).
   const handleModeChange = async (_e: MouseEvent<HTMLElement>, mode: 'file' | 'browser' | null) => {
     if (!mode || mode === cookiesMode) return;
     setCookiesModeState(mode);
     setBrowserSavedMessage('');
     if (mode === 'file') {
-      await window.electronAPI.setCookiesConfig({ cookiesMode: 'file', cookiesBrowser });
+      setCookiesBrowserState('');
+      await window.electronAPI.setCookiesConfig({ cookiesMode: 'file', cookiesBrowser: '' });
     }
   };
 
@@ -277,6 +284,15 @@ export default function OptionsScreen() {
     await window.electronAPI.setCookiesConfig({ cookiesMode: 'browser', cookiesBrowser: browser });
     const label = COOKIE_BROWSER_LABELS[browser] || browser;
     setBrowserSavedMessage(`Downloads will now pull cookies live from ${label}.`);
+  };
+
+  // Explicit "Clear" -- reverts the selection back to none of the browsers
+  // being selected, without leaving browser mode (unlike switching to paste
+  // mode above, which also clears it as a side effect).
+  const handleClearBrowserSelection = async () => {
+    setCookiesBrowserState('');
+    setBrowserSavedMessage('');
+    await window.electronAPI.setCookiesConfig({ cookiesMode: 'browser', cookiesBrowser: '' });
   };
 
   return (
@@ -511,6 +527,9 @@ export default function OptionsScreen() {
                     color={cookiesBrowser ? 'success' : 'default'}
                     variant="outlined"
                   />
+                  <Button size="small" onClick={handleClearBrowserSelection} disabled={!cookiesBrowser}>
+                    Clear
+                  </Button>
                 </Stack>
                 {browserSavedMessage &&
                   <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>{browserSavedMessage}</Typography>}

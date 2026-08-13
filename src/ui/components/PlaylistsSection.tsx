@@ -24,9 +24,16 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import UndoIcon from '@mui/icons-material/Undo';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
+import LinkIcon from '@mui/icons-material/Link';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
 import LibrarySearchBar from './LibrarySearchBar';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
+
+// Mirrors library.mjs's own CURRENT_PLAYLIST_SCHEMA_VERSION (main process and
+// renderer never cross-import in this codebase, so small shared constants
+// like this get a duplicated copy on each side).
+const CURRENT_PLAYLIST_SCHEMA_VERSION = 1;
 
 // Kept local rather than imported from electron-api.d.ts -- matches how
 // every other library data shape in this app (LibraryScreen.tsx's own
@@ -53,6 +60,7 @@ type PlaylistEntry = {
 };
 
 type PlaylistSnapshot = {
+  schemaVersion?: number;
   playlistId: string;
   title: string | null;
   uploader: string | null;
@@ -87,6 +95,7 @@ export default function PlaylistsSection() {
   const [undoing, setUndoing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [refreshSummary, setRefreshSummary] = useState<{ added: number; removed: number; updated: number } | null>(null);
+  const [linkCopiedSnackbarOpen, setLinkCopiedSnackbarOpen] = useState(false);
   const { query, setQuery, isSearching, filtered: filteredPlaylists, clear } = useLibrarySearch(
     playlists,
     (playlist) => playlist.title || playlist.playlistId,
@@ -114,6 +123,12 @@ export default function PlaylistsSection() {
     setSelectedPlaylistId(playlistId);
     setActionError(null);
     loadDetail(playlistId);
+  };
+
+  const handleCopyLink = async () => {
+    if (!selectedPlaylist?.originalUrl) return;
+    await navigator.clipboard.writeText(selectedPlaylist.originalUrl);
+    setLinkCopiedSnackbarOpen(true);
   };
 
   const handleBack = () => {
@@ -168,9 +183,27 @@ export default function PlaylistsSection() {
           <IconButton onClick={handleBack} size="small" aria-label="Back to playlists">
             <ArrowBackIcon fontSize="small" />
           </IconButton>
+          <Tooltip title="Copy link">
+            <span>
+              <IconButton size="small" onClick={handleCopyLink} disabled={!selectedPlaylist?.originalUrl} aria-label="Copy link">
+                <LinkIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
           <Typography variant="h6" noWrap sx={{ flexGrow: 1, minWidth: 0 }}>
             {selectedPlaylist?.title || selectedPlaylistId}
           </Typography>
+          {selectedPlaylist && (selectedPlaylist.schemaVersion ?? 0) < CURRENT_PLAYLIST_SCHEMA_VERSION &&
+            <Tooltip title="This playlist's saved data predates newer features -- Refresh from YouTube to pick them up">
+              <Chip
+                size="small"
+                color="warning"
+                variant="outlined"
+                icon={<WarningAmberIcon fontSize="small" />}
+                label="Outdated data"
+                sx={{ flexShrink: 0 }}
+              />
+            </Tooltip>}
           {selectedPlaylist?.hasPreviousMetadata &&
             <Tooltip
               title={selectedPlaylist.previousMetadataSavedEpoch
@@ -258,6 +291,17 @@ export default function PlaylistsSection() {
             }
           >
             {refreshSummary && `Refreshed: ${refreshSummary.added} added, ${refreshSummary.removed} removed, ${refreshSummary.updated} updated.`}
+          </Alert>
+        </Snackbar>
+
+        <Snackbar
+          open={linkCopiedSnackbarOpen}
+          autoHideDuration={3000}
+          onClose={() => setLinkCopiedSnackbarOpen(false)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert onClose={() => setLinkCopiedSnackbarOpen(false)} severity="success" variant="filled">
+            Link copied
           </Alert>
         </Snackbar>
       </Box>

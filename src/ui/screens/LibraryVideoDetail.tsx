@@ -41,6 +41,8 @@ import ContentCutIcon from '@mui/icons-material/ContentCut';
 import LabelOutlinedIcon from '@mui/icons-material/LabelOutlined';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import LinkIcon from '@mui/icons-material/Link';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
 import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
@@ -50,6 +52,7 @@ import LibraryVideoPlayer from '../components/LibraryVideoPlayer';
 type LibraryResolution = { resolution: string; filesizeMb: string };
 
 export type LibraryVideoMetadata = {
+  schemaVersion?: number;
   videoId: string;
   channel: string | null;
   title: string | null;
@@ -133,6 +136,15 @@ function stepClipTimestamp(value: string, deltaSeconds: number): string {
 // manages (that one adds a format to the dropdown itself; this one doesn't
 // save anything, just lets a single conversion target something not listed).
 const OTHER_FORMAT_VALUE = '__other__';
+
+// Mirrors library.mjs's own CURRENT_VIDEO_SCHEMA_VERSION (main process and
+// renderer never cross-import in this codebase, so small shared constants
+// like this get a duplicated copy on each side) -- an entry whose own stored
+// schemaVersion is older than this predates a metadata-shape change (e.g.
+// the `resolutions` field added at 2) and won't have whatever that change
+// added. "Refresh from YouTube" (already wired to refreshLibraryEntryMetadata,
+// which always writes the current version) is what actually fixes it.
+const CURRENT_VIDEO_SCHEMA_VERSION = 3;
 
 
 // Same visual pattern as VideoDetailCard.tsx's buffer bar -- kept as a
@@ -277,6 +289,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // disabled->enabled flicker on the button isn't a reliable "it worked"
   // signal, so a toast confirms it explicitly.
   const [embedSuccessSnackbarOpen, setEmbedSuccessSnackbarOpen] = useState(false);
+  const [linkCopiedSnackbarOpen, setLinkCopiedSnackbarOpen] = useState(false);
   useEffect(() => {
     window.electronAPI.onFfmpegUtilityProgress(({ percent }) => {
       if (typeof percent === 'number') setFfmpegProgress(percent);
@@ -365,6 +378,12 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     } finally {
       setCreatingVersion(false);
     }
+  };
+
+  const handleCopyLink = async () => {
+    if (!metadata.originalUrl) return;
+    await navigator.clipboard.writeText(metadata.originalUrl);
+    setLinkCopiedSnackbarOpen(true);
   };
 
   // "Refresh from YouTube" -- re-fetches live data the same way "Download new
@@ -709,6 +728,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // video quality grid -- see the Library-view MP3-coexistence design.
   const videoResolutions = resolutions.filter((r) => r.resolution !== 'MP3');
   const mp3Resolution = resolutions.find((r) => r.resolution === 'MP3');
+  const isSchemaOutdated = (metadata.schemaVersion ?? 0) < CURRENT_VIDEO_SCHEMA_VERSION;
 
   return (
     <Box>
@@ -718,12 +738,30 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
             <ArrowBackIcon fontSize="small" />
           </IconButton>
           <Typography variant="h6" noWrap>{metadata.title || video.videoFolderName}</Typography>
+          <Tooltip title="Copy link">
+            <span>
+              <IconButton size="small" onClick={handleCopyLink} disabled={!metadata.originalUrl} aria-label="Copy link">
+                <LinkIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
           <Chip
             size="small"
             color="info"
             label={convertYYYYMMDDStringToDate(metadata.uploadDate || '') || metadata.uploadDate}
             sx={{ flexShrink: 0, fontWeight: 'bolder' }}
           />
+          {isSchemaOutdated &&
+            <Tooltip title="This version's saved data predates newer features -- use Refresh from YouTube to pick them up">
+              <Chip
+                size="small"
+                color="warning"
+                variant="outlined"
+                icon={<WarningAmberIcon fontSize="small" />}
+                label="Outdated data"
+                sx={{ flexShrink: 0 }}
+              />
+            </Tooltip>}
         </Stack>
         <Stack direction="row" spacing={0.5}>
           <Tooltip title="Refresh this version from YouTube (updates its data in place)">
@@ -1191,6 +1229,17 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
       >
         <Alert onClose={() => setEmbedSuccessSnackbarOpen(false)} severity="success" variant="filled">
           Metadata embedded
+        </Alert>
+      </Snackbar>
+
+      <Snackbar
+        open={linkCopiedSnackbarOpen}
+        autoHideDuration={3000}
+        onClose={() => setLinkCopiedSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setLinkCopiedSnackbarOpen(false)} severity="success" variant="filled">
+          Link copied
         </Alert>
       </Snackbar>
     </Box>
