@@ -9,8 +9,13 @@ import {
   CardMedia,
   Chip,
   CircularProgress,
+  FormControl,
   Grid,
   IconButton,
+  InputLabel,
+  MenuItem,
+  Paper,
+  Select,
   Snackbar,
   Stack,
   ToggleButton,
@@ -25,6 +30,8 @@ import FolderIcon from '@mui/icons-material/Folder';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
 import LibraryVideoDetail from './LibraryVideoDetail';
 import PlaylistsSection from '../components/PlaylistsSection';
@@ -55,6 +62,7 @@ type LibraryVideoMetadata = {
   originalUrl: string | null;
   durationString: string | null;
   uploadDate: string | null;
+  addedEpoch: number;
   resolutions?: { resolution: string; filesizeMb: string }[];
   downloadedFilePath: string | null;
   downloadedResolution: string | null;
@@ -100,6 +108,63 @@ function getBestDownloadedQuality(epochs: { metadata: LibraryVideoMetadata }[]):
     return { resolution: 'MP3', format: null };
   }
   return null;
+}
+
+// Only the flat by-video list gets a sort control -- the channel view's own
+// ordering is alphabetical-by-channel and isn't in scope here.
+type SortField = 'title' | 'uploadDate' | 'dateAdded' | 'channel' | 'downloaded' | 'quality';
+type SortDirection = 'asc' | 'desc';
+
+const SORT_FIELD_LABELS: Record<SortField, string> = {
+  title: 'Title',
+  uploadDate: 'Date published',
+  dateAdded: 'Date added',
+  channel: 'Channel',
+  downloaded: 'Downloaded status',
+  quality: 'Quality',
+};
+
+// "Date added to library" means when the video was first tracked, not when
+// its latest version happened to be added -- epochs are already newest-first
+// (scanLibrary, library.mjs), so the earliest one is simply the last entry.
+function getDateAddedEpoch(video: LibraryVideo): number {
+  return video.epochs.length > 0 ? video.epochs[video.epochs.length - 1].metadata.addedEpoch : video.metadata.addedEpoch;
+}
+
+// Quality is inherently approximate, same caveat getBestDownloadedQuality's
+// own comment already makes: a video can have different downloaded
+// resolutions across its version history, and an undownloaded video only has
+// a list of *available* resolutions, not one real value to sort by. Ranked
+// by the same "best downloaded so far" the grid's own badge already shows,
+// so what you see sorted matches what you see on each card. MP3 ranks below
+// any real resolution but above "not downloaded" -- it's still something
+// archived, same stance the badge itself takes.
+function getQualityRank(video: LibraryVideo): number {
+  const best = getBestDownloadedQuality(video.epochs);
+  if (!best) return -1;
+  if (best.resolution === 'MP3') return 0;
+  return Number(best.resolution) || 0;
+}
+
+function compareFlatVideos(a: { video: LibraryVideo; channelName: string }, b: { video: LibraryVideo; channelName: string }, field: SortField): number {
+  switch (field) {
+    case 'title':
+      return (a.video.metadata.title || a.video.videoFolderName)
+        .localeCompare(b.video.metadata.title || b.video.videoFolderName, undefined, { sensitivity: 'base' });
+    case 'uploadDate':
+      return (a.video.metadata.uploadDate || '').localeCompare(b.video.metadata.uploadDate || '');
+    case 'dateAdded':
+      return getDateAddedEpoch(a.video) - getDateAddedEpoch(b.video);
+    case 'channel':
+      return a.channelName.localeCompare(b.channelName, undefined, { sensitivity: 'base' });
+    case 'downloaded': {
+      const aDownloaded = !!(a.video.metadata.downloadedFilePath || a.video.metadata.downloadedAudioFilePath);
+      const bDownloaded = !!(b.video.metadata.downloadedFilePath || b.video.metadata.downloadedAudioFilePath);
+      return Number(aDownloaded) - Number(bDownloaded);
+    }
+    case 'quality':
+      return getQualityRank(a.video) - getQualityRank(b.video);
+  }
 }
 
 export default function LibraryScreen() {
@@ -434,12 +499,15 @@ function FlatVideoList({ channels, libraryDir, viewMode, onViewModeChange, onSel
   onSelectVideo: (video: LibraryVideo) => void;
   onRefresh: () => void;
 }) {
+  const [sortField, setSortField] = useState<SortField>('title');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
   const flatVideos = useMemo(() => {
-    return channels
-      .flatMap((channel) => channel.videos.map((video) => ({ video, channelName: channel.displayName })))
-      .sort((a, b) => (a.video.metadata.title || a.video.videoFolderName)
-        .localeCompare(b.video.metadata.title || b.video.videoFolderName, undefined, { sensitivity: 'base' }));
-  }, [channels]);
+    const entries = channels.flatMap((channel) => channel.videos.map((video) => ({ video, channelName: channel.displayName })));
+    const directionMultiplier = sortDirection === 'asc' ? 1 : -1;
+    entries.sort((a, b) => compareFlatVideos(a, b, sortField) * directionMultiplier);
+    return entries;
+  }, [channels, sortField, sortDirection]);
   const { query, setQuery, isSearching, filtered, clear } = useLibrarySearch(
     flatVideos,
     ({ video }) => video.metadata.title || video.videoFolderName,
@@ -448,9 +516,39 @@ function FlatVideoList({ channels, libraryDir, viewMode, onViewModeChange, onSel
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }} flexWrap="wrap" useFlexGap gap={1}>
-        <Typography variant="h6">Library</Typography>
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction="row" spacing={2} alignItems="center">
+          <Typography variant="h6">Library</Typography>
           <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
+        </Stack>
+        <Stack direction="row" spacing={1} alignItems="center">
+          {/* Grouped into one bordered container so the field picker and
+              direction toggle read as a single "sort" instrument rather than
+              two loose controls -- Select uses variant="standard" (no border
+              of its own) so this outer Paper is the only border drawn. */}
+          <Paper variant="outlined" sx={{ display: 'flex', alignItems: 'center', pl: 1.5, pr: 0.5, borderRadius: 1 }}>
+            <FormControl size="small" variant="standard" sx={{ minWidth: 140 }}>
+              <InputLabel id="library-sort-field-label">Order by</InputLabel>
+              <Select
+                labelId="library-sort-field-label"
+                label="Order by"
+                value={sortField}
+                onChange={(e) => setSortField(e.target.value as SortField)}
+              >
+                {(Object.keys(SORT_FIELD_LABELS) as SortField[]).map((field) => (
+                  <MenuItem key={field} value={field}>{SORT_FIELD_LABELS[field]}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Tooltip title={sortDirection === 'asc' ? 'Ascending' : 'Descending'}>
+              <IconButton
+                size="small"
+                onClick={() => setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+                aria-label="Toggle sort direction"
+              >
+                {sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />}
+              </IconButton>
+            </Tooltip>
+          </Paper>
           <LibraryViewModeToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
           <Tooltip title="Open library folder">
             <IconButton onClick={() => window.electronAPI.openDirectory(libraryDir)} size="small" aria-label="Open library folder">
