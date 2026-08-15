@@ -1,7 +1,7 @@
 {
   "name": "yt-archiver",
   "private": true,
-  "version": "0.11.2",
+  "version": "0.12.0",
   "type": "module",
   "main": "dist/electron/main.js",
   "build": {
@@ -63,7 +63,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "electron-build": "electron-builder",
-    "dist": "npm run build:all && npm run electron-build",
+    "dist": "npm run build:all:deep && npm run electron-build",
     "build:renderer": "vite build",
     "build:copy:electron": "node scripts/copy-electron.mjs",
     "build:ytdlp:bin": "node scripts/build-ytdlp-bin.mjs",
@@ -71,6 +71,8 @@
     "build:copy:deno": "node scripts/copy-deno.mjs",
     "build:electron": "npm run build:copy:electron && npm run build:ytdlp:bin && npm run build:copy:ffmpeg && npm run build:copy:deno",
     "build:all": "npm run build:renderer && npm run build:electron",
+    "clean:venv": "node scripts/clean-venv.mjs",
+    "build:all:deep": "npm run clean:venv && npm run build:all",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

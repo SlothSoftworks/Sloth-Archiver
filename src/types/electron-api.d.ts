@@ -113,6 +113,7 @@ declare global {
             onYtdlpUpdateProgress: (callback: (data: { stage: string }) => void) => void
             removeYtdlpUpdateProgressListener: () => void
             quitApp: () => Promise<void>
+            getAppVersion: () => Promise<string>
             deleteVideoInfoCacheEntry: (url: string) => Promise<{ success: boolean; existed: boolean }>
             getLibraryDir: () => Promise<{ libraryDir: string }>
             setLibraryDir: (dir: string) => Promise<{ success: boolean; libraryDir: string }>

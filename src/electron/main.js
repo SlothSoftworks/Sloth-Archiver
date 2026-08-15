@@ -1953,6 +1953,13 @@ ipcMain.handle('app:quit', async () => {
     app.quit();
 });
 
+// app.getVersion() already reads package.json's "version" field (Electron's
+// own behavior, no extra bookkeeping needed) -- surfaced to the renderer so
+// alpha testers can report exactly which build they're on.
+ipcMain.handle('app:getVersion', async () => {
+    return app.getVersion();
+});
+
 ipcMain.handle('system:openFileInDirectory', async (e, filepath) => {
     shell.showItemInFolder(filepath);
 });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router';
 import Button from '@mui/material/Button';
 import Tabs from '@mui/material/Tabs';
@@ -7,6 +7,7 @@ import Tab from '@mui/material/Tab';
 import Box from '@mui/material/Box';
 import Stack from '@mui/material/Stack';
 import Badge from '@mui/material/Badge';
+import Chip from '@mui/material/Chip';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Dialog from '@mui/material/Dialog';
@@ -89,6 +90,15 @@ export function BasicTabs() {
   const navigate = useNavigate();
   const value = pathToTabIndex(location.pathname);
   const [infoOpen, setInfoOpen] = useState(false);
+  // Statically shown in the top bar for the duration of alpha testing --
+  // makes it trivial for a tester to say exactly which build they're
+  // reporting a bug against without digging into Options. Options itself
+  // also shows this (see OptionsScreen.tsx) for after alpha, once this
+  // top-bar copy is removed.
+  const [appVersion, setAppVersion] = useState('');
+  useEffect(() => {
+    window.electronAPI.getAppVersion().then(setAppVersion);
+  }, []);
   const { count: libraryNotificationCount, reset: resetLibraryNotifications } = useLibraryNotification();
   // Bumped to force LibraryScreen to remount (see its `key` below) -- every
   // OTHER tab already gets this exact reset for free, since CustomTabPanel
@@ -139,7 +149,9 @@ export function BasicTabs() {
           />
           <Tab label="Options" {...a11yProps(2)} />
         </Tabs>
-        <Stack direction="row" alignItems="center" sx={{ mr: 1 }}>
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mr: 1 }}>
+          {appVersion &&
+            <Chip size="small" variant="outlined" label={`v${appVersion}`} sx={{ fontFamily: 'monospace' }} />}
           <BulkAddToggleButton />
           <Tooltip title="About">
             <IconButton size="small" onClick={() => setInfoOpen(true)} aria-label="About">

@@ -118,6 +118,7 @@ export default function OptionsScreen() {
   const [errorLogExists, setErrorLogExists] = useState(false);
   const [customConvertFormats, setCustomConvertFormatsState] = useState<string[]>([]);
   const [maxSimultaneousDownloads, setMaxSimultaneousDownloadsState] = useState(1);
+  const [appVersion, setAppVersion] = useState('');
 
   const refreshStatus = async () => {
     const status = await window.electronAPI.getCookieStatus();
@@ -165,6 +166,7 @@ export default function OptionsScreen() {
     refreshErrorLogInfo();
     refreshCustomConvertFormats();
     refreshMaxSimultaneousDownloads();
+    window.electronAPI.getAppVersion().then(setAppVersion);
   }, []);
 
   // Autocomplete's own value normalization (lowercasing, de-duping against
@@ -297,6 +299,10 @@ export default function OptionsScreen() {
 
   return (
     <Box>
+      {appVersion &&
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+          Version {appVersion}
+        </Typography>}
       <OptionsGroup label="Media Options">
         <Grid container spacing={4}>
           <Grid size={{ xs: 12, sm: 6 }}>
