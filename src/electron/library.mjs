@@ -660,6 +660,17 @@ export function listPlaylistSnapshots({ libraryDir }) {
 // snapshot is written before the bulk-add loop has added anything yet) had
 // no "go to library" link until the user explicitly hit "Refresh from
 // YouTube", which does a full re-fetch from yt-dlp for a purely local fact.
+//
+// When no index is handed in, this forces a genuine refreshLibraryIndex()
+// rescan rather than reusing getLibraryIndex()'s cached one -- that cache is
+// only invalidated by mutations this process itself knows about, and a
+// second, similar bug (reported after the fix above shipped) was entries a
+// playlist *refresh* had just newly discovered, whose video already existed
+// in the library, still not showing a link -- i.e. exactly the failure mode
+// of reading a stale cache. A playlist detail view is opened rarely enough
+// that paying for a full rescan here is cheap insurance for always getting
+// this right, rather than depending on every caller elsewhere in the app
+// having already refreshed the cache first.
 export async function getPlaylistSnapshot({ libraryDir, playlistId, index }) {
     const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
     const epochDir = resolvePlaylistEpochDir(playlistDir);
@@ -684,7 +695,7 @@ export async function getPlaylistSnapshot({ libraryDir, playlistId, index }) {
         // No previousMetadata.json (nothing to undo) -- stays null.
     }
 
-    const resolvedIndex = index || await getLibraryIndex(libraryDir);
+    const resolvedIndex = index || await refreshLibraryIndex(libraryDir);
     const localFiles = {};
     for (const entry of metadata.entries || []) {
         const match = findVideoInIndex(resolvedIndex, entry.videoId);

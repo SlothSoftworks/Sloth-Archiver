@@ -11,29 +11,26 @@ completion is recorded instead, down in [Archived](#archived), so that history i
 lost when the backlog gets trimmed. The sections above Archived are meant to stay
 short and scannable: only what's still actually open.
 
-**2026-08-12 reassessment note:** `futureSpecs.md` currently still lists several
-items this pass found are already shipped or already fixed in the codebase —
-**Multi-platform downloads**, **Playlist refresh/versioning**, and all three entries
-under **Bugs found**. None of those `futureSpecs.md` edits were made as part of this
-pass (per this file's own stated scope, and because the user's request this round
-was specifically "write it in the feedback file"). They're written up in
-[Archived](#archived) below with what actually shipped and where, and flagged inline
-at their old spot so it's obvious at a glance — pruning `futureSpecs.md` itself is a
-follow-up, not done here.
+**2026-08-15 cleanup:** `futureSpecs.md` was carrying five stale entries this file
+had already flagged shipped across earlier passes — **Multi-platform downloads**,
+**Playlist refresh/versioning**, and all three **Bugs found** entries. All five are
+now removed from `futureSpecs.md` directly (this pass, per the user's explicit
+"review and keep it lean" request). Their write-ups stay below/in
+[Archived](#archived) as the durable record; the "still present, safe to remove"
+caveats that used to sit on them are gone now that the removal actually happened.
+Also logged this pass: Dailymotion download support (`curl_cffi` impersonation
+bundled into the frozen yt-dlp binary) and a per-resolution quality picker for it —
+neither was ever a tracked `futureSpecs.md` item (came up as a direct question, not
+a backlog pick), but it's real shipped work worth the same durable record — see
+[Archived](#archived).
 
-**2026-08-12 same-day update:** three of the quick items from this same reassessment
-— [Cookie browser-picker "Clear" quirk](#cookie-picker-quirk),
-[Metadata schema versioning](#schema-versioning), and
-[Copy-link button](#copy-link) — were picked up and shipped later the same day.
-Unlike the note above, these *were* removed from `futureSpecs.md` directly (the
-user's explicit request that round), matching this file's normal convention — see
-[Archived](#archived) for what shipped.
-
-**2026-08-13/14 update:** four more items shipped, all removed from `futureSpecs.md`
-directly — [Playlist delete](#playlist-delete), [Playlist thumbnail](#playlist-thumbnail),
-[Ordering/"order by" filter](#ordering-filter), and the "pick timestamp" half of
+**Prior updates, for context:** 2026-08-12 shipped the cookie-picker "Clear" quirk,
+metadata schema versioning, and the copy-link button (all removed from
+`futureSpecs.md` that same day). 2026-08-13/14 shipped playlist delete, playlist
+thumbnail, the ordering/"order by" filter, and the "pick timestamp" half of
 [Player customization](#player-customization) (the other half, click-to-select
-directly on the scrub bar, is still genuinely open — see that section).
+directly on the scrub bar, is still genuinely open — see that section). All of
+these are detailed in the dated log under [Archived](#archived).
 
 ## Index
 - [Status at a glance](#status-glance) (diagram)
@@ -57,7 +54,6 @@ directly on the scrub bar, is still genuinely open — see that section).
   - [~~Copy-link button~~ — shipped](#copy-link)
   - [~~Ordering/"order by" filter~~ — shipped](#ordering-filter)
   - [~~Playlist thumbnail~~ — shipped](#playlist-thumbnail)
-- [Bugs found — reassessed](#bugs-found)
 - [Archived — shipped work, dated log](#archived)
 
 <a id="status-glance"></a>
@@ -101,6 +97,7 @@ flowchart LR
         d18["Ordering/'order by' filter (video list)"]
         d19["Playlist thumbnail"]
         d20["Player: pick-timestamp buttons for clip tool"]
+        d21["Dailymotion support (curl_cffi) + quality picker"]
     end
 
     subgraph PARTIAL["Partially done"]
@@ -123,7 +120,7 @@ flowchart LR
 
     class d1,d1b,p3,t9,t10 library
     class d2 updater
-    class d3,d8,d9,d10,d11,d12,d17,d19 playlist
+    class d3,d8,d9,d10,d11,d12,d17,d19,d21 playlist
     class d4,d7,d15,d16,d18,t1 smallfeat
     class d5,d6,d13,d14,t6 qol
     class t7 longshot
@@ -157,8 +154,9 @@ Landed 2026-08-08 (single commit) as scoped, matching the prior assessment's own
 recommendation almost exactly: YouTube keeps the full experience, other platforms
 get a simplified download-only card, no live preview. See
 [Archived](#archived) for what actually shipped, incl. two follow-up refinements
-(platform tag, SoundCloud MP3-default + embed-metadata) done the same pass.
-**Still present in `futureSpecs.md` under "Long shot ideas" #2 — safe to remove.**
+(platform tag, SoundCloud MP3-default + embed-metadata) done the same pass, and
+Dailymotion added as a fifth supported platform on 2026-08-15. Removed from
+`futureSpecs.md` directly 2026-08-15.
 
 <a id="playlist-refresh"></a>
 ### ~~Playlist refresh/versioning~~ — SHIPPED (different shape than assessed)
@@ -176,8 +174,8 @@ playlist's membership/order over time" idea from the original assessment) is sti
 genuinely not built, so treat that specific sub-idea as still open if it ever comes
 back up, distinct from "refresh" itself which is done. See
 [Archived](#archived) for the full shipped scope (added/removed/updated counts,
-per-entry "Not on YouTube" tagging on top of the reconciliation itself).
-**Still present in `futureSpecs.md` under "Long shot ideas" #3 — safe to remove.**
+per-entry "Not on YouTube" tagging on top of the reconciliation itself). Removed
+from `futureSpecs.md` directly 2026-08-15.
 
 <a id="big-features"></a>
 ## Big features
@@ -415,26 +413,6 @@ live one to show, i.e. the "playlist went empty, later filled back up" case the 
 called out. Rendered as an `Avatar` in both the playlist list rows and the detail
 header. Removed from `futureSpecs.md` directly.
 
-<a id="bugs-found"></a>
-## Bugs found — reassessed
-
-All three items currently listed under `futureSpecs.md`'s "Bugs found" section were
-checked directly against the current codebase (not from memory of what was
-requested) — **all three are already fixed**, landed across two commits on
-2026-08-08. None of these needed re-diagnosis; they were confirmed by reading the
-actual fix and, for the two encountered live during this session's own work, by the
-test suite passing clean afterward.
-
-| Bug (as written in `futureSpecs.md`) | Status | Where it was actually fixed |
-|---|---|---|
-| "Stop after current item" spinner never stops, Resume buttons never reappear | **Fixed — two separate root causes** | (1) `recordLibraryDownload`'s IPC call could reject uncaught, throwing out of `handleSlotDone` before `freeSlot`/`sleep` ever ran — permanently wedging that slot busy, which meant `isRunning`/`stopRequested` could never reset (fixed in commit `0353b7e`, wrapped in try/catch). (2) Independently, `fillFreeSlots()` returned early on `stopRequestedRef.current` *before* ever calling `maybeFinishRun()` — so even once every slot legitimately freed up after a stop, nothing ever flipped `isRunning`/`stopRequested` back. Found and fixed directly in this project's own test-repair pass (verified via a full `useBulkAddQueue.test.tsx` run, 16/16 passing) — present in the current `fillFreeSlots` as a `stopRequestedRef.current` branch that still calls `maybeFinishRun()` before returning. |
-| Bulk-added videos' "go to library" playlist icon doesn't appear until a manual playlist-view refresh | **Fixed** | `getPlaylistSnapshot` (`library.mjs`) used to trust whatever `localFiles` mapping was last written to disk by the bulk-add loop — stale by construction, since the playlist snapshot is written *before* the bulk-add loop has actually added anything. Commit `0353b7e` changed it to recompute `localFiles` fresh against the live library index on every read (`findVideoInIndex` per entry), a cheap, purely local lookup — no more dependency on an explicit refresh to notice videos that were already added. |
-| No way to refresh a single video's metadata in place (only "add as new version" existed) | **Fixed** | Commit `0353b7e` added `refreshLibraryEntryMetadata` (`library.mjs`) — re-fetches live yt-dlp data and writes it into the *same* epoch (preserving `downloadedFilePath`/`downloadedResolution`/etc., unlike a brand-new epoch which would reset them to null) — plus a "Refresh from YouTube" button in `LibraryVideoDetail.tsx` (`handleRefreshFromYouTube`), exactly the reverted-then-re-added feature the spec asked for. |
-
-**Recommendation:** safe to delete all three lines from `futureSpecs.md`'s "Bugs
-found" section — there's nothing left to plan or scope here, this is pure backlog
-cleanup once someone's ready to edit that file.
-
 <a id="archived"></a>
 ## Archived — shipped work, dated log
 
@@ -442,6 +420,18 @@ Everything below this line is done. Kept as a durable record (not a full changel
 see git history for line-by-line detail) so completed work doesn't need to be
 re-researched or re-explained later, and so the sections above can stay focused on
 what's actually still open.
+
+### Bugs found — all fixed, kept for reference
+
+Originally `futureSpecs.md`'s "Bugs found" section; all three checked directly
+against the codebase and confirmed fixed, landed across two commits on 2026-08-08.
+Removed from `futureSpecs.md` directly 2026-08-15.
+
+| Bug (as written in `futureSpecs.md`) | Status | Where it was actually fixed |
+|---|---|---|
+| "Stop after current item" spinner never stops, Resume buttons never reappear | **Fixed — two separate root causes** | (1) `recordLibraryDownload`'s IPC call could reject uncaught, throwing out of `handleSlotDone` before `freeSlot`/`sleep` ever ran — permanently wedging that slot busy, which meant `isRunning`/`stopRequested` could never reset (fixed in commit `0353b7e`, wrapped in try/catch). (2) Independently, `fillFreeSlots()` returned early on `stopRequestedRef.current` *before* ever calling `maybeFinishRun()` — so even once every slot legitimately freed up after a stop, nothing ever flipped `isRunning`/`stopRequested` back. Found and fixed directly in this project's own test-repair pass — present in the current `fillFreeSlots` as a `stopRequestedRef.current` branch that still calls `maybeFinishRun()` before returning. |
+| Bulk-added videos' "go to library" playlist icon doesn't appear until a manual playlist-view refresh | **Fixed** | `getPlaylistSnapshot` (`library.mjs`) used to trust whatever `localFiles` mapping was last written to disk by the bulk-add loop — stale by construction, since the playlist snapshot is written *before* the bulk-add loop has actually added anything. Commit `0353b7e` changed it to recompute `localFiles` fresh against the live library index on every read (`findVideoInIndex` per entry), a cheap, purely local lookup — no more dependency on an explicit refresh to notice videos that were already added. |
+| No way to refresh a single video's metadata in place (only "add as new version" existed) | **Fixed** | Commit `0353b7e` added `refreshLibraryEntryMetadata` (`library.mjs`) — re-fetches live yt-dlp data and writes it into the *same* epoch (preserving `downloadedFilePath`/`downloadedResolution`/etc., unlike a brand-new epoch which would reset them to null) — plus a "Refresh from YouTube" button in `LibraryVideoDetail.tsx` (`handleRefreshFromYouTube`), exactly the reverted-then-re-added feature the spec asked for. |
 
 ### Shipped — no longer tracked in futureSpecs.md
 
@@ -481,8 +471,14 @@ what's actually still open.
 | Playlist thumbnail (live first-entry preferred, locally-cached fallback) | 2026-08-13 |
 | Ordering/"order by" filter for the flat video list (Title/Date published/Date added/Channel/Downloaded status/Quality) | 2026-08-13 |
 | Player "pick timestamp" -- Set-as-start/Set-as-end buttons next to the clip fields | 2026-08-14 |
+| Dailymotion added as a supported download platform (bundled `curl_cffi` browser-impersonation) + a per-resolution quality picker for it | 2026-08-15 |
 
 ### Recently shipped, dated log
+
+**2026-08-15:**
+- **Dailymotion support**: wasn't a tracked `futureSpecs.md` item, came up as a direct question ("how difficult would it be to add Dailymotion?"). The app's multi-platform architecture already handled it generically (`isYouTubeUrl`/`getPlatformLabel` already routed any non-YouTube URL through `OtherPlatformDownloadCard`, and `getPlatformLabel` already fell back to "Dailymotion" from the hostname) — but a live test against the real bundled yt-dlp binary found Dailymotion now requires browser-TLS-fingerprint "impersonation" (`curl_cffi`) to get past bot detection, which wasn't bundled. Fixed by pinning `curl_cffi>=0.10,<0.16` in `src/python/requirements-build.txt` (yt-dlp's own compat shim hard-rejects anything outside `0.5.10`/`0.10.x`-`0.15.x` — confirmed live, 0.16.0 is explicitly rejected) and adding `--collect-all curl_cffi` to both PyInstaller invocations (`scripts/build-ytdlp-bin.mjs` and `updater.mjs`'s self-update rebuild, so a self-updated binary doesn't regress). Verified end-to-end against the actual rebuilt frozen binary, not a throwaway venv: a real Dailymotion video went from 0 formats to 6 (up to 4K), and a full real download completed through the app's own format selector. Also checked (from yt-dlp's own source, not a live test) that this same dependency is used unconditionally in Instagram's and TikTok's real request paths too — likely a reliability improvement for those, not just a Dailymotion fix.
+- **Dailymotion quality picker**: since `buildResolutions`/`reshapeVideoInfo` (`main.js`) already compute a real per-height resolution list generically for every platform (not YouTube-specific), this needed zero backend changes — `OtherPlatformDownloadCard.tsx` now renders the same resolution-grid pattern `VideoDetailCard.tsx` uses for YouTube, gated to `isDailymotion && resolutions.length > 0`; every other platform keeps the single "Download" button unchanged. One bug caught and fixed same-day: the MP3 entry `buildResolutions` always appends (for the "download audio instead" option) was rendering as "MP3p" with default button styling — fixed to render as bare "MP3" with the same `color="secondary"`/`variant="contained"` treatment the YouTube grid already gives its own MP3 button, in both the button label and the "Downloading (…)" status text.
+- Per explicit user instruction this pass, the test suite was **not** run for either change — verification was lint + `tsc -b` + build + live manual testing only. Noted here since every entry before this one in this log includes a passing-test-suite claim; this is a deliberate change in verification approach going forward, not an oversight.
 
 **2026-08-13/14:**
 - **Playlist delete**: `deletePlaylistSnapshot({ libraryDir, playlistId })` (`library.mjs`, same containment-check pattern as every other destructive library operation) + `library:deletePlaylist` IPC + a delete button/confirm dialog in `PlaylistsSection.tsx` stating the videos themselves are untouched.
@@ -499,7 +495,7 @@ what's actually still open.
 - Multi-platform downloads shipped end-to-end: `isYouTubeUrl`/`getPlatformLabel` (`utils/utils.ts`) drive a Downloader-tab branch between the full `VideoDetailCard` (YouTube) and a new, deliberately simplified `OtherPlatformDownloadCard` (everything else) — basic info, one Download button, no resolution picker, no add-to-library, matching the prior assessment's own recommended scope exactly. Along the way, fixed a real backend bug found during testing: `isDeadVideoInfo` used to wrongly hard-reject every SoundCloud fetch (it has zero height-having formats, being audio-only — that's normal, not a dead-video signal), live-verified against a real SoundCloud track. Two same-day follow-ups from the user's own manual testing: a platform-name `Chip` shown during download, and SoundCloud specifically defaulting to MP3-highest-quality (there's no sensible "video" download for an audio-only source) plus an "Embed metadata" option reusing the existing (already-generic) `library:embedMetadata` IPC handler, extended to fetch a remote thumbnail URL to a temp file first when no local one exists (Downloader-tab flows never have a cached library thumbnail the way Library-view flows do).
 - Playlist versioning shipped as "refresh in place, single undo step" rather than the multi-epoch model originally scoped — a deliberate call made mid-session, documented directly in `reconcilePlaylistSnapshot`'s own comment. Reconciliation rules: a fresh dead placeholder never clobbers already-saved real data; real fresh data always wins over stale saved data; an entry entirely absent from a fresh fetch (not just dead-but-present) is treated as removed by the playlist owner and dropped. Backed by a real, explicit `unavailable` flag per entry (not just an inferred null title) so the UI can show a "Not on YouTube" tag — set on refresh, cleared automatically once an entry's data comes back real again.
 - Diagnosed and fixed a real, user-reported flow: "Download new version" showed a misleading "YouTube blocked the request" message for a private/deleted video, because the bot-check-swallowing `--ignore-no-formats-error` flag also swallows the *real* yt-dlp error for a genuinely dead video, and both cases look identical from the primary fetch's own output. Added a second, short-lived classification call (only fires on the already-rare "empty formats" path) that reads yt-dlp's real error string and pattern-matches known dead-video phrasing ("Private video", "has been removed", etc.) to pick the accurate message. Also hardened "Download new version" itself: a defense-in-depth dead-check before ever writing a new version, and a rollback (deleting the just-created epoch) if anything fails after that point — so a failed re-fetch can never leave a broken/orphaned version behind.
-- Fixed the two bulk-add bugs and re-added the missing refresh button from `futureSpecs.md`'s "Bugs found" list (see the [Bugs found](#bugs-found) table above for the detailed before/after on each) — `recordLibraryDownload`'s uncaught-rejection wedge, `getPlaylistSnapshot`'s stale `localFiles` lookup, and a new `refreshLibraryEntryMetadata` + "Refresh from YouTube" button.
+- Fixed the two bulk-add bugs and re-added the missing refresh button from `futureSpecs.md`'s "Bugs found" list (see [Bugs found — all fixed, kept for reference](#archived) for the detailed before/after on each) — `recordLibraryDownload`'s uncaught-rejection wedge, `getPlaylistSnapshot`'s stale `localFiles` lookup, and a new `refreshLibraryEntryMetadata` + "Refresh from YouTube" button.
 - Bulk downloads can now run several at once instead of strictly one-at-a-time: a new "Maximum Simultaneous Downloads" setting (Options → Media Options, 1-5, with an explicit warning about the bot-flagging risk of setting it too high) backs a fixed pool of 5 `useDownloadVideo()` "slots" in `useBulkAddQueue.tsx` (hooks can't be called a variable number of times, so unused slots beyond the configured max just sit idle). `fillFreeSlots()` hands pending items to however many slots the current setting allows, and each slot independently frees and refills itself as its own item finishes -- this only worked cleanly because of the TD-008 fix below (each slot's progress is genuinely its own, not shared/global state).
 - Added a real per-item progress bar to the bulk-add side panel (previously just a spinner) -- each download slot now also reports its `downloadProgress`/`postprocessProgress` up to its assigned item, rendered as a compact `LinearProgress variant="buffer"` + percentage, same value/valueBuffer semantics as the existing Library-view download progress bar.
 

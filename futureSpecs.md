@@ -9,8 +9,6 @@ you point it here.
 ### Long shot ideas/Need planning
 
 1. Video diff/comparator: a feture that lets users compare the difference between versions of videos (we can think of how to do this. For example we coun try to fetch the video transcript or maybe look up if there's any algorithmic way to search through video content to compare it.) the diff should show as a report with timestamps
-2. Support for download from other video/media platforms: soundcloud/tiktok/instagram/twitter
-3. Playlist refresh/versioning: Playlist saving itself is done (order-preserved snapshot in its own directory, videos map into the normal library locations, dedup against what's already there) -- what's left is the ability to re-fetch an already-saved playlist and either save it as a new version (for comparison against the old one) or refresh over the current version. Today re-adding the same playlist is a no-op.
 
 ### Big features
 
@@ -36,7 +34,3 @@ you point it here.
    - remove the buffer looking effect in the local player it could confuse users thinking they are watching the video online
 
 ### Bugs found
-
-* When a list is being added as bulk add and the user chooses to click on "stop after item" the downloads stop but the stop after item spinner never stops spinning and the resume buttons don't show up again
-* On the first pass of bulk add the playlist data saved doesn't create or link to the library entry of the added videos. The user needs to move to the playlist view and hit refresh to be able to see the little go to video icon.
-* Not exactly a bug but a gap in the features. In some scenarios a "refresh youtube" button is needed in the view view. This feature was around before basically a version of download new version but that explaces the version selected. Add it back to help the user refresh data easiert
