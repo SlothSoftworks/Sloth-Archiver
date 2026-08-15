@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -43,11 +43,12 @@ import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
 import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
-import LibraryVideoPlayer from '../components/LibraryVideoPlayer';
+import LibraryVideoPlayer, { type LibraryVideoPlayerHandle } from '../components/LibraryVideoPlayer';
 
 type LibraryResolution = { resolution: string; filesizeMb: string };
 
@@ -265,6 +266,10 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const [otherFormatInput, setOtherFormatInput] = useState('');
   const [clipStart, setClipStart] = useState('');
   const [clipEnd, setClipEnd] = useState('');
+  // Backs the clip fields' "pick from player" buttons -- LibraryVideoPlayer
+  // exposes the <video> element's own currentTime through this handle, since
+  // the element itself lives inside that component, not here.
+  const playerRef = useRef<LibraryVideoPlayerHandle>(null);
   // User-added muxers from Options, on top of the small popular default set
   // -- fetched once on mount, same as any other settings-backed value with
   // no live-update need within a single session.
@@ -572,6 +577,26 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setFfmpegAction(null);
   };
 
+  // "Pick timestamp" -- grabs wherever the player's playback currently sits
+  // and drops it straight into the clip field, instead of the user manually
+  // watching the clock and typing a timestamp. Rounds down to a whole second
+  // since the clip fields themselves are whole-second precision (HH:MM:SS,
+  // no fractional part). A silent no-op when there's no active local video
+  // element to read from (nothing downloaded yet, or a container this player
+  // can't play at all) -- ffmpegControlsDisabled already keeps the buttons
+  // themselves disabled in exactly that case.
+  const handleSetClipStartFromPlayer = () => {
+    const time = playerRef.current?.getCurrentTime();
+    if (time == null) return;
+    setClipStart(formatSecondsAsClipTimestamp(Math.floor(time)));
+  };
+
+  const handleSetClipEndFromPlayer = () => {
+    const time = playerRef.current?.getCurrentTime();
+    if (time == null) return;
+    setClipEnd(formatSecondsAsClipTimestamp(Math.floor(time)));
+  };
+
   const handleExtractClip = async () => {
     if (!metadata.downloadedFilePath || !clipStart.trim() || !clipEnd.trim() || clipRangeInvalid) return;
     const ext = getExtension(metadata.downloadedFilePath) || 'mp4';
@@ -819,7 +844,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           status than the one just displayed. */}
       <Stack key={selectedEpoch || 'no-epoch'} direction={{ xs: 'column', md: 'row' }} spacing={2}>
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '70%' } }}>
-          <LibraryVideoPlayer metadata={metadata} thumbnailPath={video.thumbnailPath} cacheBustKey={cacheBustKey} />
+          <LibraryVideoPlayer ref={playerRef} metadata={metadata} thumbnailPath={video.thumbnailPath} cacheBustKey={cacheBustKey} />
 
           {/* Bounded + scrollable rather than letting a long description push
               the instrument panel below the fold -- max height picked to
@@ -1098,6 +1123,18 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
 
               <Stack direction="row" spacing={1} alignItems="center">
                 <Typography variant="body2">Clip</Typography>
+                <Tooltip title="Set start to the player's current position">
+                  <span>
+                    <IconButton
+                      size="small"
+                      onClick={handleSetClipStartFromPlayer}
+                      disabled={ffmpegControlsDisabled}
+                      aria-label="Set clip start from player position"
+                    >
+                      <AccessTimeIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
                 <TextField
                   size="small"
                   variant="standard"
@@ -1135,6 +1172,18 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                   }}
                 />
                 <Typography variant="body2" color="text.secondary">–</Typography>
+                <Tooltip title="Set end to the player's current position">
+                  <span>
+                    <IconButton
+                      size="small"
+                      onClick={handleSetClipEndFromPlayer}
+                      disabled={ffmpegControlsDisabled}
+                      aria-label="Set clip end from player position"
+                    >
+                      <AccessTimeIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
                 <TextField
                   size="small"
                   variant="standard"

@@ -1,10 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Box, CardMedia, IconButton, Typography } from '@mui/material';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import type { LibraryVideoMetadata } from '../screens/LibraryVideoDetail';
 import YouTubeEmbed from './YouTubeEmbed';
 import ResizableMediaContainer from './ResizableMediaContainer';
 import { buildAppVideoUrl } from '../../utils/utils.ts';
+
+// Exposed so LibraryVideoDetail.tsx's clip tool can grab "wherever playback
+// currently is" for its "Set as start"/"Set as end" buttons -- the <video>
+// element (and its currentTime) only exists inside this component, which
+// otherwise has no reason to hand anything back up to its parent. Returns
+// null when there's no actual local video element mounted right now (no
+// downloaded file yet, or a downloaded container this player can't play at
+// all -- see PLAYABLE_VIDEO_EXTENSIONS below), rather than a misleading 0.
+export type LibraryVideoPlayerHandle = {
+  getCurrentTime: () => number | null;
+};
 
 // Only mp4/webm play reliably in Chromium's <video> element -- MKV is a
 // Chromium container-parsing limitation that no delivery mechanism (custom
@@ -30,15 +41,11 @@ const fillSx = { width: '100%', height: '100%', display: 'block' };
 // alongside its own download/re-download controls -- not here. This
 // component only ever renders the video slot: YouTube embed, local
 // playback, or a static thumbnail fallback.
-export default function LibraryVideoPlayer({
-  metadata,
-  thumbnailPath,
-  cacheBustKey = 0,
-}: {
+const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   metadata: LibraryVideoMetadata;
   thumbnailPath?: string | null;
   cacheBustKey?: number;
-}) {
+}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0 }, ref) {
   const { downloadedFilePath, thumbnail, videoId } = metadata;
   // Extension alone says "this container is a Chromium demuxer can at least
   // attempt", not "this exact file will actually decode" -- an unusual codec
@@ -59,6 +66,10 @@ export default function LibraryVideoPlayer({
     setPlaybackFailed(false);
     setHasStartedPlayback(false);
   }, [downloadedFilePath, cacheBustKey]);
+
+  useImperativeHandle(ref, () => ({
+    getCurrentTime: () => (videoRef.current ? videoRef.current.currentTime : null),
+  }), []);
 
   // Prefer the locally-cached, offline-capable copy (video-level, shared
   // across every version of this video) over the hotlinked YouTube URL --
@@ -142,4 +153,6 @@ export default function LibraryVideoPlayer({
       </Box>
     </ResizableMediaContainer>
   );
-}
+});
+
+export default LibraryVideoPlayer;
