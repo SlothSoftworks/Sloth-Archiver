@@ -55,6 +55,7 @@ type PlaylistEntry = {
     url: string;
     thumbnailUrl: string | null;
     uploadDate: string | null;
+    unavailable?: boolean;
 };
 
 type PlaylistSummary = {
@@ -65,6 +66,12 @@ type PlaylistSummary = {
     addedEpoch: number;
     lastRefreshedEpoch: number | null;
     hasPreviousMetadata: boolean;
+    // The current first entry's own thumbnailUrl (preferred display source)
+    // and a locally-cached fallback file path for when that's unavailable
+    // (an empty playlist, or a dead first entry) -- see ensurePlaylistThumbnail
+    // (main.js).
+    thumbnailUrl: string | null;
+    thumbnailPath: string | null;
 };
 
 type PlaylistSnapshot = {
@@ -81,6 +88,7 @@ type PlaylistSnapshot = {
     // What Undo would revert to, and when that version was itself last
     // current -- null when there's nothing to undo.
     previousMetadataSavedEpoch: number | null;
+    thumbnailPath: string | null;
 };
 
 declare global {
@@ -130,6 +138,7 @@ declare global {
             getPlaylist: (playlistId: string) => Promise<{ playlist: PlaylistSnapshot | null }>
             refreshPlaylist: (playlistId: string) => Promise<{ success: boolean; added?: number; removed?: number; updated?: number; lastRefreshedEpoch?: number; entries?: PlaylistEntry[]; message?: string }>
             undoPlaylistRefresh: (playlistId: string) => Promise<{ success: boolean; metadata?: PlaylistSnapshot; message?: string }>
+            deletePlaylist: (playlistId: string) => Promise<{ success: boolean; message?: string }>
             recordLibraryDownload: (payload: { videoDir: string; epoch: string; filePath: string; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<{ success: boolean }>
             swapLibraryDownload: (payload: { videoDir: string; epoch: string; tempFilePath: string; oldFilePath: string | null; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<LibraryVideoMetadata>
             deleteLibraryEntry: (videoDir: string, epoch?: string) => Promise<{ success: boolean; videoDeleted: boolean }>

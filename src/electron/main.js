@@ -10,7 +10,7 @@ import os from 'node:os';
 
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, sanitizeForFilesystem } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, PLAYLISTS_DIR_NAME } from './library.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -530,6 +530,26 @@ async function ensureVideoThumbnail(videoDir, thumbnailUrl) {
     }
 }
 
+// Playlist-level, a sibling of the epoch folders -- unlike ensureVideoThumbnail
+// above, this always force-refetches rather than skipping once a file exists:
+// "the playlist's thumbnail" is explicitly defined as whichever video is
+// first in the list *right now*, not a fixed image chosen once, so it has to
+// track that on every write/refresh. thumbnailUrl is the current first
+// entry's own thumbnailUrl (already available from the flat playlist
+// listing, no extra yt-dlp call) -- silently no-ops when there isn't one
+// (an empty playlist, or one whose first entry is a dead placeholder),
+// deliberately leaving whatever was cached from an earlier non-empty state
+// in place rather than deleting it, since that's the whole point of this as
+// a fallback for "the playlist emptied out later."
+async function ensurePlaylistThumbnail(playlistDir, thumbnailUrl) {
+    if (!thumbnailUrl) return;
+    try {
+        await downloadImageToFile(thumbnailUrl, playlistDir, 'playlist-thumbnail');
+    } catch (err) {
+        log('[playlist-thumbnail] fetch failed', String(err));
+    }
+}
+
 // User-triggered from the Library tab's channel view -- unlike the
 // fire-and-forget calls below, this one is awaited so the button can show a
 // loading state and the caller gets back a fresh index once it's done.
@@ -695,7 +715,7 @@ ipcMain.handle('library:fetchPlaylistEntries', async (e, playlistUrl) => {
         const { libraryDir } = readSettings();
         if (libraryDir) {
             const index = await getLibraryIndex(libraryDir);
-            writePlaylistSnapshot({
+            const result = writePlaylistSnapshot({
                 libraryDir,
                 playlistId: playlist.id,
                 title: playlist.title,
@@ -710,6 +730,8 @@ ipcMain.handle('library:fetchPlaylistEntries', async (e, playlistUrl) => {
                 })),
                 index,
             });
+            // Fire-and-forget, same as the video/channel thumbnail caches.
+            ensurePlaylistThumbnail(result.playlistDir, playlist.entries[0]?.thumbnailUrl);
         }
         return { success: true, entries: playlist.entries, playlistId: playlist.id };
     } catch (err) {
@@ -786,6 +808,8 @@ ipcMain.handle('library:refreshPlaylist', async (e, playlistId) => {
             freshUploader: fresh.uploader,
             index,
         });
+        const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
+        ensurePlaylistThumbnail(playlistDir, result.entries[0]?.thumbnailUrl);
         return result;
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
@@ -799,6 +823,21 @@ ipcMain.handle('library:undoPlaylistRefresh', async (e, playlistId) => {
     }
     try {
         return undoPlaylistRefresh({ libraryDir, playlistId });
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// Deletes only the playlist's own saved snapshot -- never the videos it
+// references, which is why there's no equivalent of deleteLibraryEntry's
+// videoDeleted flag here for the UI to react to.
+ipcMain.handle('library:deletePlaylist', async (e, playlistId) => {
+    const { libraryDir } = readSettings();
+    if (!libraryDir) {
+        return { success: false, message: 'No library folder configured.' };
+    }
+    try {
+        return deletePlaylistSnapshot({ libraryDir, playlistId });
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }

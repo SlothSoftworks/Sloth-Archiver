@@ -9,6 +9,11 @@ import {
   CardActionArea,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   IconButton,
   List,
   ListItem,
@@ -26,7 +31,8 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
 import LibrarySearchBar from './LibrarySearchBar';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 
@@ -48,6 +54,12 @@ type PlaylistSummary = {
   addedEpoch: number;
   lastRefreshedEpoch: number | null;
   hasPreviousMetadata: boolean;
+  // thumbnailUrl is the current first entry's own thumbnail (preferred --
+  // always live, no extra fetch) -- thumbnailPath is a locally-cached
+  // fallback (ensurePlaylistThumbnail, main.js) for when that's unavailable
+  // (an empty playlist, or a dead first entry).
+  thumbnailUrl: string | null;
+  thumbnailPath: string | null;
 };
 
 type PlaylistEntry = {
@@ -71,6 +83,7 @@ type PlaylistSnapshot = {
   localFiles: Record<string, string | null>;
   hasPreviousMetadata: boolean;
   previousMetadataSavedEpoch: number | null;
+  thumbnailPath: string | null;
 };
 
 // Epoch folder names/timestamps are Date.now() ms values -- same formatter
@@ -79,6 +92,17 @@ type PlaylistSnapshot = {
 // coupling between these components).
 function formatEpochLabel(epoch: number): string {
   return new Date(epoch).toLocaleString();
+}
+
+// Prefers the live first-entry thumbnail (always current, zero extra fetch)
+// over the locally-cached fallback (ensurePlaylistThumbnail, main.js) --
+// that fallback only actually matters once there's no live one to show (an
+// empty playlist, or one whose first entry is a dead/"Not on YouTube"
+// placeholder with no thumbnailUrl of its own).
+function playlistThumbnailSrc(thumbnailUrl: string | null | undefined, thumbnailPath: string | null | undefined): string | undefined {
+  if (thumbnailUrl) return thumbnailUrl;
+  if (thumbnailPath) return buildAppVideoUrl(thumbnailPath);
+  return undefined;
 }
 
 // Deliberately minimal for this first version -- a plain list and a plain
@@ -96,6 +120,8 @@ export default function PlaylistsSection() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [refreshSummary, setRefreshSummary] = useState<{ added: number; removed: number; updated: number } | null>(null);
   const [linkCopiedSnackbarOpen, setLinkCopiedSnackbarOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const { query, setQuery, isSearching, filtered: filteredPlaylists, clear } = useLibrarySearch(
     playlists,
     (playlist) => playlist.title || playlist.playlistId,
@@ -154,6 +180,24 @@ export default function PlaylistsSection() {
     setRefreshing(false);
   };
 
+  // Only ever deletes the playlist's own saved snapshot (see
+  // deletePlaylistSnapshot, library.mjs) -- the videos it references stay in
+  // the library untouched, hence the notice in the confirm dialog rather
+  // than the "videoDeleted"-style branching the single-video delete flow has.
+  const handleDeletePlaylist = async () => {
+    if (!selectedPlaylistId) return;
+    setDeleting(true);
+    setActionError(null);
+    const result = await window.electronAPI.deletePlaylist(selectedPlaylistId);
+    setDeleting(false);
+    setDeleteDialogOpen(false);
+    if (result.success) {
+      handleBack();
+    } else {
+      setActionError(result.message || 'Failed to delete this playlist.');
+    }
+  };
+
   const handleUndo = async () => {
     if (!selectedPlaylistId) return;
     setUndoing(true);
@@ -183,6 +227,13 @@ export default function PlaylistsSection() {
           <IconButton onClick={handleBack} size="small" aria-label="Back to playlists">
             <ArrowBackIcon fontSize="small" />
           </IconButton>
+          <Avatar
+            variant="rounded"
+            src={playlistThumbnailSrc(selectedPlaylist?.entries[0]?.thumbnailUrl, selectedPlaylist?.thumbnailPath)}
+            sx={{ width: 48, height: 27, flexShrink: 0 }}
+          >
+            <PlaylistPlayIcon fontSize="small" />
+          </Avatar>
           <Tooltip title="Copy link">
             <span>
               <IconButton size="small" onClick={handleCopyLink} disabled={!selectedPlaylist?.originalUrl} aria-label="Copy link">
@@ -222,6 +273,11 @@ export default function PlaylistsSection() {
                 Refresh
               </Button>
             </span>
+          </Tooltip>
+          <Tooltip title="Delete this playlist">
+            <IconButton size="small" color="error" onClick={() => setDeleteDialogOpen(true)} aria-label="Delete playlist">
+              <DeleteOutlineIcon fontSize="small" />
+            </IconButton>
           </Tooltip>
         </Stack>
 
@@ -304,6 +360,22 @@ export default function PlaylistsSection() {
             Link copied
           </Alert>
         </Snackbar>
+
+        <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+          <DialogTitle>Delete this playlist?</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              This only removes the playlist's saved entry from your library, not any of its
+              videos -- anything you've already downloaded stays exactly where it is.
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDeleteDialogOpen(false)} disabled={deleting}>Cancel</Button>
+            <Button onClick={handleDeletePlaylist} color="error" variant="contained" disabled={deleting}>
+              {deleting ? <CircularProgress size={20} /> : 'Delete'}
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Box>
     );
   }
@@ -329,14 +401,23 @@ export default function PlaylistsSection() {
         <Card key={playlist.playlistId} variant="outlined">
           <CardActionArea onClick={() => handleSelectPlaylist(playlist.playlistId)} sx={{ p: 1.5 }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
-              <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body1" noWrap>{playlist.title || playlist.playlistId}</Typography>
-                {playlist.uploader &&
-                  <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>{playlist.uploader}</Typography>}
-                <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
-                  Last updated {formatEpochLabel(playlist.lastRefreshedEpoch || playlist.addedEpoch)}
-                </Typography>
-              </Box>
+              <Stack direction="row" alignItems="center" spacing={1.5} sx={{ minWidth: 0 }}>
+                <Avatar
+                  variant="rounded"
+                  src={playlistThumbnailSrc(playlist.thumbnailUrl, playlist.thumbnailPath)}
+                  sx={{ width: 48, height: 27, flexShrink: 0 }}
+                >
+                  <PlaylistPlayIcon fontSize="small" />
+                </Avatar>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="body1" noWrap>{playlist.title || playlist.playlistId}</Typography>
+                  {playlist.uploader &&
+                    <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>{playlist.uploader}</Typography>}
+                  <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
+                    Last updated {formatEpochLabel(playlist.lastRefreshedEpoch || playlist.addedEpoch)}
+                  </Typography>
+                </Box>
+              </Stack>
               <Chip size="small" label={`${playlist.entryCount} videos`} sx={{ flexShrink: 0 }} />
             </Stack>
           </CardActionArea>

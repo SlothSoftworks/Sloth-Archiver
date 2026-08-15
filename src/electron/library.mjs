@@ -599,6 +599,20 @@ function resolvePlaylistEpochDir(playlistDir) {
     return path.join(playlistDir, epochNames[0]);
 }
 
+// Playlist-level (not per-epoch), a sibling of the epoch folders -- same
+// pattern as channel-icon.*/video-thumbnail.*. Cached by ensurePlaylistThumbnail
+// (main.js) from whichever video was first in the list as of the last
+// write/refresh, purely as a fallback for when the live first entry has no
+// thumbnailUrl of its own (an empty playlist, or one whose first entry is a
+// dead/"Not on YouTube" placeholder) -- the renderer always prefers the live
+// entries[0].thumbnailUrl when one's available.
+function findPlaylistThumbnailPath(playlistDir) {
+    if (!fs.existsSync(playlistDir)) return null;
+    const entry = fs.readdirSync(playlistDir, { withFileTypes: true })
+        .find((e) => e.isFile() && e.name.startsWith('playlist-thumbnail.'));
+    return entry ? path.join(playlistDir, entry.name) : null;
+}
+
 // Summary list for the Library tab's new Playlists section -- nothing before
 // this read a saved playlist snapshot back into the renderer at all.
 export function listPlaylistSnapshots({ libraryDir }) {
@@ -608,7 +622,8 @@ export function listPlaylistSnapshots({ libraryDir }) {
     const summaries = [];
     for (const dirEntry of fs.readdirSync(playlistsRoot, { withFileTypes: true })) {
         if (!dirEntry.isDirectory()) continue;
-        const epochDir = resolvePlaylistEpochDir(path.join(playlistsRoot, dirEntry.name));
+        const playlistDir = path.join(playlistsRoot, dirEntry.name);
+        const epochDir = resolvePlaylistEpochDir(playlistDir);
         if (!epochDir) continue;
         let metadata;
         try {
@@ -624,6 +639,8 @@ export function listPlaylistSnapshots({ libraryDir }) {
             addedEpoch: metadata.addedEpoch,
             lastRefreshedEpoch: metadata.lastRefreshedEpoch || null,
             hasPreviousMetadata: fs.existsSync(path.join(epochDir, 'previousMetadata.json')),
+            thumbnailUrl: metadata.entries?.[0]?.thumbnailUrl || null,
+            thumbnailPath: findPlaylistThumbnailPath(playlistDir),
         });
     }
     summaries.sort((a, b) => (b.addedEpoch || 0) - (a.addedEpoch || 0));
@@ -679,6 +696,7 @@ export async function getPlaylistSnapshot({ libraryDir, playlistId, index }) {
         localFiles,
         hasPreviousMetadata: previousMetadataSavedEpoch !== null,
         previousMetadataSavedEpoch,
+        thumbnailPath: findPlaylistThumbnailPath(playlistDir),
     };
 }
 
@@ -800,4 +818,23 @@ export function undoPlaylistRefresh({ libraryDir, playlistId }) {
     fs.rmSync(previousPath, { force: true });
 
     return { success: true, metadata: JSON.parse(fs.readFileSync(metadataPath, 'utf-8')) };
+}
+
+// Deletes just the playlist's own saved snapshot (id/title/entries/localFiles/
+// undo state, all of it) -- deliberately never touches any of the videos it
+// references. Those live in their own normal channel/video folders,
+// independent of any playlist ever having pointed at them, so removing a
+// playlist snapshot is never destructive to library content, only to the
+// playlist bookkeeping itself. Same path.resolve + path.relative containment
+// check every other destructive library operation in this file uses.
+export function deletePlaylistSnapshot({ libraryDir, playlistId }) {
+    const resolvedLibraryDir = path.resolve(libraryDir || '');
+    const playlistDir = path.resolve(path.join(resolvedLibraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId)));
+    const relative = path.relative(resolvedLibraryDir, playlistDir);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('Refusing to delete a path outside the configured library folder.');
+    }
+
+    fs.rmSync(playlistDir, { recursive: true, force: true });
+    return { success: true };
 }

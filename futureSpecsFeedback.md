@@ -21,6 +21,14 @@ was specifically "write it in the feedback file"). They're written up in
 at their old spot so it's obvious at a glance — pruning `futureSpecs.md` itself is a
 follow-up, not done here.
 
+**2026-08-12 same-day update:** three of the quick items from this same reassessment
+— [Cookie browser-picker "Clear" quirk](#cookie-picker-quirk),
+[Metadata schema versioning](#schema-versioning), and
+[Copy-link button](#copy-link) — were picked up and shipped later the same day.
+Unlike the note above, these *were* removed from `futureSpecs.md` directly (the
+user's explicit request that round), matching this file's normal convention — see
+[Archived](#archived) for what shipped.
+
 ## Index
 - [Status at a glance](#status-glance) (diagram)
 - [Long shot ideas — need planning](#long-shot-ideas)
@@ -34,13 +42,13 @@ follow-up, not done here.
   - [More resilient embedded player / MKV support](#resilient-player)
 - [QoL features](#qol-features)
   - [Language support](#language-support)
-  - [Cookie browser-picker "Clear" quirk](#cookie-picker-quirk)
+  - [~~Cookie browser-picker "Clear" quirk~~ — shipped](#cookie-picker-quirk)
   - [Delete feature for playlists](#playlist-delete)
 - [Small features and corrections](#small-features)
   - [Video merger](#video-merger)
   - [Player UX](#player-ux)
-  - [Metadata schema versioning](#schema-versioning)
-  - [Copy-link button](#copy-link)
+  - [~~Metadata schema versioning~~ — shipped](#schema-versioning)
+  - [~~Copy-link button~~ — shipped](#copy-link)
   - [Ordering/"order by" filter](#ordering-filter)
   - [Playlist thumbnail](#playlist-thumbnail)
 - [Bugs found — reassessed](#bugs-found)
@@ -80,6 +88,9 @@ flowchart LR
         d11["Refresh-from-YouTube (in-place, single version) button"]
         d12["Bulk-add stuck-spinner bugs (2 root causes) + playlist go-to-library live lookup"]
         d13["Pre-beta security analysis report"]
+        d14["Cookie browser-picker Clear/reset fix"]
+        d15["Metadata schema versioning (outdated-data notice)"]
+        d16["Copy-link button (video + playlist)"]
     end
 
     subgraph PARTIAL["Partially done"]
@@ -97,9 +108,6 @@ flowchart LR
         t11["Player: pick-timestamp for clip tool"]
         t12["Player: MKV/more-codec support"]
         t13["Playlist delete"]
-        t14["Cookie-picker Clear/reset quirk"]
-        t15["Metadata schema versioning"]
-        t16["Copy-link button"]
         t17["Ordering/'order by' filter (video list)"]
         t18["Playlist thumbnail"]
     end
@@ -109,8 +117,8 @@ flowchart LR
     class d1,d1b,p3,t9,t10 library
     class d2 updater
     class d3,d8,d9,d10,d11,d12,t13,t18 playlist
-    class d4,d7,t1,t15,t16 smallfeat
-    class d5,d6,d13,t6,t14 qol
+    class d4,d7,d15,d16,t1 smallfeat
+    class d5,d6,d13,d14,t6 qol
     class t7 longshot
     class t11,t12 player
 ```
@@ -245,7 +253,8 @@ so this isn't a bug to fix, it's a real gap to close.
 <a id="qol-features"></a>
 ## QoL features
 
-Language support carries over unchanged; two new items this pass (both small).
+Language support carries over unchanged; playlist delete is still open. The cookie
+browser-picker quirk shipped the same day it was assessed — see below.
 
 <a id="language-support"></a>
 ### Language support (i18n / "strings" file)
@@ -267,21 +276,14 @@ across many languages immediately — expanding language coverage afterward is j
 adding more JSON files, not more engineering.
 
 <a id="cookie-picker-quirk"></a>
-### Cookie browser-picker "Clear" quirk
+### ~~Cookie browser-picker "Clear" quirk~~ — SHIPPED
 
-**New this pass.** **Overall: Low.** Confirmed directly in `OptionsScreen.tsx`:
-`handleModeChange` (line 266) only calls `setCookiesConfig` when switching *to* file
-mode — switching to browser mode relies entirely on `handleSelectBrowser` (line 275)
-being called afterward, and `cookiesBrowser` component state is never reset when the
-user switches away, so a stale browser name can sit in state and re-render as
-"Using X" without a real selection backing it, exactly as reported.
-
-| Piece | Difficulty | Why |
-|---|---|---|
-| Reset the stale label on mode switch | Low | In `handleModeChange`, when switching away from browser mode, also reset `cookiesBrowser` component state to `''` — one added line. |
-| Add a "Clear" button | Low | A small button next to the browser dropdown that calls `setCookiesBrowserState('')` and persists `cookiesMode: 'browser', cookiesBrowser: ''` (or reverts to file mode, whichever the product decision is — worth a quick call on which "cleared" should mean). |
-
-**Recommendation:** trivial, safe to bundle with the playlist-delete item below or ship alone — no design risk, no new dependency, touches one file.
+Landed 2026-08-12, same day it was assessed — exactly as scoped: `handleModeChange`
+now clears `cookiesBrowser` (state + persisted config) when switching away from
+browser mode, and a new "Clear" button reverts the selection to none without leaving
+browser mode. See [Archived](#archived) for the one real backend wrinkle this
+surfaced (`cookies:setConfig`'s validation had to allow an empty `cookiesBrowser` as
+the explicit "cleared" state). Removed from `futureSpecs.md` directly.
 
 <a id="playlist-delete"></a>
 ### Delete feature for playlists
@@ -301,7 +303,9 @@ applies directly; playlists just don't have their own delete path yet.
 <a id="small-features"></a>
 ## Small features and corrections
 
-Two items carry over from the last pass; four are new this round.
+Two items (Video merger, Player UX) carry over unchanged. Metadata schema
+versioning and the copy-link button shipped the same day they were assessed — see
+below. Ordering/"order by" filter and playlist thumbnail are still open.
 
 <a id="video-merger"></a>
 ### 1. Video merger
@@ -346,33 +350,28 @@ scoping as one combined "personalize the player" effort rather than three separa
 partial attempts.
 
 <a id="schema-versioning"></a>
-### 3. Metadata schema versioning
+### ~~3. Metadata schema versioning~~ — SHIPPED
 
-**New this pass.** **Overall: Low-Medium.** Partially already true, just not
-user-visible yet.
-
-| Piece | Difficulty | Why |
-|---|---|---|
-| The field already exists | None needed | `buildEpochMetadata` (`library.mjs`) already writes `schemaVersion: 3` into every video `metadata.json` it creates — a real, working precedent already established, not a new concept. Playlist snapshots have their own parallel `schemaVersion: 1` field too (`writePlaylistSnapshot`). |
-| Detecting an obsolete entry and surfacing a notice | Low-Medium | Needs a small "known current version per shape" constant plus a check at read time (`scanLibrary`/`getPlaylistSnapshot`) that flags `metadata.schemaVersion < CURRENT`, surfaced as a small badge/notice in the video detail or playlist view — no backend migration logic needed, just detection + a UI nudge ("this entry predates feature X, refresh it to pick up new fields"), matching exactly what the spec text asks for. |
-| Actually migrating old entries | Not required by the spec as written | The spec explicitly asks for a *notice*, not automatic migration — "Refresh from YouTube" (`refreshLibraryEntryMetadata`, already shipped) already gives the user a one-click way to bring a stale entry's data current once they're told it's stale, so this doesn't need new migration machinery, just the detection+notice layer on top of what already exists. |
-
-**Recommendation:** cheap and mostly detection-only — a good candidate to bundle with the [Copy-link button](#copy-link) or [Ordering filter](#ordering-filter) below in a single small-features pass, since none of the three touch overlapping code.
+Landed 2026-08-12, same day it was assessed. `CURRENT_VIDEO_SCHEMA_VERSION`/
+`CURRENT_PLAYLIST_SCHEMA_VERSION` constants added in `library.mjs` (replacing the
+hardcoded `3`/`1` literals `buildEpochMetadata`/`writePlaylistSnapshot` already had),
+with a duplicated copy in the renderer per this codebase's usual main/renderer
+no-cross-import convention. `LibraryVideoDetail.tsx` and `PlaylistsSection.tsx` both
+now show an "Outdated data" warning `Chip` (tooltip pointing at "Refresh from
+YouTube") whenever an entry's stored `schemaVersion` is behind current — detection +
+notice only, exactly as scoped, no migration machinery added. Removed from
+`futureSpecs.md` directly.
 
 <a id="copy-link"></a>
-### 4. Copy-link button
+### ~~4. Copy-link button~~ — SHIPPED
 
-**New this pass.** **Overall: Low.** No clipboard usage exists anywhere in this
-codebase yet (confirmed — zero references), but this is a single well-supported
-browser API, not new infrastructure.
-
-| Piece | Difficulty | Why |
-|---|---|---|
-| Copy-to-clipboard mechanism | Low | `navigator.clipboard.writeText(url)` — supported unconditionally in Electron's bundled Chromium, no permission prompt needed for a renderer-initiated write in a secure context (which this app's loopback-served renderer is). No IPC round-trip needed at all; this is a pure-renderer feature. |
-| Where the URL comes from | Low | Every place this button would go already has the URL in scope: `metadata.originalUrl` (video), `playlist.originalUrl` (playlist) — both already rendered as link text elsewhere in the same views. |
-| UI: the button itself + a "copied" toast | Low | Standard `IconButton` + `Snackbar` pattern, already used throughout this app for exactly this kind of transient feedback (e.g. the embed-metadata success toast). |
-
-**Recommendation:** genuinely trivial — smallest item in this whole file, good filler alongside any other small-features pass.
+Landed 2026-08-12, same day it was assessed. A `Link`-icon (MUI's `@mui/icons-material/Link`,
+swapped in from an initial `ContentCopy` icon per a same-day follow-up request)
+`IconButton` added to both `LibraryVideoDetail.tsx` and `PlaylistsSection.tsx`,
+positioned to the left of the title (grouped with the basic video/playlist info)
+rather than in the right-aligned action-button cluster, per a same-day layout
+follow-up — `navigator.clipboard.writeText(originalUrl)` plus a "Link copied"
+`Snackbar`, exactly as scoped. Removed from `futureSpecs.md` directly.
 
 <a id="ordering-filter"></a>
 ### 5. Ordering / "order by" filter (video list view)
@@ -464,8 +463,15 @@ what's actually still open.
 | Playlist "go to library" icon now appears immediately for bulk-added videos, no manual refresh needed | 2026-08-08 |
 | "Refresh from YouTube" (in-place, single-version metadata refresh, distinct from "add as new version") re-added to the video detail view | 2026-08-08 |
 | Pre-public-beta security analysis (`reports/SecurityAnalysis.md`, 16 findings, prioritized P0/P1/P2) | 2026-08-10 |
+| Cookie browser-picker "Clear" quirk fixed (stale label on mode switch + explicit Clear button) | 2026-08-12 |
+| Metadata schema versioning: "Outdated data" notice on video/playlist entries whose stored `schemaVersion` predates current | 2026-08-12 |
+| Copy-link button (video + playlist detail views) | 2026-08-12 |
 
 ### Recently shipped, dated log
+
+**2026-08-12:**
+- Three of the same-day reassessment's own "quick" items shipped: **Metadata schema versioning** — `CURRENT_VIDEO_SCHEMA_VERSION`/`CURRENT_PLAYLIST_SCHEMA_VERSION` constants (`library.mjs`, replacing the previously-hardcoded `3`/`1` literals), plus an "Outdated data" warning `Chip` in `LibraryVideoDetail.tsx`/`PlaylistsSection.tsx` for any entry whose stored `schemaVersion` is behind current. **Copy-link button** — a `Link`-icon button (video + playlist detail views, `navigator.clipboard.writeText` + a "Link copied" toast), positioned to the left of the title alongside the basic info rather than in the right-aligned action-button group, so it doesn't crowd that cluster. **Cookie browser-picker "Clear" quirk** — `handleModeChange` (`OptionsScreen.tsx`) now clears `cookiesBrowser` (both component state and persisted config) when switching away from browser mode, plus a new explicit "Clear" button; required loosening `cookies:setConfig`'s validation in `main.js` to allow an empty `cookiesBrowser` as the deliberate "cleared" state (`cookiesArgs()` already handled that gracefully, falling back to file-mode cookies). All three removed from `futureSpecs.md` directly. Full lint/typecheck/test/build pass clean after each.
+- Also assessed (not built): confirmed producing a working Linux dist isn't currently possible from this macOS dev machine — `electron-builder` itself can emit a Linux package fine, but the bundled yt-dlp (PyInstaller-frozen)/ffmpeg/ffprobe/deno binaries are all resolved for whatever OS runs the build scripts, so a Mac-built "Linux" package would embed non-executable macOS binaries. Logged as **TD-011** (`reports/TechnicalDebt.md`) with the discussed fix (a Mac-only Docker-based driver script, not an npm script) — flagged as important before a public release that ships Linux, not yet built.
 
 **2026-08-08:**
 - Multi-platform downloads shipped end-to-end: `isYouTubeUrl`/`getPlatformLabel` (`utils/utils.ts`) drive a Downloader-tab branch between the full `VideoDetailCard` (YouTube) and a new, deliberately simplified `OtherPlatformDownloadCard` (everything else) — basic info, one Download button, no resolution picker, no add-to-library, matching the prior assessment's own recommended scope exactly. Along the way, fixed a real backend bug found during testing: `isDeadVideoInfo` used to wrongly hard-reject every SoundCloud fetch (it has zero height-having formats, being audio-only — that's normal, not a dead-video signal), live-verified against a real SoundCloud track. Two same-day follow-ups from the user's own manual testing: a platform-name `Chip` shown during download, and SoundCloud specifically defaulting to MP3-highest-quality (there's no sensible "video" download for an audio-only source) plus an "Embed metadata" option reusing the existing (already-generic) `library:embedMetadata` IPC handler, extended to fetch a remote thumbnail URL to a temp file first when no local one exists (Downloader-tab flows never have a cached library thumbnail the way Library-view flows do).

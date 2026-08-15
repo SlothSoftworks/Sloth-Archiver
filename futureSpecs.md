@@ -28,18 +28,15 @@ you point it here.
 ### QoL features
 
 1. Language support. Add support for language and set up the ability add more languages in the future via a "strings" style file that the app can reado n startup and load all the messages in the app in any language.
-2. Currently the select from browser cookie option has a quirk where if you select away from it to the paste cookie option and then back to the select from browser option selected and the label "Using Firefox" but in reality it's not selected because the label "executor-android/app/build" is not visible. Let's make it so clicking to the other option removes all these labels and also so there's a "Clear" button so that it revets the selection back to none of the browsers are selecteds
-3. Delete feature for playlist. It's a gap we haven't filled. The delete should be simple just delete the entry in the library and the metadata related. For now don't bother about doing anything with the videos related to the playlist. Add a notice that the videos will not be removed from the library
+2. Delete feature for playlist. It's a gap we haven't filled. The delete should be simple just delete the entry in the library and the metadata related. For now don't bother about doing anything with the videos related to the playlist. Add a notice that the videos will not be removed from the library
 
 ### Small features and corrections
 
 1. Video merger (requires video versioning first): Sometimes videos get re-edited and reuploaded and this causes them to have a different link. This feature would add an option to add the new link in the video library view and the metadata will replace the main link to the video (to keep updating and downloading if he wants to) but keep the original video data in a version marked (legacy/deleted from youtube)
 2. Small improvements to the embedded local player:
    - remove the buffer looking effect in the local player it could confuse users thinking they are watching the video online
-3. Versioning in the internal metadata structures of the saved files, this would allow to identify the structures that might be obsolete when newer features are added and add a notice to the user that they might want to refresh their data or might be missing features
-4. A "copy link" button on every resource with a lik (videos, playlists) to that the user can copy it for any purpose
-5. More ordering options and an "order by" filter button which can include date published, date added to library, channel, title, downloded status, and maybe quality depending on how easy it is to filter for. All of this only in the view by videos option of the library view
-6. Add a small thumbnail to the playlist. It can be the first video on the list or whatever thumbnail can be extracted from the playlist itself. The thumbnail should be updated with the first video on the playlist dynamically if possible but have a fallback thumbnail saved on the playlist directory itself just in case
+3. More ordering options and an "order by" filter button which can include date published, date added to library, channel, title, downloded status, and maybe quality depending on how easy it is to filter for. All of this only in the view by videos option of the library view
+4. Add a small thumbnail to the playlist. It can be the first video on the list or whatever thumbnail can be extracted from the playlist itself. The thumbnail should be updated with the first video on the playlist dynamically if possible but have a fallback thumbnail saved on the playlist directory itself just in case
 
 ### Bugs found
 

@@ -42,6 +42,7 @@ export const electronAPIMock = {
     getPlaylist: async () => ({ playlist: null }),
     refreshPlaylist: async () => ({ success: true, added: 0, removed: 0, updated: 0, entries: [] }),
     undoPlaylistRefresh: async () => ({ success: true }),
+    deletePlaylist: async () => ({ success: true }),
     recordLibraryDownload: async () => ({ success: true }),
     swapLibraryDownload: async () => ({}),
     deleteLibraryEntry: async () => ({ success: true, videoDeleted: true }),
