@@ -12,6 +12,8 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  Divider,
+  Grid,
   IconButton,
   LinearProgress,
   Link,
@@ -71,14 +73,21 @@ interface OtherPlatformVideoDataProps {
     uploadDate: string | null;
     description: string | null;
     originalUrl: string;
+    // Computed generically for every platform, not just YouTube (see
+    // buildResolutions, main.js) -- unused here except for Dailymotion,
+    // since that's the one non-YouTube platform confirmed to reliably expose
+    // a real per-height ladder (SoundCloud is audio-only; TikTok/Instagram
+    // typically expose only one real quality).
+    resolutions?: { resolution: string; filesizeMb: string }[];
   };
 }
 
 export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatformVideoDataProps) {
   const [isDownloading, setIsDownloading] = useState(false);
+  const [selectedResolution, setSelectedResolution] = useState('');
   const [currentDownloadFinalPath, setCurrentDownloadFinalPath] = useState('');
   const [overwriteDialogOpen, setOverwriteDialogOpen] = useState(false);
-  const [pendingOutputPath, setPendingOutputPath] = useState<string | null>(null);
+  const [pendingDownload, setPendingDownload] = useState<{ outputPath: string; resolution: string } | null>(null);
   const [openBugDialog, setOpenBugDialog] = useState(false);
   const [embedding, setEmbedding] = useState(false);
   const [embedError, setEmbedError] = useState<string | null>(null);
@@ -94,15 +103,18 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
   // resolution: 'mp3' is what triggers it), rather than just downloading
   // whatever raw audio format SoundCloud happens to serve.
   const isSoundCloud = platformLabel === 'SoundCloud';
+  const isDailymotion = platformLabel === 'Dailymotion';
+  const resolutions = videoMetaData.resolutions || [];
 
-  // 'best' -- not a height -- tells buildDownloadArgs (main.js) to use
-  // yt-dlp's own generic "best video+audio, merge if needed" selector
-  // instead of the height-constrained one the resolution picker normally
-  // drives.
-  const beginDownload = (outputPath: string, overwriteMode?: DownloadVideoParams['overwriteMode']) => {
+  // resolution is either a real height (Dailymotion's own resolution grid),
+  // 'mp3' (SoundCloud), or 'best' -- the generic "let yt-dlp pick" selector
+  // every other platform still uses, since a real per-height ladder isn't
+  // consistently available outside YouTube/Dailymotion.
+  const beginDownload = (outputPath: string, resolution: string, overwriteMode?: DownloadVideoParams['overwriteMode']) => {
+    setSelectedResolution(resolution);
     setIsDownloading(true);
     setEmbedError(null);
-    startDownload({ videoUrl: videoMetaData.originalUrl, outputPath, format: 'dflt', resolution: isSoundCloud ? 'mp3' : 'best', overwriteMode });
+    startDownload({ videoUrl: videoMetaData.originalUrl, outputPath, format: 'dflt', resolution, overwriteMode });
   };
 
   // Reuses the exact same generic embedFileMetadata IPC LibraryVideoDetail.tsx's
@@ -135,25 +147,25 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
     setEmbedding(false);
   };
 
-  const handleDownload = async () => {
+  const handleDownload = async (resolution: string) => {
     const selectedFile = await window.electronAPI.saveVideoFile(videoMetaData.fullTitle || videoMetaData.title);
     if (selectedFile.canceled) return;
 
     const exists = await window.electronAPI.checkFileExists(selectedFile.filePath);
     if (exists) {
-      setPendingOutputPath(selectedFile.filePath);
+      setPendingDownload({ outputPath: selectedFile.filePath, resolution });
       setOverwriteDialogOpen(true);
       return;
     }
-    beginDownload(selectedFile.filePath);
+    beginDownload(selectedFile.filePath, resolution);
   };
 
   const handleOverwriteChoice = (mode: 'overwrite' | 'resume') => {
     setOverwriteDialogOpen(false);
-    if (pendingOutputPath) {
-      beginDownload(pendingOutputPath, mode);
+    if (pendingDownload) {
+      beginDownload(pendingDownload.outputPath, pendingDownload.resolution, mode);
     }
-    setPendingOutputPath(null);
+    setPendingDownload(null);
   };
 
   useEffect(() => {
@@ -191,6 +203,8 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
                   <Stack direction="row" spacing={0.5} alignItems="center">
                     <Typography variant="subtitle2">
                       {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : isDone ? 'Downloaded' : 'Downloading'}
+                      {isDailymotion && selectedResolution && !['best', 'MP3'].includes(selectedResolution) && ` (${selectedResolution}p)`}
+                      {isDailymotion && selectedResolution === 'MP3' && ' (MP3)'}
                     </Typography>
                     {isDone &&
                       <Tooltip title="Open file location">
@@ -223,9 +237,30 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
                         Details<BugReportIcon fontSize="small" />
                       </Button>
                     </Stack>}
-                  <Button variant="contained" startIcon={<DownloadIcon />} onClick={handleDownload}>
-                    {isSoundCloud ? 'Download MP3' : 'Download'}
-                  </Button>
+                  {isDailymotion && resolutions.length > 0 ? (
+                    <Grid container spacing={1} columns={{ xs: 2, sm: 6 }}>
+                      {resolutions.map((res, idx) => (
+                        <Grid size={1} key={idx}>
+                          <Button
+                            onClick={() => handleDownload(res.resolution)}
+                            sx={{ whiteSpace: 'pre-line' }}
+                            color={res.resolution === 'MP3' ? 'secondary' : 'primary'}
+                            fullWidth
+                            variant={res.resolution === 'MP3' ? 'contained' : 'outlined'}
+                          >
+                            <Stack spacing={0} direction="column" divider={<Divider flexItem sx={{ mx: 1 }} orientation="horizontal" />}>
+                              <Typography variant="button" textTransform="none">{res.resolution}{res.resolution === 'MP3' ? '' : 'p'}</Typography>
+                              <Typography variant="caption">{res.filesizeMb}Mb</Typography>
+                            </Stack>
+                          </Button>
+                        </Grid>
+                      ))}
+                    </Grid>
+                  ) : (
+                    <Button variant="contained" startIcon={<DownloadIcon />} onClick={() => handleDownload(isSoundCloud ? 'mp3' : 'best')}>
+                      {isSoundCloud ? 'Download MP3' : 'Download'}
+                    </Button>
+                  )}
                 </>
               )}
             </Box>

@@ -1,3 +1,11 @@
 yt-dlp[default]==2026.7.4
 pyinstaller>=6.10,<7
 certifi
+# Browser-TLS-fingerprint impersonation -- required outright by some
+# extractors (Dailymotion), and used unconditionally in real request paths
+# by others this app already routes downloads through (Instagram, TikTok).
+# Pinned to yt-dlp's own supported range: its bundled compat shim
+# (yt_dlp/networking/_curlcffi.py) hard-rejects anything outside
+# 0.5.10/0.10.x-0.15.x -- confirmed live, curl_cffi 0.16.0 raises
+# "Only curl_cffi versions 0.5.10 and 0.10.x through 0.15.x are supported".
+curl_cffi>=0.10,<0.16

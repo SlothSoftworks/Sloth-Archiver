@@ -72,6 +72,12 @@ run(venvPyinstaller, [
     // fallback). requirements-build.txt installs yt-dlp[default] specifically
     // to pull this package in.
     '--collect-all', 'yt_dlp_ejs',
+    // Browser-TLS-fingerprint impersonation (Dailymotion, Instagram, TikTok)
+    // -- a compiled C extension (bundled libcurl), so it needs the same
+    // --collect-all treatment as the pure-Python packages above to actually
+    // get its native bits into the frozen build. requirements-build.txt
+    // pins the version range yt-dlp's own compat shim accepts.
+    '--collect-all', 'curl_cffi',
     '--noconfirm',
     path.join(rootDir, 'src', 'python', 'ytdlp_entrypoint.py'),
 ]);

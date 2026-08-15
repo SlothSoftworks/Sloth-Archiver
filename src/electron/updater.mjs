@@ -194,6 +194,12 @@ async function rebuildYtdlp({ pythonExe, pythonSrcDir, stagingWorkDir, onProgres
     // scripts/build-ytdlp-bin.mjs's own requirements-build.txt pin so a
     // self-updated binary doesn't regress back to the un-bundled state.
     await run(pythonExe, ['-m', 'pip', 'install', '--quiet', '--upgrade', 'yt-dlp[default]']);
+    // Browser-TLS-fingerprint impersonation, same pin as requirements-build.txt
+    // (yt-dlp's own compat shim hard-rejects anything outside 0.5.10/0.10.x-0.15.x)
+    // -- required outright by Dailymotion, and used unconditionally in real
+    // request paths by Instagram/TikTok. Installed (not upgraded) so a
+    // self-update never silently drifts outside yt-dlp's supported range.
+    await run(pythonExe, ['-m', 'pip', 'install', '--quiet', 'curl_cffi>=0.10,<0.16']);
 
     onProgress?.('building');
     const rawDist = path.join(stagingWorkDir, 'raw');
@@ -210,6 +216,7 @@ async function rebuildYtdlp({ pythonExe, pythonSrcDir, stagingWorkDir, onProgres
         '--specpath', pyinstallerWorkDir,
         '--collect-all', 'yt_dlp',
         '--collect-all', 'yt_dlp_ejs',
+        '--collect-all', 'curl_cffi',
         '--noconfirm',
         path.join(pythonSrcDir, 'ytdlp_entrypoint.py'),
     ]);

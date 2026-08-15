@@ -29,6 +29,12 @@ Unlike the note above, these *were* removed from `futureSpecs.md` directly (the
 user's explicit request that round), matching this file's normal convention — see
 [Archived](#archived) for what shipped.
 
+**2026-08-13/14 update:** four more items shipped, all removed from `futureSpecs.md`
+directly — [Playlist delete](#playlist-delete), [Playlist thumbnail](#playlist-thumbnail),
+[Ordering/"order by" filter](#ordering-filter), and the "pick timestamp" half of
+[Player customization](#player-customization) (the other half, click-to-select
+directly on the scrub bar, is still genuinely open — see that section).
+
 ## Index
 - [Status at a glance](#status-glance) (diagram)
 - [Long shot ideas — need planning](#long-shot-ideas)
@@ -38,19 +44,19 @@ user's explicit request that round), matching this file's normal convention — 
 - [Big features](#big-features)
   - [Export/Import library JSON](#export-import-json)
   - [Bulk select + download/delete](#bulk-select)
-  - [Player customization (pick timestamp)](#player-customization)
+  - [Player customization (pick timestamp) — partially shipped](#player-customization)
   - [More resilient embedded player / MKV support](#resilient-player)
 - [QoL features](#qol-features)
   - [Language support](#language-support)
   - [~~Cookie browser-picker "Clear" quirk~~ — shipped](#cookie-picker-quirk)
-  - [Delete feature for playlists](#playlist-delete)
+  - [~~Delete feature for playlists~~ — shipped](#playlist-delete)
 - [Small features and corrections](#small-features)
   - [Video merger](#video-merger)
   - [Player UX](#player-ux)
   - [~~Metadata schema versioning~~ — shipped](#schema-versioning)
   - [~~Copy-link button~~ — shipped](#copy-link)
-  - [Ordering/"order by" filter](#ordering-filter)
-  - [Playlist thumbnail](#playlist-thumbnail)
+  - [~~Ordering/"order by" filter~~ — shipped](#ordering-filter)
+  - [~~Playlist thumbnail~~ — shipped](#playlist-thumbnail)
 - [Bugs found — reassessed](#bugs-found)
 - [Archived — shipped work, dated log](#archived)
 
@@ -91,6 +97,10 @@ flowchart LR
         d14["Cookie browser-picker Clear/reset fix"]
         d15["Metadata schema versioning (outdated-data notice)"]
         d16["Copy-link button (video + playlist)"]
+        d17["Playlist delete"]
+        d18["Ordering/'order by' filter (video list)"]
+        d19["Playlist thumbnail"]
+        d20["Player: pick-timestamp buttons for clip tool"]
     end
 
     subgraph PARTIAL["Partially done"]
@@ -105,22 +115,19 @@ flowchart LR
         t7["Video diff/comparator"]
         t9["Export/Import library JSON"]
         t10["Bulk select + download/delete in video grid"]
-        t11["Player: pick-timestamp for clip tool"]
+        t11["Player: click-to-select start/end on scrub bar"]
         t12["Player: MKV/more-codec support"]
-        t13["Playlist delete"]
-        t17["Ordering/'order by' filter (video list)"]
-        t18["Playlist thumbnail"]
     end
 
     DONE ~~~ PARTIAL ~~~ TODO
 
     class d1,d1b,p3,t9,t10 library
     class d2 updater
-    class d3,d8,d9,d10,d11,d12,t13,t18 playlist
-    class d4,d7,d15,d16,t1 smallfeat
+    class d3,d8,d9,d10,d11,d12,d17,d19 playlist
+    class d4,d7,d15,d16,d18,t1 smallfeat
     class d5,d6,d13,d14,t6 qol
     class t7 longshot
-    class t11,t12 player
+    class d20,t11,t12 player
 ```
 
 <a id="long-shot-ideas"></a>
@@ -175,9 +182,9 @@ per-entry "Not on YouTube" tagging on top of the reconciliation itself).
 <a id="big-features"></a>
 ## Big features
 
-Four items now (two new since the last pass, both un-assessed until this round —
-[Player customization](#player-customization) and
-[Resilient player/MKV support](#resilient-player)).
+Export/Import JSON and Bulk select are unchanged. Player customization's
+"pick timestamp" half shipped 2026-08-14 — see below for what's still open there.
+Resilient player/MKV support is unchanged.
 
 <a id="export-import-json"></a>
 ### Export/Import library JSON
@@ -215,18 +222,27 @@ in it since — see [Archived](#archived)), which lowers integration risk slight
 **Recommendation:** build the multi-select UI first (it's the only genuinely new piece), then wire "download selected" through the bulk queue's existing `download: boolean` + resume-at-download path rather than inventing a second queue-feeding mechanism.
 
 <a id="player-customization"></a>
-### Player customization (pick-timestamp for the clip tool)
+### Player customization (pick-timestamp for the clip tool) — PARTIALLY SHIPPED
 
-**New this pass.** **Overall: Low-Medium** for the "pick timestamp" half; **Medium,
-and scope-dependent** for full click-to-select start/end.
+The "Set as start/end" half landed 2026-08-14, exactly as scoped below: `LibraryVideoPlayer.tsx`
+is now a `forwardRef` component exposing `getCurrentTime(): number | null` (null when
+there's no active local `<video>` element mounted — nothing downloaded yet, or an
+unplayable container), and `LibraryVideoDetail.tsx` added a small clock-icon button
+before each of the clip Start/End fields that reads that handle and drops the
+(whole-second-rounded) result straight into the field via the existing
+`formatSecondsAsClipTimestamp` helper. Both buttons share the clip fields' own
+`ffmpegControlsDisabled` gate. `futureSpecs.md`'s Big-features item 3 was reworded
+(not removed) to reflect that only the remaining half is still open.
+
+**Still open — Overall: Medium, scope-dependent.**
 
 | Piece | Difficulty | Why |
 |---|---|---|
-| "Set as start"/"Set as end" buttons next to the clip fields | Low-Medium | `LibraryVideoPlayer.tsx` already holds a `videoRef` (`useRef<HTMLVideoElement>`, line 57) with the real `currentTime`, but it's local to that component — `LibraryVideoDetail.tsx` (where the clip start/end `TextField`s already live, already digit-only/auto-formatting `HH:MM:SS`) has no access to it today. Needs `LibraryVideoPlayer` to expose current playback time upward — either `forwardRef` + `useImperativeHandle` (a `getCurrentTime()` method) or a simple `onTimeUpdate` callback prop threaded from the parent. Either is a standard, well-contained React pattern; no new dependency. |
 | Drag/click-to-select start and end directly on the scrub bar | Medium | Native `<video controls>` doesn't expose a customizable range-selection UI at all — this would mean either overlaying a custom range-select control on top of (or instead of) the native scrub bar, which overlaps directly with [Player UX](#player-ux)'s already-parked "remove native controls, build a custom player" conclusion below. Worth deciding these two together rather than separately, since building custom controls for one and not the other would be wasted, divergent work. |
-| Wiring "set as start/end" into the existing clip extractor | Low | The clip fields already exist, already validate (`extractClip`'s handler), and already accept a formatted `HH:MM:SS` string — the new buttons just need to call the existing `setClipStart`/`setClipEnd`-equivalent setters with a formatted value derived from the picked time (`formatSecondsAsClipTimestamp`, already exists in `LibraryVideoDetail.tsx`). |
 
-**Recommendation:** ship the "Set as start/end" button pair first (cheap, high value, reuses everything that already exists) and treat true click-to-select-on-the-scrub-bar as the same future "personalize the player" push [Player UX](#player-ux) already flags as the only real path left there — don't build custom scrub-bar controls twice for two different features.
+**Recommendation:** treat this as the same future "personalize the player" push
+[Player UX](#player-ux) already flags as the only real path left there — don't build
+custom scrub-bar controls for this alone.
 
 <a id="resilient-player"></a>
 ### More resilient embedded player / MKV support
@@ -253,8 +269,8 @@ so this isn't a bug to fix, it's a real gap to close.
 <a id="qol-features"></a>
 ## QoL features
 
-Language support carries over unchanged; playlist delete is still open. The cookie
-browser-picker quirk shipped the same day it was assessed — see below.
+Language support carries over unchanged. Both other items — the cookie
+browser-picker quirk and playlist delete — have now shipped, see below.
 
 <a id="language-support"></a>
 ### Language support (i18n / "strings" file)
@@ -286,26 +302,20 @@ surfaced (`cookies:setConfig`'s validation had to allow an empty `cookiesBrowser
 the explicit "cleared" state). Removed from `futureSpecs.md` directly.
 
 <a id="playlist-delete"></a>
-### Delete feature for playlists
+### ~~Delete feature for playlists~~ — SHIPPED
 
-**New this pass.** **Overall: Low.** The exact same containment-checked delete
-pattern this codebase already uses for videos (`deleteLibraryEntry`, `library.mjs`)
-applies directly; playlists just don't have their own delete path yet.
-
-| Piece | Difficulty | Why |
-|---|---|---|
-| Backend delete function | Low | A new `deletePlaylistSnapshot({ libraryDir, playlistId })` in `library.mjs`, mirroring `deleteLibraryEntry`'s existing `path.resolve` + `path.relative` containment check (the exact pattern `reports/SecurityAnalysis.md`'s SEC-003 recommends extending everywhere) — `fs.rmSync` the playlist's directory, done. The spec is explicit that videos themselves aren't touched, which matches: nothing in `writeLibraryEntry`'s video storage is coupled to a playlist snapshot existing. |
-| IPC handler | Low | A new `library:deletePlaylist` handler, same shape as the existing `library:deleteEntry`. |
-| UI: delete button + confirm dialog + "videos aren't removed" notice | Low | `PlaylistsSection.tsx` already has the exact confirm-dialog/notice pattern this needs precedent for (its own Undo tooltip already explains a consequence before the user commits) — this is composition, not new design. |
-
-**Recommendation:** small, self-contained, no open design questions — a good "next small PR" candidate.
+Landed 2026-08-13/14, exactly as scoped: `deletePlaylistSnapshot({ libraryDir, playlistId })`
+in `library.mjs` (the same `path.resolve`/`path.relative` containment check every
+other destructive library operation uses), a `library:deletePlaylist` IPC round-trip,
+and a delete button + confirm dialog in `PlaylistsSection.tsx`'s detail header
+stating the videos themselves aren't removed. Removed from `futureSpecs.md` directly.
 
 <a id="small-features"></a>
 ## Small features and corrections
 
-Two items (Video merger, Player UX) carry over unchanged. Metadata schema
-versioning and the copy-link button shipped the same day they were assessed — see
-below. Ordering/"order by" filter and playlist thumbnail are still open.
+Two items (Video merger, Player UX) carry over unchanged. The other four — metadata
+schema versioning, copy-link button, ordering/"order by" filter, and playlist
+thumbnail — have all shipped, see below.
 
 <a id="video-merger"></a>
 ### 1. Video merger
@@ -374,35 +384,36 @@ follow-up — `navigator.clipboard.writeText(originalUrl)` plus a "Link copied"
 `Snackbar`, exactly as scoped. Removed from `futureSpecs.md` directly.
 
 <a id="ordering-filter"></a>
-### 5. Ordering / "order by" filter (video list view)
+### ~~5. Ordering / "order by" filter (video list view)~~ — SHIPPED
 
-**New this pass.** **Overall: Low-Medium.** Every field the spec asks to sort by is
-already present in the data the video-list view already has in memory.
-
-| Piece | Difficulty | Why |
-|---|---|---|
-| Sort by date published / date added / channel / title | Low | All already present per-video: `uploadDate` (`metadata.uploadDate`), `addedEpoch` (the epoch folder name itself, already a sortable timestamp), `channel`, `title`. The flat by-video list (`LibraryScreen.tsx`'s "switch to flat view" mode, already shipped) already builds exactly the flat array a sort would apply to — this is a `.sort()` call plus a dropdown/toggle for the active field and direction, no new data fetching. |
-| Sort by downloaded status | Low | Already derivable — `!!metadata.downloadedFilePath` (or the audio equivalent) is already read elsewhere in this codebase for exactly this kind of boolean state. |
-| Sort by quality | Medium, and inherently approximate | Flagged as "depending on how easy it is to filter for" in the spec text itself, correctly — a video can have multiple downloaded qualities tracked over its version history (`downloadedResolution` is per-epoch, not per-video), and an *undownloaded* video only has a list of *available* resolutions (`resolutions[]`), not a single scalar to sort by. Would need a defined rule (e.g. "sort by the latest epoch's downloaded resolution, falling back to the highest available resolution if nothing's downloaded yet") rather than a natural single field — a real, small design decision, not just an implementation detail. |
-| UI: the sort control itself | Low | A single `Select`/toggle-group in the flat-view toolbar, next to the existing search bar (`LibrarySearchBar`, already there) — same composition pattern already used for the channel/video view toggle. |
-
-**Recommendation:** ship date/channel/title/downloaded-status sorting first (all trivial, all already-available data) and treat quality-sorting as a separate follow-up once its exact rule is decided — don't let the one genuinely ambiguous sub-item block the four easy ones.
+Landed 2026-08-13, close to exactly as scoped: an "Order by" dropdown (Title, Date
+published, Date added, Channel, Downloaded status, Quality) plus a direction-toggle
+button, in the flat by-video list's toolbar. Default stays Title/ascending (the
+prior always-alphabetical behavior), so nothing changes unless the control is
+touched. Two field definitions worth recording since they weren't fully obvious from
+the spec text: **Date added** uses the *earliest* epoch's timestamp (when a video was
+first tracked), not the latest version's, so re-downloading a new version doesn't
+bump a video up the "recently added" order; **Quality** reuses the exact same
+"best downloaded so far across all versions" rank the grid's own quality badge
+already computes (`getBestDownloadedQuality`), resolving the ambiguity the original
+assessment flagged. A same-day follow-up regrouped the header: the search bar now
+sits left-aligned next to the "Library" title, and the sort field + direction toggle
+are wrapped in one outlined `Paper` so they read as a single instrument rather than
+two loose controls. Removed from `futureSpecs.md` directly.
 
 <a id="playlist-thumbnail"></a>
-### 6. Playlist thumbnail
+### ~~6. Playlist thumbnail~~ — SHIPPED
 
-**New this pass.** **Overall: Low-Medium.** The mechanics this needs (image
-download-and-cache-locally) are an exact, direct reuse of an existing helper; the
-only real design question is *which* video's thumbnail counts as "first."
-
-| Piece | Difficulty | Why |
-|---|---|---|
-| Caching a thumbnail locally, with a fallback | Low | `downloadImageToFile()` (`main.js`) already does exactly this — it's the same helper `ensureChannelIcon`/`ensureVideoThumbnail` already use, fetch-once-then-skip semantics and all. A new `ensurePlaylistThumbnail(playlistDir, thumbnailUrl)` following the identical pattern is close to a copy-paste, not new design. |
-| "Dynamically update to the first video's thumbnail" | Medium | The playlist's own `entries[]` array already carries each entry's `thumbnailUrl` (`writePlaylistSnapshot`/`reconcilePlaylistSnapshot` already populate it) — "first video" just means `entries[0].thumbnailUrl`, already available with zero new fetching. The "dynamic" part (re-checking whether entry 0 changed) is exactly what a playlist refresh already recomputes (`reconcilePlaylistSnapshot`'s reordering/reconciliation, shipped 2026-08-08) — piggybacking the thumbnail re-check onto that existing refresh path, rather than inventing a separate polling mechanism, is the natural fit. |
-| Fallback thumbnail if the first entry has none (e.g. it's the dead/"Not on YouTube" placeholder) | Low | Already has a natural answer: fall through to the next entry with a real `thumbnailUrl`, same idea `isDeadTitle`-adjacent code already applies elsewhere in `library.mjs` for skipping placeholder data. |
-| UI: rendering it | Low | `PlaylistsSection.tsx`'s list already renders each *entry's* thumbnail via `Avatar` — the playlist-level thumbnail in the summary list is the same `Avatar`/`CardMedia` pattern one level up. |
-
-**Recommendation:** straightforward reuse of existing infrastructure end to end — the only real decision is the fallback-chain rule above, which is small enough to just decide inline while building rather than needing a separate planning pass.
+Landed 2026-08-13, exactly as scoped, including the two-tier fallback design this
+file recommended: display always prefers the **live** first entry's `thumbnailUrl`
+(zero extra fetch, always current); `ensurePlaylistThumbnail(playlistDir, thumbnailUrl)`
+(`main.js`) caches a local fallback copy — force-refetching on every playlist
+save/refresh (unlike the video/channel thumbnail helpers, which fetch once and skip)
+since "the playlist's thumbnail" is explicitly whichever video is first *right now*,
+not a fixed image chosen once. That fallback only actually matters once there's no
+live one to show, i.e. the "playlist went empty, later filled back up" case the spec
+called out. Rendered as an `Avatar` in both the playlist list rows and the detail
+header. Removed from `futureSpecs.md` directly.
 
 <a id="bugs-found"></a>
 ## Bugs found — reassessed
@@ -466,8 +477,19 @@ what's actually still open.
 | Cookie browser-picker "Clear" quirk fixed (stale label on mode switch + explicit Clear button) | 2026-08-12 |
 | Metadata schema versioning: "Outdated data" notice on video/playlist entries whose stored `schemaVersion` predates current | 2026-08-12 |
 | Copy-link button (video + playlist detail views) | 2026-08-12 |
+| Playlist delete (snapshot only, videos untouched, with notice) | 2026-08-13 |
+| Playlist thumbnail (live first-entry preferred, locally-cached fallback) | 2026-08-13 |
+| Ordering/"order by" filter for the flat video list (Title/Date published/Date added/Channel/Downloaded status/Quality) | 2026-08-13 |
+| Player "pick timestamp" -- Set-as-start/Set-as-end buttons next to the clip fields | 2026-08-14 |
 
 ### Recently shipped, dated log
+
+**2026-08-13/14:**
+- **Playlist delete**: `deletePlaylistSnapshot({ libraryDir, playlistId })` (`library.mjs`, same containment-check pattern as every other destructive library operation) + `library:deletePlaylist` IPC + a delete button/confirm dialog in `PlaylistsSection.tsx` stating the videos themselves are untouched.
+- **Playlist thumbnail**: display prefers the live first entry's `thumbnailUrl`; `ensurePlaylistThumbnail()` (`main.js`) force-refetches a local fallback copy on every playlist save/refresh (tracks "whichever video is first right now," not a fixed image), used only once there's no live one to show. `listPlaylistSnapshots`/`getPlaylistSnapshot` (`library.mjs`) now expose `thumbnailUrl`/`thumbnailPath`; rendered via `Avatar` in both the list and detail views.
+- **Ordering/"order by" filter**: a sort-field dropdown (Title/Date published/Date added/Channel/Downloaded status/Quality) + direction toggle in the flat by-video list. Date added uses each video's *earliest* epoch, not its latest; Quality reuses the grid card's own existing `getBestDownloadedQuality` ranking. Same-day follow-up: search bar moved left-aligned next to the "Library" title, and the sort controls grouped into one outlined `Paper` container.
+- **Player "pick timestamp"**: `LibraryVideoPlayer.tsx` converted to `forwardRef`, exposing `getCurrentTime(): number | null` off the underlying `<video>` element; `LibraryVideoDetail.tsx` added a clock-icon button before each clip Start/End field that reads it and formats it in via the existing `formatSecondsAsClipTimestamp` helper. The other half of that spec item (click-to-select directly on the scrub bar) is deliberately still open — see [Player customization](#player-customization).
+- All four shipped the same short sequence each time: implement → lint/`tsc -b`/`npm test` (289 passing throughout)/`npm run build:nolint` → user manual-tested and confirmed → move on to the next.
 
 **2026-08-12:**
 - Three of the same-day reassessment's own "quick" items shipped: **Metadata schema versioning** — `CURRENT_VIDEO_SCHEMA_VERSION`/`CURRENT_PLAYLIST_SCHEMA_VERSION` constants (`library.mjs`, replacing the previously-hardcoded `3`/`1` literals), plus an "Outdated data" warning `Chip` in `LibraryVideoDetail.tsx`/`PlaylistsSection.tsx` for any entry whose stored `schemaVersion` is behind current. **Copy-link button** — a `Link`-icon button (video + playlist detail views, `navigator.clipboard.writeText` + a "Link copied" toast), positioned to the left of the title alongside the basic info rather than in the right-aligned action-button group, so it doesn't crowd that cluster. **Cookie browser-picker "Clear" quirk** — `handleModeChange` (`OptionsScreen.tsx`) now clears `cookiesBrowser` (both component state and persisted config) when switching away from browser mode, plus a new explicit "Clear" button; required loosening `cookies:setConfig`'s validation in `main.js` to allow an empty `cookiesBrowser` as the deliberate "cleared" state (`cookiesArgs()` already handled that gracefully, falling back to file-mode cookies). All three removed from `futureSpecs.md` directly. Full lint/typecheck/test/build pass clean after each.
