@@ -4,10 +4,8 @@ import https from 'https';
 import { spawn } from 'child_process';
 
 // Electron's main process is single-threaded -- a spawnSync call here would
-// block ALL main-process work (every IPC handler, not just this one) for the
-// full duration of each step, several seconds at a time for pip/PyInstaller.
-// Everything below uses async spawn instead so the app (and the renderer's
-// live progress display) stays responsive while an update runs.
+// block every IPC handler for the full duration of each step (several
+// seconds for pip/PyInstaller). Async spawn keeps the app responsive.
 function run(command, args, options = {}) {
     return new Promise((resolve, reject) => {
         const child = spawn(command, args, options);
@@ -26,8 +24,8 @@ function run(command, args, options = {}) {
     });
 }
 
-// Same shape as run(), but resolves with success/code instead of rejecting on
-// a non-zero exit -- for probes where "it failed" is an expected, handled outcome.
+// Same shape as run(), but resolves with success/code instead of rejecting
+// on a non-zero exit -- for probes where failure is an expected outcome.
 function probe(command, args, options = {}) {
     return new Promise((resolve) => {
         const child = spawn(command, args, options);
@@ -42,10 +40,10 @@ function probe(command, args, options = {}) {
 
 // Kept as a standalone constant rather than parsed out of
 // src/python/requirements-build.txt: that file pins yt-dlp to an exact
-// version on purpose (reproducible dev/CI builds), but the whole point of
-// this module is to install the *latest* yt-dlp -- reusing that file as-is
-// would silently re-pin every update to the same stale version. Keep this
-// roughly in sync with requirements-build.txt's own PyInstaller constraint.
+// version for reproducible dev/CI builds, but this module's whole point is
+// installing the *latest* yt-dlp -- reusing it as-is would re-pin every
+// update to the same stale version. Keep roughly in sync with
+// requirements-build.txt's own PyInstaller constraint.
 const PYINSTALLER_CONSTRAINT = 'pyinstaller>=6.10,<7';
 const PYTHON_RUNTIME_MINOR = '3.11';
 const PYTHON_BUILD_STANDALONE_REPO = 'astral-sh/python-build-standalone';
@@ -102,8 +100,7 @@ export async function getLatestYtdlpVersionFromPyPI() {
 
 // PyPI's version string ("2026.7.4") and yt-dlp's own --version output
 // ("2026.07.04", zero-padded) refer to the same release but aren't equal as
-// raw strings -- normalize each dot-separated segment to an integer before
-// comparing, or every check would report an update available forever.
+// raw strings -- normalize each segment to an integer before comparing.
 export function isNewerVersion(candidate, current) {
     const normalize = (v) => v.trim().split('.').map((seg) => parseInt(seg, 10) || 0);
     const a = normalize(candidate);
@@ -127,7 +124,7 @@ export async function getCurrentYtdlpVersion(ytdlpPath) {
 //   cpython-3.11.15+20260728-x86_64-apple-darwin-install_only.tar.gz
 //   cpython-3.11.15+20260728-aarch64-pc-windows-msvc-install_only.tar.gz
 // Matched by regex (not an exact name) since the patch version and release
-// tag both float independently of what we care about (minor version + platform/arch).
+// tag both float independently of the minor version/platform/arch we care about.
 function findPythonRuntimeAsset(releaseJson) {
     const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
     const platformPart = process.platform === 'win32' ? 'pc-windows-msvc' : 'apple-darwin';
@@ -145,9 +142,8 @@ function pythonExePath(runtimeDir) {
         : path.join(runtimeDir, 'python', 'bin', 'python3');
 }
 
-// Lazy + one-time: only fetched the first time the user actually triggers an
-// update, so the base app install size is unaffected (protects the work
-// already done to keep the packaged app small).
+// Lazy + one-time: only fetched the first time the user triggers an update,
+// so the base app install size stays unaffected.
 async function ensurePythonRuntime(runtimeDir, onProgress) {
     const pythonExe = pythonExePath(runtimeDir);
     if (fs.existsSync(pythonExe)) {
@@ -175,9 +171,9 @@ async function ensurePythonRuntime(runtimeDir, onProgress) {
     return pythonExe;
 }
 
-// Pinned + one-time: installed once into the runtime and reused across every
-// future update, mirroring how .venv-build already persists across local dev
-// builds rather than being recreated on every invocation.
+// Pinned + one-time: installed once into the runtime and reused across
+// every future update, mirroring how .venv-build persists across local dev
+// builds instead of being recreated on every invocation.
 async function ensurePyinstaller(pythonExe, onProgress) {
     const check = await probe(pythonExe, ['-m', 'PyInstaller', '--version']);
     if (check.ok) {
@@ -189,16 +185,15 @@ async function ensurePyinstaller(pythonExe, onProgress) {
 
 async function rebuildYtdlp({ pythonExe, pythonSrcDir, stagingWorkDir, onProgress }) {
     onProgress?.('fetching-yt-dlp');
-    // [default] pulls in yt-dlp-ejs (TD-010, reports/TechnicalDebt.md) -- the
-    // JS-challenge solver scripts YouTube's nsig challenge needs, mirroring
-    // scripts/build-ytdlp-bin.mjs's own requirements-build.txt pin so a
-    // self-updated binary doesn't regress back to the un-bundled state.
+    // [default] pulls in yt-dlp-ejs (TD-010) -- the JS-challenge solver
+    // YouTube's nsig challenge needs, mirroring build-ytdlp-bin.mjs's pin so
+    // a self-updated binary doesn't regress back to the un-bundled state.
     await run(pythonExe, ['-m', 'pip', 'install', '--quiet', '--upgrade', 'yt-dlp[default]']);
-    // Browser-TLS-fingerprint impersonation, same pin as requirements-build.txt
-    // (yt-dlp's own compat shim hard-rejects anything outside 0.5.10/0.10.x-0.15.x)
-    // -- required outright by Dailymotion, and used unconditionally in real
-    // request paths by Instagram/TikTok. Installed (not upgraded) so a
-    // self-update never silently drifts outside yt-dlp's supported range.
+    // Browser-TLS-fingerprint impersonation, required by Dailymotion and
+    // used unconditionally by Instagram/TikTok -- same version range as
+    // requirements-build.txt (yt-dlp's own compat shim rejects anything
+    // outside it). Installed, not upgraded, so a self-update never drifts
+    // outside yt-dlp's supported range.
     await run(pythonExe, ['-m', 'pip', 'install', '--quiet', 'curl_cffi>=0.10,<0.16']);
 
     onProgress?.('building');
@@ -224,10 +219,11 @@ async function rebuildYtdlp({ pythonExe, pythonSrcDir, stagingWorkDir, onProgres
     return path.join(rawDist, 'yt-dlp');
 }
 
-// Same manual dereferencing copy used by scripts/build-ytdlp-bin.mjs: PyInstaller's
-// macOS onedir output uses an absolute symlink for _internal/Python that points back
-// into this exact build's temp work dir, so a naive copy (or a plain rename across
-// filesystems) can leave a dangling reference. statSync follows symlinks; lstatSync doesn't.
+// Same manual dereferencing copy used by scripts/build-ytdlp-bin.mjs:
+// PyInstaller's macOS onedir output uses an absolute symlink for
+// _internal/Python pointing back into this build's temp work dir, so a
+// naive copy can leave a dangling reference. statSync follows symlinks;
+// lstatSync doesn't.
 function copyDereferenced(src, dest) {
     const stat = fs.statSync(src);
     if (stat.isDirectory()) {

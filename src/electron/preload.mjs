@@ -1,6 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron';
-//const { contextBridge, ipcRenderer } = require('electron');
-
 
 contextBridge.exposeInMainWorld('electronAPI', {
     pickFolder: (options) => ipcRenderer.invoke('dialog:openFolder', options),

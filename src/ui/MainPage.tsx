@@ -33,9 +33,8 @@ const TAB_PATHS = ['/', '/library', '/options'];
 // The active tab is derived from the current location rather than its own
 // local state -- lets an internal "hyperlink" (the add-success toast, a
 // finished bulk-add item) switch tabs just by navigating, e.g. to
-// /library/video/:videoId, without a separate imperative "switch tab" call.
-// Deep-link paths under /library (like the one above) still count as the
-// Library tab being active.
+// /library/video/:videoId. Deep-link paths under /library still count as
+// the Library tab being active.
 function pathToTabIndex(pathname: string): number {
   if (pathname.startsWith('/library')) return LIBRARY_TAB_INDEX;
   if (pathname === '/options') return OPTIONS_TAB_INDEX;
@@ -92,23 +91,20 @@ export function BasicTabs() {
   const [infoOpen, setInfoOpen] = useState(false);
   // Statically shown in the top bar for the duration of alpha testing --
   // makes it trivial for a tester to say exactly which build they're
-  // reporting a bug against without digging into Options. Options itself
-  // also shows this (see OptionsScreen.tsx) for after alpha, once this
-  // top-bar copy is removed.
+  // reporting a bug against. Options also shows this (OptionsScreen.tsx)
+  // for after alpha, once this top-bar copy is removed.
   const [appVersion, setAppVersion] = useState('');
   useEffect(() => {
     window.electronAPI.getAppVersion().then(setAppVersion);
   }, []);
   const { count: libraryNotificationCount, reset: resetLibraryNotifications } = useLibraryNotification();
   // Bumped to force LibraryScreen to remount (see its `key` below) -- every
-  // OTHER tab already gets this exact reset for free, since CustomTabPanel
-  // only renders a tab's content while it's active (switching away and back
-  // unmounts/remounts it). Library's own channel/video drill-down and
-  // Videos/Playlists toggle are local state, not URL-driven, so navigating
-  // to the same /library path a second time (clicking the already-active
-  // Library tab) is normally a no-op location change that leaves that state
-  // untouched -- this key bump is what makes clicking Library while already
-  // on it behave the same as any other tab: back to that tab's own start.
+  // other tab gets this reset for free, since CustomTabPanel only renders a
+  // tab's content while active. Library's own drill-down and Videos/
+  // Playlists toggle are local state, not URL-driven, so re-navigating to
+  // the already-active Library tab is normally a no-op that leaves them
+  // untouched -- this key bump makes clicking Library while on it behave
+  // like any other tab: back to its own start.
   const [libraryResetKey, setLibraryResetKey] = useState(0);
 
   const handleChange = (event: React.SyntheticEvent, newValue: number) => {
@@ -119,14 +115,11 @@ export function BasicTabs() {
   };
 
   // MUI's Tab only calls the Tabs-level onChange when the clicked tab isn't
-  // already selected (see @mui/material/Tab/Tab.js's handleClick: `if
-  // (!selected && onChange)`) -- clicking the already-active Library tab
-  // never reaches handleChange above at all, which is exactly the click this
-  // feature needs to catch. Tab's own onClick prop, unlike onChange, fires
-  // unconditionally regardless of selected state, so the reset lives here
-  // instead, gated on "was already on Library" so it doesn't double-fire
-  // (and double-bump the key) on a genuine tab switch into Library, which
-  // already gets a real remount from CustomTabPanel for free.
+  // already selected, so clicking the already-active Library tab never
+  // reaches handleChange -- exactly the click this needs to catch. Tab's
+  // own onClick fires unconditionally, so the reset lives here instead,
+  // gated on "was already on Library" so it doesn't double-fire on a
+  // genuine switch into Library (which already remounts via CustomTabPanel).
   const handleLibraryTabClick = () => {
     if (value === LIBRARY_TAB_INDEX) {
       setLibraryResetKey((prev) => prev + 1);

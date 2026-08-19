@@ -32,10 +32,9 @@ import type { DownloadVideoParams } from '../../types';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import { getPlatformLabel } from '../../utils/utils.ts';
 
-// Same visual pattern as VideoDetailCard.tsx's own progress bar -- kept as a
-// separate copy rather than shared, matching this codebase's established
-// convention for these small per-file visual helpers (e.g.
-// LibraryVideoDetail.tsx's own copy of the same idea).
+// Same visual pattern as VideoDetailCard.tsx's own progress bar, kept as a
+// separate copy rather than shared -- matches this codebase's convention
+// for these small per-file visual helpers.
 function LinearProgressWithLabel(props: LinearProgressProps & { value: number; valueBuffer: number }) {
   const { value, valueBuffer } = props;
   const displayValue = value > 0 ? value : valueBuffer;
@@ -51,18 +50,14 @@ function LinearProgressWithLabel(props: LinearProgressProps & { value: number; v
   );
 }
 
-// Deliberately minimal, and deliberately NOT a branch inside VideoDetailCard --
-// that component already has real YouTube-specific logic threaded through it
-// (the YouTube iframe embed, the resolution grid, MP3 special-casing), and
-// keeping this separate means future per-platform work (e.g. a resolution
-// picker for Twitter/X specifically, since unlike TikTok/Instagram/SoundCloud
-// it can genuinely have more than one real quality) has a clean home that
-// can't destabilize the existing YouTube flow. No resolution picker, no
-// format picker, no "add to library" -- just enough to get one real file
-// downloaded, since a per-height quality ladder isn't consistently available
-// outside YouTube at all (confirmed live: SoundCloud is audio-only with zero
-// height-having formats; TikTok/Instagram typically expose only one real
-// quality).
+// Deliberately minimal, and deliberately NOT a branch inside VideoDetailCard
+// -- that component already has real YouTube-specific logic threaded
+// through it, and keeping this separate means future per-platform work has
+// a clean home that can't destabilize the YouTube flow. No resolution
+// picker, no format picker, no "add to library" -- just enough to get one
+// real file downloaded, since a per-height quality ladder isn't
+// consistently available outside YouTube (SoundCloud is audio-only;
+// TikTok/Instagram typically expose only one real quality).
 interface OtherPlatformVideoDataProps {
   videoMetaData: {
     title: string;
@@ -73,11 +68,9 @@ interface OtherPlatformVideoDataProps {
     uploadDate: string | null;
     description: string | null;
     originalUrl: string;
-    // Computed generically for every platform, not just YouTube (see
-    // buildResolutions, main.js) -- unused here except for Dailymotion,
-    // since that's the one non-YouTube platform confirmed to reliably expose
-    // a real per-height ladder (SoundCloud is audio-only; TikTok/Instagram
-    // typically expose only one real quality).
+    // Computed generically for every platform (see buildResolutions,
+    // main.js), unused here except for Dailymotion, the one non-YouTube
+    // platform confirmed to reliably expose a real per-height ladder.
     resolutions?: { resolution: string; filesizeMb: string }[];
   };
 }
@@ -96,20 +89,16 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
   const { finalFilePath, downloadProgress, postprocessProgress, downloadStatus, isDone, isError, downloadError, startDownload } = useDownloadVideo();
 
   const platformLabel = getPlatformLabel(videoMetaData.originalUrl);
-  // SoundCloud is audio-only -- there's no scenario where a "video" would
-  // ever be the right download, so this skips the generic 'best' selector
-  // entirely and always extracts a real MP3 (the same direct-ffmpeg pass
-  // YouTube's own MP3 downloads use, see needsDirectFfmpegPass/main.js --
-  // resolution: 'mp3' is what triggers it), rather than just downloading
-  // whatever raw audio format SoundCloud happens to serve.
+  // SoundCloud is audio-only, so this always extracts a real MP3 (the same
+  // direct-ffmpeg pass YouTube's MP3 downloads use, resolution: 'mp3'
+  // triggers it) rather than downloading whatever raw format it serves.
   const isSoundCloud = platformLabel === 'SoundCloud';
   const isDailymotion = platformLabel === 'Dailymotion';
   const resolutions = videoMetaData.resolutions || [];
 
-  // resolution is either a real height (Dailymotion's own resolution grid),
-  // 'mp3' (SoundCloud), or 'best' -- the generic "let yt-dlp pick" selector
-  // every other platform still uses, since a real per-height ladder isn't
-  // consistently available outside YouTube/Dailymotion.
+  // resolution is either a real height (Dailymotion), 'mp3' (SoundCloud), or
+  // 'best' -- the generic "let yt-dlp pick" selector every other platform
+  // still uses.
   const beginDownload = (outputPath: string, resolution: string, overwriteMode?: DownloadVideoParams['overwriteMode']) => {
     setSelectedResolution(resolution);
     setIsDownloading(true);
@@ -117,13 +106,11 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
     startDownload({ videoUrl: videoMetaData.originalUrl, outputPath, format: 'dflt', resolution, overwriteMode });
   };
 
-  // Reuses the exact same generic embedFileMetadata IPC LibraryVideoDetail.tsx's
-  // own "Embed metadata" tool calls -- it only ever needs a file path plus
-  // tag values, it was never actually library-specific despite the IPC
-  // channel's "library:" prefix, so this works here with zero backend
-  // changes even though this download never gets added to the library.
-  // Offered specifically for SoundCloud for now (per the user's own scoping) --
-  // downloaded audio files rarely carry real ID3 tags otherwise.
+  // Reuses the same generic embedFileMetadata IPC LibraryVideoDetail.tsx's
+  // "Embed metadata" tool calls -- it only needs a file path plus tag
+  // values, never actually library-specific despite the "library:" prefix,
+  // so this works with zero backend changes. Offered for SoundCloud for
+  // now, since downloaded audio files rarely carry real ID3 tags otherwise.
   const handleEmbedMetadata = async () => {
     if (!currentDownloadFinalPath) return;
     setEmbedding(true);

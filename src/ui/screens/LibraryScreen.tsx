@@ -40,17 +40,15 @@ import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 
 type LibraryViewMode = 'channel' | 'video';
 // Top-level split within the Library tab -- "Videos" is everything this
-// screen already did; "Playlists" is the new reconciliation-based archive
-// view (PlaylistsSection). Deliberately its own top-level toggle rather than
-// folded into the channel/video LibraryViewMode above, matching library.mjs's
-// own long-standing comment that playlists are "deliberately not surfaced in
-// the channel/video view." Plain local state, not URL-routed -- same as the
-// LibraryViewMode toggle already below.
+// screen already did; "Playlists" is the reconciliation-based archive view
+// (PlaylistsSection), deliberately its own toggle rather than folded into
+// the channel/video LibraryViewMode above. Plain local state, not
+// URL-routed, same as the LibraryViewMode toggle below.
 type LibrarySection = 'videos' | 'playlists';
 
 // Mirrors the shape returned by window.electronAPI.getLibraryIndex() -- kept
-// local rather than imported, matching how video-metadata shapes are already
-// defined per-file elsewhere in this codebase (e.g. VideoDetailCard.tsx).
+// local rather than imported, matching how video-metadata shapes are defined
+// per-file elsewhere in this codebase.
 type LibraryVideoMetadata = {
   videoId: string;
   channelId: string | null;
@@ -93,17 +91,15 @@ type LibraryChannel = {
 function getBestDownloadedQuality(epochs: { metadata: LibraryVideoMetadata }[]): { resolution: string; format: string | null } | null {
   const downloaded = epochs.filter((e) => e.metadata.downloadedFilePath);
   if (downloaded.length > 0) {
-    // Prefer an actual video resolution over a legacy MP3-only capture
-    // (from before MP3 got its own separate downloadedAudioFilePath slot)
-    // when both exist -- a real video is generally the more "complete"
-    // archive of the two.
+    // Prefer an actual video resolution over a legacy MP3-only capture (from
+    // before MP3 got its own downloadedAudioFilePath slot) when both exist.
     const videoOnly = downloaded.filter((e) => e.metadata.downloadedResolution !== 'MP3');
     const pool = videoOnly.length > 0 ? videoOnly : downloaded;
     const best = pool.reduce((a, b) => (Number(b.metadata.downloadedResolution) > Number(a.metadata.downloadedResolution) ? b : a));
     return { resolution: best.metadata.downloadedResolution as string, format: best.metadata.downloadedFormat };
   }
-  // No video download in any version -- but a separately-downloaded MP3
-  // still counts as "something is archived" for the grid badge.
+  // No video download in any version -- a separately-downloaded MP3 still
+  // counts as "something is archived" for the grid badge.
   if (epochs.some((e) => e.metadata.downloadedAudioFilePath)) {
     return { resolution: 'MP3', format: null };
   }
@@ -131,14 +127,12 @@ function getDateAddedEpoch(video: LibraryVideo): number {
   return video.epochs.length > 0 ? video.epochs[video.epochs.length - 1].metadata.addedEpoch : video.metadata.addedEpoch;
 }
 
-// Quality is inherently approximate, same caveat getBestDownloadedQuality's
-// own comment already makes: a video can have different downloaded
+// Quality is inherently approximate: a video can have different downloaded
 // resolutions across its version history, and an undownloaded video only has
 // a list of *available* resolutions, not one real value to sort by. Ranked
-// by the same "best downloaded so far" the grid's own badge already shows,
-// so what you see sorted matches what you see on each card. MP3 ranks below
-// any real resolution but above "not downloaded" -- it's still something
-// archived, same stance the badge itself takes.
+// by the same "best downloaded so far" the grid's badge already shows, so
+// sorted order matches what's shown on each card. MP3 ranks below any real
+// resolution but above "not downloaded" -- still something archived.
 function getQualityRank(video: LibraryVideo): number {
   const best = getBestDownloadedQuality(video.epochs);
   if (!best) return -1;
@@ -196,10 +190,9 @@ export default function LibraryScreen() {
     load();
   }, []);
 
-  // Fire-and-forget, same as every other settings write in this codebase
-  // (e.g. OptionsScreen's downloadDir/libraryDir handlers) -- the local state
-  // update below is what the UI actually reacts to; the write just needs to
-  // land before the next app launch reads it back.
+  // Fire-and-forget, same as every other settings write in this codebase --
+  // the local state update below is what the UI reacts to; the write just
+  // needs to land before the next app launch reads it back.
   const handleViewModeChange = (mode: LibraryViewMode) => {
     setViewMode(mode);
     window.electronAPI.setLibraryViewMode(mode);
@@ -212,36 +205,29 @@ export default function LibraryScreen() {
     setLoading(false);
   };
 
-  // No loading-spinner toggle -- used after a download/delete completes while
-  // already viewing a video's detail, where swapping the whole screen to a
-  // spinner would be a jarring regression rather than a background update.
+  // No loading-spinner toggle -- used after a download/delete completes
+  // while already viewing a video's detail, where swapping to a spinner
+  // would be a jarring regression rather than a background update.
   const refreshChannelsSilently = async () => {
     const index = await window.electronAPI.refreshLibraryIndex();
     setChannels(index.channels);
   };
 
-  // Unlike handleVideoDeleted below, this stays on the current channel page
-  // rather than bouncing back to the root -- refreshing a channel's icon
-  // should update in place so the user actually sees the new icon, not lose
-  // their spot. Updates both the root `channels` list (so the channel-list
-  // view is also current when the user navigates back) and `selectedChannel`
-  // itself (the actual prop VideoGrid renders from -- without this the new
-  // icon wouldn't show until a full re-navigation, same staleness class of
-  // bug as the one handleVideoDeleted works around below).
+  // Unlike handleVideoDeleted below, stays on the current channel page
+  // rather than bouncing to the root. Updates both the root `channels` list
+  // and `selectedChannel` itself -- the prop VideoGrid actually renders
+  // from -- so a refreshed icon shows immediately, not after a
+  // re-navigation.
   const handleChannelsUpdated = (updatedChannels: LibraryChannel[]) => {
     setChannels(updatedChannels);
     setSelectedChannel((prev) => (prev && updatedChannels.find((c) => c.channelFolderName === prev.channelFolderName)) || prev);
   };
 
-  // Any action that adds or removes a *version* (not just updates a field on
-  // the one already displayed, like a normal download/quality-swap) needs
-  // this instead of the plain onLibraryChanged/refreshChannelsSilently --
-  // the version-selector's option list is read straight from the `video`
-  // prop's `epochs` array, so if only the root `channels` list gets
-  // refreshed (leaving `selectedVideo` stale), the selector never grows a
-  // new option after "download new version," or never shrinks one after
-  // deleting a version. Same staleness fix as handleChannelsUpdated above,
-  // applied to `selectedVideo`/`selectedChannel` instead of just `channels`.
+  // Any action that adds or removes a *version* needs this instead of the
+  // plain onLibraryChanged/refreshChannelsSilently: the version-selector's
+  // options read from the `video` prop's own `epochs` array, so refreshing
+  // only the root `channels` list (leaving `selectedVideo` stale) would
+  // never grow or shrink that list after adding/deleting a version.
   const handleVersionsChanged = async () => {
     const index = await window.electronAPI.refreshLibraryIndex();
     setChannels(index.channels);
@@ -258,18 +244,13 @@ export default function LibraryScreen() {
 
   // Consumes an internal "hyperlink" to a specific video -- the add-success
   // toast (DownloaderScreen) and a finished bulk-add item (BulkAddSidePanel)
-  // both just navigate to /library/video/:videoId; this is what turns that
-  // into actually landing on the video's detail screen. useMatch (not
-  // useParams) since LibraryScreen isn't rendered under a literal
-  // <Route path="/library/video/:videoId"> -- there's no such nested route
-  // (see App.tsx's single "/*" route), so this reads the param straight off
-  // the current location instead. Fires correctly whether this is a fresh
-  // mount (switching to the Library tab, which currently does remount this
-  // screen -- CustomTabPanel in MainPage.tsx only renders a tab's content
-  // while it's active) or an already-mounted Library tab receiving a new
-  // target. Always navigates back to the plain /library path afterward
-  // (replace: true) so this is a one-shot jump, not a redirect that would
-  // keep re-triggering if the user then clicks back to the channel grid.
+  // both navigate to /library/video/:videoId; this turns that into actually
+  // landing on the video's detail screen. useMatch, not useParams, since
+  // LibraryScreen isn't rendered under a literal
+  // <Route path="/library/video/:videoId"> (see App.tsx's single "/*"
+  // route), so this reads the param off the current location instead.
+  // Always navigates back to /library afterward (replace: true) so this is
+  // a one-shot jump, not a redirect that re-triggers on going back.
   const videoIdToOpen = deepLinkMatch?.params.videoId;
   useEffect(() => {
     if (!videoIdToOpen) return;
@@ -286,10 +267,9 @@ export default function LibraryScreen() {
       const targetVideo = targetChannel?.videos.find((v) => v.videoDir === result.videoDir);
       if (targetChannel && targetVideo) {
         // The link may have been clicked from inside the Playlists section
-        // (PlaylistsSection's own "go to library" links use this same
-        // route) -- without this, librarySection staying 'playlists' would
-        // keep rendering that section instead of the video detail below,
-        // since that check runs before the selectedVideo check in `content`.
+        // (which uses this same route) -- without this, librarySection
+        // staying 'playlists' would keep rendering that section instead of
+        // the video detail below.
         setLibrarySection('videos');
         setSelectedChannel(targetChannel);
         setSelectedVideo(targetVideo);
@@ -303,26 +283,22 @@ export default function LibraryScreen() {
 
   // Fire-and-forget channel-icon/video-thumbnail fetches (main.js) only get
   // picked up on the *next* index refresh -- without this, an already-
-  // mounted Library tab would silently never show a newly-added video's
-  // channel icon until the user happened to re-navigate or hit manual
-  // refresh. Reuses handleVersionsChanged's same deep resync (channels +
-  // selectedChannel + selectedVideo) rather than a near-duplicate function,
-  // even though this isn't a version change -- the resync it does is
-  // exactly "re-pull the index and re-sync every stale snapshot," which is
-  // just as correct here.
+  // mounted Library tab would never show a newly-added video's channel icon
+  // until the user re-navigated or hit manual refresh. Reuses
+  // handleVersionsChanged's deep resync rather than a near-duplicate
+  // function -- "re-pull the index and re-sync every stale snapshot" is
+  // just as correct here even though this isn't a version change.
   useEffect(() => {
     window.electronAPI.onLibraryBackgroundUpdate(() => { handleVersionsChanged(); });
     return () => window.electronAPI.removeLibraryBackgroundUpdateListener();
   }, []);
 
   // Resets both selectedChannel and selectedVideo, not just the latter --
-  // selectedChannel is a stale snapshot taken when the user first navigated
-  // into it, and refreshChannelsSilently (already called by LibraryVideoDetail
-  // via onLibraryChanged before this fires) only updates the root `channels`
+  // selectedChannel is a stale snapshot from when the user first navigated
+  // into it, and refreshChannelsSilently only updates the root `channels`
   // list, not that snapshot. Without this, deleting a channel's only video
-  // left VideoGrid rendering a "ghost" of the just-deleted entry until the
-  // user manually round-tripped through the channel list. Simplest fix for
-  // now: always land back at the root after a delete, no in-place refresh.
+  // left VideoGrid rendering a "ghost" of the deleted entry until the user
+  // round-tripped through the channel list.
   const handleVideoDeleted = () => {
     setSelectedVideo(null);
     setSelectedChannel(null);
@@ -379,9 +355,7 @@ export default function LibraryScreen() {
   return (
     <>
       {/* Only shown at the root level -- hidden while drilled into a
-          channel's video grid or a video's own detail, same as the
-          channel/video LibraryViewMode toggle further down only shows at
-          the root too. */}
+          channel's video grid or a video's own detail. */}
       {!loading && libraryDir && !selectedVideo && !selectedChannel &&
         <ToggleButtonGroup
           value={librarySection}
@@ -414,10 +388,10 @@ export default function LibraryScreen() {
   );
 }
 
-// Shared root-level header control -- only shown at the top of the Library
-// tab (channel list / flat video list), not inside a channel's video grid or
-// the detail view, since it toggles which *top-level* structure is used, not
-// anything about a specific channel/video already drilled into.
+// Shared root-level header control -- only at the top of the Library tab
+// (channel list / flat video list), not inside a channel's grid or the
+// detail view, since it toggles the top-level structure, not anything
+// channel/video-specific.
 function LibraryViewModeToggle({ viewMode, onViewModeChange }: {
   viewMode: LibraryViewMode;
   onViewModeChange: (mode: LibraryViewMode) => void;
@@ -444,11 +418,10 @@ function LibraryViewModeToggle({ viewMode, onViewModeChange }: {
   );
 }
 
-// Extracted from VideoGrid's previously-inline card markup so FlatVideoList
-// (channel-agnostic) can reuse the exact same card instead of duplicating it.
-// `channelLabel` is only passed by FlatVideoList -- VideoGrid's cards already
-// sit under a single channel's own heading, so repeating the channel name on
-// every card there would be redundant.
+// Extracted so FlatVideoList (channel-agnostic) can reuse the same card as
+// VideoGrid instead of duplicating it. `channelLabel` is only passed by
+// FlatVideoList -- VideoGrid's cards already sit under one channel's own
+// heading, so repeating the name there would be redundant.
 function VideoCard({ video, onSelect, channelLabel }: {
   video: LibraryVideo;
   onSelect: (video: LibraryVideo) => void;
@@ -522,9 +495,9 @@ function FlatVideoList({ channels, libraryDir, viewMode, onViewModeChange, onSel
         </Stack>
         <Stack direction="row" spacing={1} alignItems="center">
           {/* Grouped into one bordered container so the field picker and
-              direction toggle read as a single "sort" instrument rather than
-              two loose controls -- Select uses variant="standard" (no border
-              of its own) so this outer Paper is the only border drawn. */}
+              direction toggle read as a single "sort" instrument -- Select
+              uses variant="standard" so this outer Paper is the only
+              border drawn. */}
           <Paper variant="outlined" sx={{ display: 'flex', alignItems: 'center', pl: 1.5, pr: 0.5, borderRadius: 1 }}>
             <FormControl size="small" variant="standard" sx={{ minWidth: 140 }}>
               <InputLabel id="library-sort-field-label">Order by</InputLabel>

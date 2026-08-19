@@ -11,11 +11,10 @@ function isValidUrl(string: string) {
   };
 
 // Drives DownloaderScreen.tsx's choice between the full YouTube flow
-// (VideoDetailCard -- resolution picker, add-to-library) and the simplified
-// multi-platform one (OtherPlatformDownloadCard -- basic info + a single
-// Download button). Deliberately a plain hostname check, not an allowlist of
-// "supported" other platforms -- yt-dlp itself already decides what it can
-// actually extract from (1800+ sites), this only decides which *UI* to show.
+// (VideoDetailCard) and the simplified multi-platform one
+// (OtherPlatformDownloadCard). A plain hostname check, not a "supported
+// platforms" allowlist -- yt-dlp itself decides what it can extract from,
+// this only decides which UI to show.
 function isYouTubeUrl(string: string): boolean {
   try {
     const hostname = new URL(string).hostname.replace(/^www\./, '');
@@ -25,11 +24,10 @@ function isYouTubeUrl(string: string): boolean {
   }
 }
 
-// Covers the platforms the multi-platform downloads feature has actually
-// been tested against so far -- not meant to be a complete list (yt-dlp
-// itself supports 1800+ sites), just the ones worth a friendly name instead
-// of a bare hostname. Falls back to a capitalized first hostname segment for
-// anything else, e.g. "vimeo.com" -> "Vimeo".
+// Not a complete list (yt-dlp supports 1800+ sites) -- just the platforms
+// worth a friendly name instead of a bare hostname. Falls back to a
+// capitalized first hostname segment for anything else, e.g. "vimeo.com" ->
+// "Vimeo".
 const KNOWN_PLATFORM_LABELS: Record<string, string> = {
   'soundcloud.com': 'SoundCloud',
   'instagram.com': 'Instagram',
@@ -62,18 +60,13 @@ function convertYYYYMMDDStringToDate(stringDate: string, format = 'YYYY / MMM / 
   return dayjs(stringDate, 'YYYYMMDD').format(format);
 }
 
-// Builds a URL for any trusted local file inside the configured library
-// directory, served via the app-video:// protocol (main.js's
-// handleAppVideoRequest) -- used for local video/audio playback and for
-// cached channel-icon images alike, since the protocol is a generic
-// guard-railed file server, not actually video-specific despite the name.
-// filePath must already be a trusted, server-resolved absolute path, never
+// Builds a URL for a local file inside the configured library directory,
+// served via the app-video:// protocol (main.js's handleAppVideoRequest).
+// filePath must already be a trusted, server-resolved absolute path -- never
 // arbitrary/user-typed input. cacheBustKey is appended as a query param
-// (ignored by the protocol handler, which only reads the pathname) so a
-// file that gets replaced in place (e.g. a "download different quality"
-// swap landing on the same path+extension) still forces a real reload
-// instead of the browser silently continuing to show old cached bytes
-// under an unchanged src string.
+// (the protocol handler ignores it, only reading the pathname) purely to
+// force a reload when a file is replaced in place at the same path, e.g. a
+// "download different quality" swap.
 function buildAppVideoUrl(filePath: string, cacheBustKey = 0): string {
   return `app-video://local/${encodeURIComponent(filePath)}?v=${cacheBustKey}`;
 }
