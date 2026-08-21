@@ -1,7 +1,7 @@
 {
   "name": "yt-archiver",
   "private": true,
-  "version": "0.12.0",
+  "version": "0.12.1",
   "type": "module",
   "main": "dist/electron/main.js",
   "build": {
