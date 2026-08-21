@@ -12,23 +12,17 @@ const WINDOWS_RESERVED_NAMES = new Set([
 ]);
 
 // Top-level reserved folder name for playlist snapshots
-// (<libraryDir>/playlists/<playlistId>/<epoch>/metadata.json) -- lives
-// alongside channel folders in libraryDir, but isn't one itself.
-// scanLibrary() explicitly skips it so it's never mistaken for a channel
-// (playlists are their own concept, deliberately not surfaced in the
-// channel/video view -- a playlist view is future work).
+// (<libraryDir>/playlists/<playlistId>/<epoch>/metadata.json) -- a sibling of
+// channel folders in libraryDir, not one itself. scanLibrary() skips it so
+// it's never mistaken for a channel.
 export const PLAYLISTS_DIR_NAME = 'playlists';
 
 // Bumped whenever buildEpochMetadata's/writePlaylistSnapshot's own written
-// shape gains a field a stale entry won't have (e.g. `resolutions` at 2,
-// `unavailable` on playlist entries at... still 1, tracked separately below
-// since playlist entries are a nested array, not the top-level shape this
-// number describes). Exported so the renderer can compare an entry's own
-// stored `schemaVersion` against "what would get written today" and surface
-// a "this entry predates newer features, refresh it" notice -- see
-// LibraryVideoDetail.tsx/PlaylistsSection.tsx's own duplicated copy of these
-// two numbers (main.js/library.mjs and the renderer never cross-import,
-// matching every other small shared constant in this codebase).
+// shape gains a field a stale entry won't have. Exported so the renderer can
+// compare an entry's stored `schemaVersion` against "what would get written
+// today" and surface a "this entry predates newer features, refresh it"
+// notice -- see LibraryVideoDetail.tsx/PlaylistsSection.tsx's own duplicated
+// copy of these two numbers.
 export const CURRENT_VIDEO_SCHEMA_VERSION = 3;
 export const CURRENT_PLAYLIST_SCHEMA_VERSION = 1;
 
@@ -57,16 +51,10 @@ export function channelFolderName(channel) {
     return sanitizeForFilesystem(channel || 'Unknown Channel');
 }
 
-// Keyed purely on videoId, not title -- YouTube titles can (and often do)
-// change after upload, and a folder name derived from title would go
-// cosmetically stale relative to the video's current title over time.
-// videoId is stable for the life of the video and already guarantees
-// uniqueness on its own (two videos can never share one), stronger than the
-// old title+suffix trick this used to need. Also shrinks the Windows
-// MAX_PATH=260 worst case further (TD-005, reports/TechnicalDebt.md) --
-// videoIds are far shorter than the 50-char title+suffix budget this
-// replaced, though channel-folder length and libraryDir depth are still
-// unbounded, so that entry isn't fully resolved by this alone.
+// Keyed on videoId, not title -- YouTube titles can change after upload, and
+// videoId is stable and already unique on its own. Also shrinks the Windows
+// MAX_PATH=260 worst case (TD-005, reports/TechnicalDebt.md), though
+// channel-folder length and libraryDir depth remain unbounded.
 export function videoFolderName(videoId) {
     return sanitizeForFilesystem(videoId);
 }
@@ -90,22 +78,18 @@ function buildEpochMetadata(videoMetaData, addedEpoch) {
         durationString: durationString || null,
         uploadDate: uploadDate || null,
         addedEpoch,
-        // Captured at add-time rather than fetched live when the user wants to
-        // download -- keeps "what can I download" simple and self-contained
-        // per entry, at the cost of the list going stale if YouTube changes
-        // available qualities later. Entries written before this field existed
-        // (schemaVersion 1) just won't have it -- the download UI handles that
-        // as "no quality info saved," not a silent live-fetch fallback.
+        // Captured at add-time, not fetched live at download-time -- can go
+        // stale if YouTube changes available qualities later. Entries written
+        // before this field existed just won't have it.
         resolutions: resolutions || [],
-        // Never set at write-time -- adding a video/version to the library and
-        // downloading its file are separate actions. Filled in by
-        // recordLibraryDownload() once an actual download completes.
+        // Adding a video/version and downloading its file are separate
+        // actions -- filled in by recordLibraryDownload() once a download
+        // completes.
         downloadedFilePath: null,
         downloadedResolution: null,
         downloadedFormat: null,
-        // MP3 is a separate, coexisting artifact of the video -- its own
-        // slot (audio.mp3, alongside video.<ext>), entirely independent of
-        // the video fields above. Also filled in by recordLibraryDownload().
+        // MP3 is a separate, coexisting artifact -- its own slot (audio.mp3,
+        // alongside video.<ext>), independent of the video fields above.
         downloadedAudioFilePath: null,
     };
 }
@@ -131,12 +115,10 @@ export function writeLibraryEntry({ libraryDir, videoMetaData }) {
 }
 
 // "Add new version" -- additive counterpart to overrideLibraryEntry. Adds a
-// new epoch directly under an already-known videoDir (from an earlier
-// findVideoInIndex/findLibraryVideo lookup) rather than re-deriving
-// channelDir/videoDir from videoMetaData the way writeLibraryEntry does --
-// if the channel/title drifted since the video was first tracked,
-// re-deriving could land the "new version" in a different folder entirely
-// instead of alongside its own history.
+// new epoch under an already-known videoDir rather than re-deriving
+// channelDir/videoDir from videoMetaData: if the channel/title drifted since
+// the video was first tracked, re-deriving could land the new version in a
+// different folder than its own history.
 export function addLibraryVersion({ libraryDir, videoDir, videoMetaData }) {
     const resolvedLibraryDir = path.resolve(libraryDir || '');
     const resolvedVideoDir = path.resolve(videoDir || '');
@@ -155,17 +137,13 @@ export function addLibraryVersion({ libraryDir, videoDir, videoMetaData }) {
 }
 
 // "Refresh from YouTube" on a single already-tracked version -- re-fetches
-// current metadata (title/description/thumbnail/upload date/resolutions,
-// etc.) and writes it into the *same* epoch, rather than either of the two
-// existing update paths: overrideLibraryEntry replaces the whole video
-// (every version, a fresh videoDir derivation and all), and addLibraryVersion
-// adds a brand new epoch. Neither fits "the data for this specific version
-// went stale (title changed, video went private/unlisted, etc.) -- update it
-// in place." download bookkeeping (downloadedFilePath/downloadedResolution/
-// downloadedFormat/downloadedAudioFilePath) is deliberately carried over from
-// the existing metadata rather than reset to null the way a brand-new
-// epoch's would be -- refreshing metadata never touches whatever's already
-// on disk for this version.
+// current metadata and writes it into the *same* epoch, unlike the two other
+// update paths: overrideLibraryEntry replaces the whole video, and
+// addLibraryVersion adds a brand-new epoch. Neither fits "this version's data
+// went stale -- update it in place." Download bookkeeping
+// (downloadedFilePath/Resolution/Format/AudioFilePath) is carried over from
+// the existing metadata rather than reset -- refreshing metadata never
+// touches what's already on disk for this version.
 export function refreshLibraryEntryMetadata({ libraryDir, videoDir, epoch, videoMetaData }) {
     const resolvedLibraryDir = path.resolve(libraryDir || '');
     const resolvedVideoDir = path.resolve(videoDir || '');
@@ -188,15 +166,11 @@ export function refreshLibraryEntryMetadata({ libraryDir, videoDir, epoch, video
     return merged;
 }
 
-// Called after a download into the library completes -- updates the specific
-// epoch's metadata.json in place rather than writing a new epoch, since
-// fulfilling an already-tracked entry isn't itself a new version (unlike the
-// still-deferred "Download new version" flow).
-//
-// kind distinguishes the video slot from the separate, coexisting MP3 slot --
-// 'audio' only ever touches downloadedAudioFilePath, leaving the video
-// fields (and vice versa) completely untouched, so downloading one never
-// disturbs the other.
+// Called after a download into the library completes -- updates the epoch's
+// metadata.json in place rather than writing a new epoch (fulfilling an
+// already-tracked entry isn't a new version). kind distinguishes the video
+// slot from the coexisting MP3 slot -- 'audio' only touches
+// downloadedAudioFilePath, leaving the video fields untouched, and vice versa.
 export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, format, kind = 'video' }) {
     const metadataPath = path.join(videoDir, epoch, 'metadata.json');
     const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
@@ -211,15 +185,12 @@ export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, f
     return metadata;
 }
 
-// "Download different quality" -- the safety rule from the original spec is
-// "don't replace on download, download with an alternative name and once the
-// download is fine delete the old one and rename the new one." tempFilePath
-// is wherever the just-completed download actually landed (a distinct
-// "video.new.<ext>" path the caller downloads to, never the live file's own
-// path), so a failed/interrupted download never touches the working file --
-// this function is only ever called after startDownload's own isDone/isError
-// signal confirms the new file is real and complete. Guard-railed against
-// libraryDir with the same path.relative check deleteLibraryEntry uses.
+// "Download different quality" -- safety rule: never replace in place.
+// tempFilePath is wherever the just-completed download landed (a distinct
+// "video.new.<ext>" path, never the live file's own path), so a
+// failed/interrupted download never touches the working file. Only called
+// after startDownload's isDone/isError confirms the new file is real and
+// complete.
 export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format, kind = 'video' }) {
     const resolvedLibraryDir = path.resolve(libraryDir || '');
     const resolvedTempFilePath = path.resolve(tempFilePath || '');
@@ -229,11 +200,9 @@ export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath,
     }
 
     const resolvedVideoDir = path.resolve(videoDir);
-    // The deterministic "video.<ext>"/"audio.<ext>" slot this video's
-    // downloads always live at (see LibraryVideoDetail.tsx's outputPath) --
-    // re-derived from the temp file's own resolved extension rather than
-    // reusing oldFilePath's name verbatim, since a quality swap can also
-    // change format/extension.
+    // The deterministic "video.<ext>"/"audio.<ext>" slot downloads live at
+    // (see LibraryVideoDetail.tsx's outputPath) -- re-derived from the temp
+    // file's own extension since a quality swap can also change format.
     const baseName = kind === 'audio' ? 'audio' : 'video';
     const targetPath = path.join(resolvedVideoDir, epoch, `${baseName}${path.extname(resolvedTempFilePath)}`);
 
@@ -261,19 +230,15 @@ export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath,
     return metadata;
 }
 
-// Guard-railed even though videoDir always originates from our own index in
-// practice -- deleting is destructive enough to be worth defense in depth
-// against ever operating outside the configured library folder.
-//
-// epoch, when given, deletes just that one version instead of the whole
-// video -- the version-control UI always passes whichever epoch is
-// currently displayed. Deliberately does NOT try to compute "the new latest
-// remaining version" itself: scanLibrary()'s existing tolerant newest-valid-
-// epoch logic already does exactly that on the next refresh, and
-// re-implementing the same rule here a second time would risk the two
-// drifting apart later. Callers just need to know whether the whole video
-// is now gone (videoDeleted) so they can decide whether to navigate back to
-// the library root or stay and let a refresh pick the video's new latest.
+// Guard-railed against libraryDir even though videoDir always originates
+// from our own index -- deleting is destructive enough to be worth defense
+// in depth. epoch, when given, deletes just that one version instead of the
+// whole video. Deliberately does NOT compute "the new latest remaining
+// version" itself -- scanLibrary()'s tolerant newest-valid-epoch logic
+// already does that on next refresh, and duplicating the rule here would
+// risk the two drifting apart. Callers just need videoDeleted, to decide
+// whether to navigate back to the library root or let a refresh pick the
+// new latest.
 export function deleteLibraryEntry({ libraryDir, videoDir, epoch }) {
     const resolvedLibraryDir = path.resolve(libraryDir || '');
     const resolvedVideoDir = path.resolve(videoDir || '');
@@ -297,14 +262,12 @@ export function deleteLibraryEntry({ libraryDir, videoDir, epoch }) {
     return { videoDeleted: false };
 }
 
-// "Override" means replace the tracked entry, not add another version --
-// "Add as new version" is the (not yet built) additive path. Deletes
-// existingVideoDir exactly as given (the caller already knows it from an
-// earlier findVideoInIndex lookup) rather than re-deriving it from
-// videoMetaData -- if the title or channel display name drifted since the
-// video was first tracked, writeLibraryEntry could land on a different path
-// than the one being replaced, and re-deriving would silently miss cleaning
-// up the real old folder.
+// "Override" means replace the tracked entry, not add another version.
+// Deletes existingVideoDir exactly as given (from an earlier
+// findVideoInIndex lookup) rather than re-deriving it from videoMetaData --
+// if the title or channel display name drifted, writeLibraryEntry could land
+// on a different path than the one being replaced, missing the real old
+// folder.
 export function overrideLibraryEntry({ libraryDir, videoMetaData, existingVideoDir }) {
     if (existingVideoDir && fs.existsSync(existingVideoDir)) {
         fs.rmSync(existingVideoDir, { recursive: true, force: true });
@@ -316,10 +279,8 @@ export function overrideLibraryEntry({ libraryDir, videoMetaData, existingVideoD
 // folders -- a missing or unparseable metadata.json is skipped rather than
 // failing the whole scan, since an interrupted write is always conceivable.
 // Collects every valid epoch into `epochs` (newest first) for the
-// version-control UI, while `latestEpoch`/`metadata` stay pointed at the
-// newest valid one exactly as before -- every existing consumer (grid
-// cards, channel display name, channel-icon lookup) reads only those two
-// fields and is completely unaffected by this.
+// version-control UI; `latestEpoch`/`metadata` stay pointed at the newest
+// valid one, which every other consumer reads.
 export async function scanLibrary(libraryDir) {
     const index = { channels: [] };
     if (!libraryDir || !fs.existsSync(libraryDir)) {
@@ -464,35 +425,19 @@ function isDeadTitle(title, videoId) {
     return !title || title === videoId;
 }
 
-// One-time snapshot of a fetched playlist's contents -- not a live-synced
-// mirror (see futureSpecsFeedback.md's "Playlist saving" assessment: whether
-// to re-sync against upstream changes later is an open design question,
-// deliberately deferred). Same epoch-folder shape as a video's own
-// versioning (<libraryDir>/playlists/<playlistId>/<epoch>/metadata.json) so
-// the versioning/playlist-view features planned on top of this later have a
-// consistent structure to build against from day one, even though nothing
-// reads these epochs back yet.
+// One-time snapshot of a fetched playlist's contents, not a live-synced
+// mirror -- uses the same epoch-folder shape as a video's own versioning
+// (<libraryDir>/playlists/<playlistId>/<epoch>/metadata.json), but a
+// playlist gets exactly one epoch ever: every bulk-add run against the same
+// playlist link calls this again, and without that guard it would pile up a
+// duplicate epoch folder per run.
 //
-// Real epoch handling (deciding when a re-fetch is actually a new version
-// worth keeping vs. just a refresh) is deferred to that future work -- for
-// now, a playlist gets exactly one epoch ever. Every bulk-add run against
-// the same playlist link calls this again, and without this guard that
-// would silently pile up a fresh, functionally-identical epoch folder per
-// run. If one already exists, this is a no-op.
-//
-// localFiles maps each entry's videoId to wherever that video's own
-// videoDir currently is in the library (or null if it isn't tracked at
-// all) -- computed once, from the index as of this snapshot, purely so
-// future features (a playlist view, "download everything still missing")
-// have something to key off immediately rather than needing to invent this
-// mapping later.
-//
-// Each entry also carries its own title/thumbnailUrl/uploadDate (as of this
-// snapshot) rather than just a bare videoId/url -- entries.length can run
-// into the hundreds and localFiles will be null for most of them at
-// save-time (nothing's downloaded yet), so this is the fallback display
-// data a future playlist view needs to show something for those, without
-// depending on the video ever actually getting added to the library.
+// localFiles maps each entry's videoId to its current videoDir in the
+// library (or null), computed once from the index as of this snapshot.
+// Entries also carry their own title/thumbnailUrl/uploadDate rather than a
+// bare videoId/url, since most won't have a localFiles match yet at
+// save-time (nothing's downloaded) and this is the fallback display data
+// for those.
 export function writePlaylistSnapshot({ libraryDir, playlistId, title, uploader, originalUrl, entries, index }) {
     const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
 
@@ -541,16 +486,14 @@ export function writePlaylistSnapshot({ libraryDir, playlistId, title, uploader,
 }
 
 // Patches a single already-saved playlist entry with real data once it's
-// actually known -- called from the bulk-add loop right after a video
-// belonging to a saved playlist gets its own real info fetched (see
-// useBulkAddQueue.tsx). This is deliberately additive/non-destructive: a
-// dead incoming title (isDeadTitle) or a missing uploadDate/thumbnailUrl
-// never overwrites whatever was already stored, so a later re-fetch of the
-// playlist that happens to see the video as unavailable can't regress data
-// this already captured while it was still up. Silently no-ops if the
-// playlist was never saved or doesn't have this entry -- bulk-adding an
-// individual video that isn't part of any known playlist is the common
-// case, not an error.
+// known -- called from the bulk-add loop right after a video belonging to a
+// saved playlist gets its own info fetched (see useBulkAddQueue.tsx).
+// Additive/non-destructive: a dead incoming title or missing
+// uploadDate/thumbnailUrl never overwrites what's already stored, so a later
+// playlist re-fetch that sees the video as unavailable can't regress data
+// already captured. Silently no-ops if the playlist was never saved, or
+// doesn't have this entry -- the common case for a video not part of any
+// known playlist.
 export function enrichPlaylistEntry({ libraryDir, playlistId, videoId, title, uploadDate, thumbnailUrl }) {
     const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
     if (!fs.existsSync(playlistDir)) return null;
@@ -600,12 +543,11 @@ function resolvePlaylistEpochDir(playlistDir) {
 }
 
 // Playlist-level (not per-epoch), a sibling of the epoch folders -- same
-// pattern as channel-icon.*/video-thumbnail.*. Cached by ensurePlaylistThumbnail
-// (main.js) from whichever video was first in the list as of the last
-// write/refresh, purely as a fallback for when the live first entry has no
-// thumbnailUrl of its own (an empty playlist, or one whose first entry is a
-// dead/"Not on YouTube" placeholder) -- the renderer always prefers the live
-// entries[0].thumbnailUrl when one's available.
+// pattern as channel-icon.*/video-thumbnail.*. Cached by
+// ensurePlaylistThumbnail (main.js) as a fallback for when the live first
+// entry has no thumbnailUrl of its own (empty playlist, or a dead first
+// entry) -- the renderer always prefers the live entries[0].thumbnailUrl
+// when available.
 function findPlaylistThumbnailPath(playlistDir) {
     if (!fs.existsSync(playlistDir)) return null;
     const entry = fs.readdirSync(playlistDir, { withFileTypes: true })
@@ -652,25 +594,18 @@ export function listPlaylistSnapshots({ libraryDir }) {
 // act on.
 //
 // localFiles is recomputed fresh against the current library index on every
-// read here, rather than trusting whatever was last written to disk (by
-// writePlaylistSnapshot or reconcilePlaylistSnapshot) -- it's a purely local
-// "is this video in my library right now" lookup (findVideoInIndex), cheap
-// enough to redo on every read, and disk staleness was a real bug: a video
-// bulk-added *after* this playlist was first saved (the common case -- the
-// snapshot is written before the bulk-add loop has added anything yet) had
-// no "go to library" link until the user explicitly hit "Refresh from
-// YouTube", which does a full re-fetch from yt-dlp for a purely local fact.
+// read, rather than trusting what was last written to disk -- it's a cheap
+// local lookup (findVideoInIndex), and disk staleness was a real bug: a
+// video bulk-added after this playlist was first saved had no "go to
+// library" link until an explicit "Refresh from YouTube".
 //
 // When no index is handed in, this forces a genuine refreshLibraryIndex()
-// rescan rather than reusing getLibraryIndex()'s cached one -- that cache is
-// only invalidated by mutations this process itself knows about, and a
-// second, similar bug (reported after the fix above shipped) was entries a
-// playlist *refresh* had just newly discovered, whose video already existed
-// in the library, still not showing a link -- i.e. exactly the failure mode
-// of reading a stale cache. A playlist detail view is opened rarely enough
-// that paying for a full rescan here is cheap insurance for always getting
-// this right, rather than depending on every caller elsewhere in the app
-// having already refreshed the cache first.
+// rescan rather than reusing getLibraryIndex()'s cache, which is only
+// invalidated by mutations this process itself knows about -- a second,
+// similar bug surfaced entries a playlist *refresh* had just discovered,
+// whose video already existed in the library, still showing no link. A
+// playlist detail view is opened rarely enough that a full rescan here is
+// cheap insurance against that failure mode.
 export async function getPlaylistSnapshot({ libraryDir, playlistId, index }) {
     const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
     const epochDir = resolvePlaylistEpochDir(playlistDir);
@@ -692,7 +627,7 @@ export async function getPlaylistSnapshot({ libraryDir, playlistId, index }) {
         const previous = JSON.parse(fs.readFileSync(path.join(epochDir, 'previousMetadata.json'), 'utf-8'));
         previousMetadataSavedEpoch = previous.lastRefreshedEpoch || previous.addedEpoch || null;
     } catch {
-        // No previousMetadata.json (nothing to undo) -- stays null.
+        // No previousMetadata.json -- stays null.
     }
 
     const resolvedIndex = index || await refreshLibraryIndex(libraryDir);
@@ -711,27 +646,22 @@ export async function getPlaylistSnapshot({ libraryDir, playlistId, index }) {
     };
 }
 
-// Refresh, not a new version -- versioning was explicitly ruled out in favor
-// of reconciling in place with a single undo step (see futureSpecsFeedback.md
-// once updated, and the plan this landed under). Matched by videoId (stable
-// even for a video YouTube has since killed):
-//   - a *dead* fresh entry (isDeadTitle) whose videoId already has a saved
-//     entry keeps the saved entry's data untouched -- a placeholder must
-//     never clobber real data.
-//   - a fresh entry with real data always wins (missing individual fields
-//     fall back to the saved entry's own value) -- "keep it as updated as
-//     possible" is the whole point, and the only protection asked for is
-//     specifically against dead data, not against a legitimate retitle.
-//   - a saved entry whose videoId is *entirely absent* from the fresh fetch
-//     (not even as a dead placeholder) is dropped -- that absence, as
-//     opposed to a dead-but-present slot, is the signal the playlist owner
-//     removed it themselves on YouTube, not that YouTube killed the video.
-// Before any of this, the current metadata.json is copied verbatim to a
-// sibling previousMetadata.json (overwriting any earlier one -- this is a
-// single undo step, not a history) so undoPlaylistRefresh can revert it. The
-// live metadata.json is only ever touched via the same temp-then-rename
-// pattern swapLibraryDownload already established, so a crash mid-refresh
-// never leaves it partially written.
+// Refresh, not a new version -- reconciles in place with a single undo step.
+// Matched by videoId (stable even for a video YouTube has since killed):
+//   - a *dead* fresh entry whose videoId already has a saved entry keeps the
+//     saved entry's data untouched -- a placeholder must never clobber real
+//     data.
+//   - a fresh entry with real data always wins (missing fields fall back to
+//     the saved value) -- the only protection is against dead data, not
+//     against a legitimate retitle.
+//   - a saved entry entirely absent from the fresh fetch (not even as a dead
+//     placeholder) is dropped -- that's the signal the playlist owner
+//     removed it themselves, not that YouTube killed the video.
+// The current metadata.json is copied to previousMetadata.json first
+// (overwriting any earlier one -- a single undo step, not a history) so
+// undoPlaylistRefresh can revert it. The live metadata.json is only touched
+// via the same temp-then-rename pattern swapLibraryDownload uses, so a crash
+// mid-refresh never leaves it partially written.
 export function reconcilePlaylistSnapshot({ libraryDir, playlistId, freshEntries, freshTitle, freshUploader, index }) {
     const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
     const epochDir = resolvePlaylistEpochDir(playlistDir);
@@ -754,12 +684,10 @@ export function reconcilePlaylistSnapshot({ libraryDir, playlistId, freshEntries
     const reconciledEntries = freshEntries.map((fresh) => {
         const old = oldByVideoId.get(fresh.videoId);
         if (isDeadTitle(fresh.title, fresh.videoId)) {
-            // A fresh fetch turning up dead is exactly the "removed/private on
-            // YouTube" signal the (not on YouTube) tag exists for -- flagged
-            // here even when an already-saved entry's own (real) data is kept
-            // untouched, since the placeholder-preservation rule above is only
-            // about not clobbering title/thumbnail/uploadDate, not about
-            // hiding the fact that this refresh just found it dead.
+            // Flag as unavailable even when the saved entry's own data is
+            // kept untouched -- the preservation rule above only protects
+            // title/thumbnail/uploadDate, not whether this refresh found it
+            // dead.
             if (old) {
                 if (!old.unavailable) updated++;
                 return { ...old, unavailable: true };
@@ -831,13 +759,10 @@ export function undoPlaylistRefresh({ libraryDir, playlistId }) {
     return { success: true, metadata: JSON.parse(fs.readFileSync(metadataPath, 'utf-8')) };
 }
 
-// Deletes just the playlist's own saved snapshot (id/title/entries/localFiles/
-// undo state, all of it) -- deliberately never touches any of the videos it
-// references. Those live in their own normal channel/video folders,
-// independent of any playlist ever having pointed at them, so removing a
-// playlist snapshot is never destructive to library content, only to the
-// playlist bookkeeping itself. Same path.resolve + path.relative containment
-// check every other destructive library operation in this file uses.
+// Deletes just the playlist's own saved snapshot -- never touches the videos
+// it references, which live in their own channel/video folders independent
+// of any playlist pointing at them. Same containment check every other
+// destructive library operation in this file uses.
 export function deletePlaylistSnapshot({ libraryDir, playlistId }) {
     const resolvedLibraryDir = path.resolve(libraryDir || '');
     const playlistDir = path.resolve(path.join(resolvedLibraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId)));

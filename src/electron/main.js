@@ -48,24 +48,21 @@ const ffprobeBinaryName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprob
 const ffmpegBinaryPath = path.join(ffmpegDir, ffmpegBinaryName);
 const ffprobeBinaryPath = path.join(ffmpegDir, ffprobeBinaryName);
 
-// Bundled the same way as ffmpeg/ffprobe above -- yt-dlp needs an actual JS
+// Bundled the same way as ffmpeg/ffprobe above -- yt-dlp needs a real JS
 // runtime to solve YouTube's nsig signature challenge (TD-010, reports/
 // TechnicalDebt.md); without one, every real video/audio format silently
-// disappears the moment a request is authenticated (cookies loaded), leaving
-// only storyboard formats behind. Bundled rather than relying on the user
-// having Node/Deno installed themselves, matching this app's existing
-// zero-external-dependency approach for ffmpeg and yt-dlp itself.
+// disappears once a request is authenticated, leaving only storyboard
+// formats. Bundled rather than relying on the user having Node/Deno
+// installed, matching this app's zero-external-dependency approach.
 const denoDir = isDev ? path.resolve(__dirname, '../deno') : path.join(process.resourcesPath, 'deno');
 const denoBinaryName = process.platform === 'win32' ? 'deno.exe' : 'deno';
 const denoBinaryPath = path.join(denoDir, denoBinaryName);
 
-// The bundled ytdlp-bin lives under extraResources (Contents/Resources on
-// mac, the installed resources dir on Windows), which isn't reliably
-// writable without elevation -- so the updater can never swap a fresh binary
-// in there. Instead, relocate to userData (always per-user-writable) once on
-// first run, and treat that copy as the one true source of truth from then
-// on, in both dev and packaged builds, so update logic behaves identically
-// either way.
+// extraResources (Contents/Resources on mac, the resources dir on Windows)
+// isn't reliably writable without elevation, so the updater could never swap
+// a fresh binary in there. Relocate to userData (always per-user-writable)
+// once on first run, and treat that copy as the source of truth from then
+// on in both dev and packaged builds.
 const bundledYtdlpBinDir = isDev ? path.resolve(__dirname, '../ytdlp-bin') : path.join(process.resourcesPath, 'ytdlp-bin');
 const userDataYtdlpBinDir = path.join(app.getPath('userData'), 'ytdlp-bin');
 const pythonSrcDir = isDev ? path.resolve(__dirname, '../../src/python') : path.join(process.resourcesPath, 'python-src');
@@ -75,11 +72,10 @@ function ensureYtdlpBinInUserData() {
         fs.cpSync(bundledYtdlpBinDir, userDataYtdlpBinDir, { recursive: true });
     }
 }
-// Skipped under Vitest (which sets this env var in its own worker processes,
-// never in a real Electron launch) -- this is the one module-load-time side
-// effect in this file that would otherwise crash on import in a test, since
-// bundledYtdlpBinDir only exists in a built dist/ tree. Everything else here
-// only touches a mocked 'electron' module and is harmless to run on import.
+// Skipped under Vitest (sets this env var in its own worker processes) --
+// the one module-load-time side effect here that would otherwise crash on
+// import in a test, since bundledYtdlpBinDir only exists in a built dist/
+// tree.
 if (!process.env.VITEST) {
     ensureYtdlpBinInUserData();
 }
@@ -129,15 +125,12 @@ function writeSettings(settings) {
 }
 
 // Registers app-video:// as a privileged scheme so the Library tab's player
-// can point <video>/<audio> at an arbitrary downloaded file without loading
-// the whole thing into renderer memory (the alternative, an IPC-read-to-blob
-// bridge, doesn't scale to large video files and can't support real
-// seeking). Must run at module-evaluation time, before the app is ready.
-// `stream`+`supportFetchAPI` are required for net.fetch delegation below to
-// work; `bypassCSP`/`secure`/`standard` are part of the documented working
-// recipe for this exact net.fetch-based handler (see handleAppVideoRequest) --
-// this app has no CSP today so bypassCSP is a no-op either way, revisit if a
-// CSP is ever added.
+// can point <video>/<audio> at a downloaded file without loading it into
+// renderer memory (an IPC-read-to-blob bridge doesn't scale to large files
+// or support real seeking). Must run at module-evaluation time, before the
+// app is ready. `stream`+`supportFetchAPI` are required for the net.fetch
+// delegation in handleAppVideoRequest below; this app has no CSP today so
+// `bypassCSP` is currently a no-op -- revisit if one is ever added.
 protocol.registerSchemesAsPrivileged([
     { scheme: 'app-video', privileges: { standard: true, secure: true, stream: true, bypassCSP: true, corsEnabled: true, supportFetchAPI: true } },
 ]);
@@ -150,20 +143,17 @@ export function mimeTypeForPath(filePath) {
     return 'application/octet-stream';
 }
 
-// Serves the renderer bundle (index.html + assets) over a real loopback
-// HTTP origin, replacing mainWindow.loadFile()'s file:// origin. Tried a
-// custom app:// protocol first (standard: true, secure: true) -- that does
-// NOT work: Chromium's Referer-generation gate checks the document's scheme
-// against a hardcoded http(s)-family allowlist, entirely separate from the
-// privileged-scheme flags, so custom schemes never produce a Referer no
-// matter how they're registered (confirmed both by precedent -- Tauri apps
-// hit the identical issue serving from tauri://, electron/electron#38749-
-// adjacent territory -- and empirically here via a captured Network request
-// showing no referer header at all under app://). file://'s missing Referer
-// is what breaks the YouTube iframe embed elsewhere in the app (YouTube's
-// embed player has required one since late 2025); only a genuine http://
-// origin clears that gate. 127.0.0.1-only (not 0.0.0.0) and port 0 (OS
-// picks an unused ephemeral port) keep this unreachable from the network.
+// Serves the renderer bundle over a real loopback HTTP origin, replacing
+// mainWindow.loadFile()'s file:// origin. A custom app:// protocol
+// (standard/secure: true) does NOT work here: Chromium's Referer-generation
+// gate checks the document's scheme against a hardcoded http(s) allowlist,
+// separate from the privileged-scheme flags, so custom schemes never
+// produce a Referer (confirmed both by precedent -- Tauri hits the same
+// issue -- and empirically via a captured Network request). A missing
+// Referer is what breaks the YouTube iframe embed elsewhere in the app
+// (required since late 2025); only a genuine http:// origin clears that
+// gate. 127.0.0.1-only (not 0.0.0.0) and port 0 (an OS-picked ephemeral
+// port) keep this unreachable from the network.
 function startRendererServer() {
     return new Promise((resolve) => {
         const server = http.createServer((req, res) => {
@@ -190,24 +180,21 @@ function startRendererServer() {
 }
 
 // Handles app-video://local/<encodeURIComponent(absolutePath)> requests.
-// Guard-railed against the configured libraryDir with the exact same
-// path.relative check deleteLibraryEntry (library.mjs) already uses --
-// defense in depth, since the renderer only ever constructs these URLs
-// itself from data it already has, never from arbitrary input.
+// Guard-railed against the configured libraryDir with the same
+// path.relative check deleteLibraryEntry (library.mjs) uses -- defense in
+// depth, since the renderer only ever constructs these URLs from data it
+// already has.
 //
-// Uses net.fetch() against a file:// URL as the byte-stream source (that's
-// what fixed an earlier "AbortError: The operation was aborted" bug from
-// hand-rolling a Node fs.ReadStream-to-Response conversion), but does NOT
-// trust net.fetch's own status/headers for the response we hand back.
-// Chromium treats a protocol.handle response as a genuine network response,
-// not the same trusted path as a real file:// navigation -- it needs
-// Accept-Ranges/Content-Range/206 spelled out explicitly on every response,
-// including the very first un-ranged one, or video.seekable.end() stays 0
-// and clicking the scrub bar silently does nothing (playback still works,
-// only seeking is affected -- that's the exact, documented symptom of this
-// gap). So the Range math is done here, ourselves, same as the guard-rail
-// above; net.fetch is only ever asked for the exact byte range already
-// decided, purely as a stream source.
+// Uses net.fetch() against a file:// URL as the byte-stream source (fixed an
+// earlier "AbortError" bug from hand-rolling a Node fs.ReadStream-to-Response
+// conversion), but does NOT trust net.fetch's own status/headers for the
+// response handed back. Chromium treats a protocol.handle response as a
+// genuine network response, not the trusted path a real file:// navigation
+// gets -- it needs Accept-Ranges/Content-Range/206 spelled out explicitly on
+// every response, including the first un-ranged one, or
+// video.seekable.end() stays 0 and the scrub bar silently does nothing. So
+// the Range math is done here ourselves; net.fetch is only ever asked for
+// the exact byte range already decided.
 async function handleAppVideoRequest(request) {
     const url = new URL(request.url);
     const filePath = decodeURIComponent(url.pathname.slice(1));
@@ -283,10 +270,9 @@ async function handleAppVideoRequest(request) {
     }
 }
 
-// Keyed by the raw input URL. Different URL forms for the same video (a
-// youtu.be link vs. the canonical watch?v= form, extra query params, etc.)
-// won't match each other -- that's an acceptable cache miss (falls through to
-// a real fetch), not a correctness problem.
+// Keyed by the raw input URL -- different forms for the same video (a
+// youtu.be link vs. the canonical watch?v= form) won't match each other,
+// an acceptable cache miss rather than a correctness problem.
 function readVideoInfoCache() {
     try {
         return JSON.parse(fs.readFileSync(videoInfoCachePath, 'utf-8'));
@@ -363,15 +349,10 @@ ipcMain.handle('settings:setThemeMode', async (e, mode) => {
     return { success: true, themeMode: settings.themeMode };
 });
 
-// User-added muxers for the Library view's "convert to" ffmpeg utility,
-// beyond the small hardcoded popular set (LibraryVideoDetail.tsx) -- kept as
-// a plain string list, no validation against ffmpeg's own real muxer list
-// here (that's a concern for whenever the actual conversion gets wired up).
 // Caps how many bulk-add items the renderer's queue (useBulkAddQueue.tsx)
 // will download at once -- clamped here too, not just in the Options UI,
 // since this value round-trips through a plain JSON settings file a user
-// could hand-edit. Default of 1 preserves today's sequential behavior for
-// anyone who never touches this setting.
+// could hand-edit.
 const MAX_SIMULTANEOUS_DOWNLOADS_CEILING = 5;
 
 function clampMaxSimultaneousDownloads(value) {
@@ -392,6 +373,9 @@ ipcMain.handle('settings:setMaxSimultaneousDownloads', async (e, value) => {
     return { success: true, maxSimultaneousDownloads: settings.maxSimultaneousDownloads };
 });
 
+// User-added muxers for the Library view's "convert to" ffmpeg utility,
+// beyond the small hardcoded popular set (LibraryVideoDetail.tsx) -- a plain
+// string list, not validated against ffmpeg's own muxer list.
 ipcMain.handle('settings:getCustomConvertFormats', async () => {
     const { customConvertFormats } = readSettings();
     return { customConvertFormats: Array.isArray(customConvertFormats) ? customConvertFormats : [] };
@@ -415,16 +399,10 @@ ipcMain.handle('library:refreshIndex', async () => {
 });
 
 // A channel's avatar isn't in a single video's own info dict -- it only
-// shows up when yt-dlp extracts the *channel page* itself (a separate code
-// path in yt-dlp's own YouTube extractor, confirmed directly against its
-// source: channel/tab metadata -- title, channel_id, and a `thumbnails`
-// array carrying the avatar -- is parsed once from the channel header,
-// independently of resolving any individual video entries). So this is a
-// genuinely separate yt-dlp call, once per channel, not something that can
-// be piggybacked on the per-video fetch already happening elsewhere.
-// --flat-playlist avoids resolving every video in the channel into a full
-// info-dict (this app only wants the header), and --playlist-end 1 caps it
-// to looking at just one entry rather than flat-listing the whole channel.
+// shows up when yt-dlp extracts the *channel page* itself, a separate call
+// per channel, not something piggybacked on the per-video fetch. --flat-
+// playlist avoids resolving every video into a full info-dict (only the
+// header is wanted), and --playlist-end 1 caps it to one entry.
 function fetchChannelAvatarUrl(channelId) {
     return new Promise((resolve) => {
         const channelUrl = `https://www.youtube.com/channel/${channelId}`;
@@ -443,12 +421,8 @@ function fetchChannelAvatarUrl(channelId) {
             }
             try {
                 const thumbnails = JSON.parse(data).thumbnails || [];
-                // 'avatar_uncropped' is the full-resolution synthetic entry
-                // yt-dlp's own extractor derives from whatever raw avatar
-                // thumbnail the channel page embeds -- falls back to a raw
-                // 'avatar'-id entry if that's ever missing (a resilience
-                // margin against yt-dlp/YouTube changes, not a confirmed
-                // real-world case).
+                // 'avatar_uncropped' is yt-dlp's full-resolution synthetic
+                // entry; falls back to the raw 'avatar' id if that's missing.
                 const avatar = thumbnails.find((t) => t.id === 'avatar_uncropped') || thumbnails.find((t) => t.id === 'avatar');
                 resolve(avatar ? avatar.url : null);
             } catch {
@@ -493,11 +467,9 @@ function downloadImageToFile(url, destDir, baseName, redirectsLeft = 5) {
     });
 }
 
-// Best-effort, never throws -- a missing channel icon just means the UI
-// falls back to the generic folder icon, not a broken add-to-library action.
-// force skips the "already have one" check -- used by the user-facing
-// "refresh channel icon" button, since the whole point there is to re-fetch
-// even though one already exists (the channel's avatar may have changed).
+// Best-effort, never throws -- a missing channel icon just falls back to the
+// generic folder icon, not a broken add-to-library action. force skips the
+// "already have one" check, used by the "refresh channel icon" button.
 async function ensureChannelIcon(channelDir, channelId, { force = false } = {}) {
     if (!channelId) return;
     try {
@@ -512,13 +484,9 @@ async function ensureChannelIcon(channelDir, channelId, { force = false } = {}) 
 }
 
 // Video-level (not per-epoch): one thumbnail lives directly in videoDir,
-// shared across every version, since the point is a stable, offline-capable
-// preview image for the video as a whole rather than something that should
-// change on every re-download. Unlike the channel avatar, the thumbnail URL
-// is already sitting in videoMetaData (yt-dlp's per-video info dict) --
-// no extra yt-dlp call needed, just the same downloadImageToFile reuse.
-// Skips (rather than force-refetching) once a video-thumbnail.* file exists,
-// so adding a new version of an already-tracked video is a no-op here.
+// shared across every version. Unlike the channel avatar, the URL is already
+// in videoMetaData -- no extra yt-dlp call needed. Skips (rather than
+// force-refetching) once a video-thumbnail.* file exists.
 async function ensureVideoThumbnail(videoDir, thumbnailUrl) {
     if (!thumbnailUrl) return;
     try {
@@ -530,17 +498,13 @@ async function ensureVideoThumbnail(videoDir, thumbnailUrl) {
     }
 }
 
-// Playlist-level, a sibling of the epoch folders -- unlike ensureVideoThumbnail
-// above, this always force-refetches rather than skipping once a file exists:
-// "the playlist's thumbnail" is explicitly defined as whichever video is
-// first in the list *right now*, not a fixed image chosen once, so it has to
-// track that on every write/refresh. thumbnailUrl is the current first
-// entry's own thumbnailUrl (already available from the flat playlist
-// listing, no extra yt-dlp call) -- silently no-ops when there isn't one
-// (an empty playlist, or one whose first entry is a dead placeholder),
-// deliberately leaving whatever was cached from an earlier non-empty state
-// in place rather than deleting it, since that's the whole point of this as
-// a fallback for "the playlist emptied out later."
+// Playlist-level, a sibling of the epoch folders -- unlike
+// ensureVideoThumbnail, always force-refetches rather than skipping once a
+// file exists: "the playlist's thumbnail" is whichever video is first in the
+// list *right now*, so it has to track that on every write/refresh.
+// Silently no-ops when the first entry has no thumbnailUrl (empty playlist,
+// or a dead first entry), deliberately leaving whatever was cached in place
+// as a fallback for "the playlist emptied out later."
 async function ensurePlaylistThumbnail(playlistDir, thumbnailUrl) {
     if (!thumbnailUrl) return;
     try {
@@ -560,16 +524,12 @@ ipcMain.handle('library:refreshChannelIcon', async (e, { channelFolderName, chan
     return refreshLibraryIndex(libraryDir);
 });
 
-// The channel-icon/video-thumbnail fetches below are fire-and-forget (no
-// `await`, so "add to library" reports success immediately rather than
-// waiting on an extra yt-dlp + image-download round trip) -- but that alone
-// only means the *next* index refresh picks them up. If the Library tab is
-// already mounted and the user doesn't happen to re-navigate or hit manual
-// refresh afterward, the icon/thumbnail silently never appears even once
-// the background fetch is done. This notifies any open window once both
-// fetches (and the index refresh that follows them) actually finish, so an
-// already-mounted Library tab can silently pick up the change on its own --
-// see LibraryScreen.tsx's onLibraryBackgroundUpdate listener.
+// The channel-icon/video-thumbnail fetches below are fire-and-forget, so
+// "add to library" reports success immediately -- but that only means the
+// *next* index refresh picks them up. This notifies any open window once
+// both fetches (and the index refresh after them) finish, so an
+// already-mounted Library tab picks up the change on its own -- see
+// LibraryScreen.tsx's onLibraryBackgroundUpdate listener.
 function notifyLibraryBackgroundUpdate() {
     BrowserWindow.getAllWindows()[0]?.webContents.send('library:backgroundUpdate');
 }
@@ -629,16 +589,10 @@ ipcMain.handle('library:refreshEntry', async (e, { videoDir, epoch, videoMetaDat
     return { success: true, metadata };
 });
 
-// Flat-playlist entries carry more than just id/title/url for free (no extra
-// per-video fetch) -- confirmed directly against a real playlist: each entry
-// already has its own `thumbnails[]` array and (when YouTube happens to
-// resolve it during the flat listing, not guaranteed) a `timestamp`. Picking
-// the largest thumbnail and converting the timestamp when present costs
-// nothing extra; falling back to the same predictable i.ytimg.com CDU URL
-// pattern already used for the bulk-add sidepanel's thumbnails when the
-// array is empty, and leaving uploadDate null when timestamp isn't resolved
-// (a full per-video fetch would be needed for that reliably, which defeats
-// the point of flat-listing an entire playlist cheaply).
+// Flat-playlist entries carry more than just id/title/url for free: each
+// entry already has its own `thumbnails[]` array and, when YouTube resolves
+// it during the flat listing, a `timestamp`. Falls back to the predictable
+// i.ytimg.com CDN URL pattern when the array is empty.
 export function pickBestThumbnail(id, thumbnails) {
     if (Array.isArray(thumbnails) && thumbnails.length > 0) {
         const best = thumbnails.reduce((a, b) => ((b.width || 0) > (a.width || 0) ? b : a));
@@ -649,12 +603,11 @@ export function pickBestThumbnail(id, thumbnails) {
 
 // Bulk-add's playlist path -- same --flat-playlist mechanism as
 // fetchChannelAvatarUrl above, just without --playlist-end 1, so this lists
-// every entry (in source order) instead of capping at one. No YouTube Data
-// API involved: playlistItems.list unconditionally requires an API key/OAuth
-// token (confirmed against Google's own docs, no keyless variant exists),
-// and the public no-auth playlist RSS feed caps out at the 15 most recent
-// videos -- neither fits "every video, in source order." yt-dlp needs no new
-// credential and already does this reliably elsewhere in this file.
+// every entry in source order. Not the YouTube Data API: playlistItems.list
+// requires an API key/OAuth token with no keyless variant, and the public
+// no-auth playlist RSS feed caps out at 15 videos -- neither fits "every
+// video, in order." yt-dlp needs no new credential and already does this
+// reliably elsewhere in this file.
 function fetchPlaylistEntries(playlistUrl) {
     return new Promise((resolve, reject) => {
         const script = spawn(ytdlpPath, [
@@ -675,20 +628,15 @@ function fetchPlaylistEntries(playlistUrl) {
                 const info = JSON.parse(data);
                 const entries = (info.entries || []).map((e) => ({
                     id: e.id,
-                    // No `|| e.id` fallback here -- that would silently turn
-                    // "yt-dlp gave us no title" into a title that's just the
-                    // raw video ID, indistinguishable from a real (if
-                    // coincidentally id-shaped) title downstream. Leave it
-                    // null and let isDeadTitle()/writePlaylistSnapshot
-                    // (library.mjs) decide what a missing title means.
+                    // No `|| e.id` fallback -- that would silently turn "no
+                    // title" into a title that's just the raw video ID. Leave
+                    // it null and let isDeadTitle() (library.mjs) decide.
                     title: e.title || null,
                     url: e.url || `https://www.youtube.com/watch?v=${e.id}`,
                     thumbnailUrl: pickBestThumbnail(e.id, e.thumbnails),
-                    // YYYYMMDD, matching the format getVideoInfoPython's
-                    // reshapeVideoInfo already uses for uploadDate elsewhere
-                    // (info.upload_date) -- so entries enriched later
-                    // (enrichPlaylistEntry) and entries filled in from this
-                    // flat listing are never in two different date formats.
+                    // YYYYMMDD, matching reshapeVideoInfo's uploadDate format
+                    // elsewhere, so entries from this listing and entries
+                    // enriched later are never in two different date formats.
                     uploadDate: e.timestamp ? new Date(e.timestamp * 1000).toISOString().slice(0, 10).replace(/-/g, '') : null,
                 }));
                 resolve({
@@ -708,10 +656,8 @@ function fetchPlaylistEntries(playlistUrl) {
 ipcMain.handle('library:fetchPlaylistEntries', async (e, playlistUrl) => {
     try {
         const playlist = await fetchPlaylistEntries(playlistUrl);
-        // Snapshot saved every time a playlist is fetched -- not surfaced to
-        // the renderer yet (versioning/a playlist view are future work, see
-        // library.mjs's writePlaylistSnapshot), just persisted so that data
-        // exists from day one instead of needing to be reconstructed later.
+        // Snapshot saved every time a playlist is fetched (see
+        // library.mjs's writePlaylistSnapshot).
         const { libraryDir } = readSettings();
         if (libraryDir) {
             const index = await getLibraryIndex(libraryDir);
@@ -739,16 +685,11 @@ ipcMain.handle('library:fetchPlaylistEntries', async (e, playlistUrl) => {
     }
 });
 
-// Called once per bulk-add item that turns out to belong to a
-// previously-saved playlist snapshot, right after that item's own real info
-// has actually been fetched (see useBulkAddQueue.tsx's processItem) --
-// patches just that one entry with the real title/date/thumbnail now known,
-// instead of leaving it stuck with whatever the cheap flat-listing guessed.
-// This is exactly the scenario the spec calls out: if the video later
-// disappears from YouTube, a *future* re-fetch of the playlist would only
-// ever see a dead, title-less entry for it -- but by then this real data is
-// already saved and won't be overwritten (see enrichPlaylistEntry's own
-// never-regress guard).
+// Called once per bulk-add item belonging to a previously-saved playlist
+// snapshot, right after that item's own info is fetched (see
+// useBulkAddQueue.tsx's processItem) -- patches that entry with the real
+// title/date/thumbnail so a future re-fetch, even after the video goes dead
+// on YouTube, doesn't lose it (see enrichPlaylistEntry's never-regress guard).
 ipcMain.handle('library:enrichPlaylistEntry', async (e, { playlistId, videoId, title, uploadDate, thumbnailUrl }) => {
     const { libraryDir } = readSettings();
     if (!libraryDir || !playlistId) {
@@ -776,12 +717,11 @@ ipcMain.handle('library:getPlaylist', async (e, playlistId) => {
     return { playlist: await getPlaylistSnapshot({ libraryDir, playlistId }) };
 });
 
-// The explicit "Refresh" action -- re-fetches the playlist fresh from
-// yt-dlp using its own saved originalUrl, then reconciles (see
-// reconcilePlaylistSnapshot, library.mjs, for the actual merge rules).
-// Deliberately separate from library:fetchPlaylistEntries above, which stays
-// exactly as it is today (still a no-op past the first save) -- refresh only
-// ever happens through this explicit action, never silently.
+// The explicit "Refresh" action -- re-fetches the playlist from yt-dlp using
+// its saved originalUrl, then reconciles (see reconcilePlaylistSnapshot,
+// library.mjs, for the merge rules). Deliberately separate from
+// library:fetchPlaylistEntries above (still a no-op past the first save) --
+// refresh only ever happens through this explicit action.
 ipcMain.handle('library:refreshPlaylist', async (e, playlistId) => {
     const { libraryDir } = readSettings();
     if (!libraryDir) {
@@ -878,18 +818,14 @@ ipcMain.handle('library:deleteEntry', async (e, { videoDir, epoch }) => {
 });
 
 // Kick off the initial scan in the background at startup -- deliberately not
-// awaited (unlike ensureYtdlpBinInUserData's one-time small copy above, this
-// could be scanning an arbitrarily large library). getLibraryIndex reuses
-// this same in-flight scan rather than starting a redundant one when the
-// Library tab asks for it.
+// awaited, since this could be scanning an arbitrarily large library.
+// getLibraryIndex reuses this same in-flight scan when the Library tab asks.
 getLibraryIndex(readSettings().libraryDir);
 
-// A literal fs.existsSync(filePath) isn't enough here: postprocessors (MP3
-// extraction, format recode) don't write to the exact chosen path, they
-// append their target extension onto it (see findFinalFile() below, which
-// exists for the same reason) -- so a real prior download under one of those
-// modes would silently fail an exact-match check and never surface this
-// existing-file prompt at all. Match by prefix instead, same as findFinalFile.
+// A literal fs.existsSync(filePath) isn't enough: postprocessors (MP3
+// extraction, format recode) append their target extension rather than
+// writing to the exact chosen path (see findFinalFile() below) -- so a real
+// prior download would fail an exact-match check. Match by prefix instead.
 ipcMain.handle('system:pathExists', async (e, filePath) => {
     const dir = path.dirname(filePath);
     const base = path.basename(filePath);
@@ -900,23 +836,21 @@ ipcMain.handle('system:pathExists', async (e, filePath) => {
     }
 });
 
-// Accepts either a real Netscape cookies.txt export (the format yt-dlp's own
-// docs recommend, produced by browser extensions like "Get cookies.txt"), or
-// a raw "name=value; name2=value2" cookie-header string as copied straight
-// out of a browser's DevTools Network tab -- normalizing the latter into
-// Netscape format so yt-dlp's --cookies flag can consume it either way.
+// Accepts either a real Netscape cookies.txt export (produced by browser
+// extensions like "Get cookies.txt") or a raw "name=value; name2=value2"
+// cookie-header string copied from a browser's DevTools Network tab --
+// normalizing the latter into Netscape format so yt-dlp's --cookies flag
+// can consume it either way.
 export function looksLikeNetscapeFormat(text) {
     return /^\s*#/.test(text) || /^[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]*$/m.test(text);
 }
 
 export function convertHeaderCookiesToNetscape(text) {
     const farFutureExpiry = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 5;
-    // A real cookie-header string is a single logical line. Pasting a long one
-    // out of a wrapped display (e.g. a chat code block) can pick up stray
-    // line breaks at the wrap points, which would otherwise silently sever a
-    // cookie's value mid-token and cascade into corrupting everything after
-    // it. Collapsing embedded newlines first makes that class of paste-damage
-    // harmless.
+    // A real cookie-header string is a single logical line. Pasting one out
+    // of a wrapped display (e.g. a chat code block) can pick up stray line
+    // breaks at the wrap points, severing a value mid-token and corrupting
+    // everything after it. Collapsing embedded newlines first prevents that.
     const normalized = text.replace(/[\r\n]+/g, '');
     const lines = ['# Netscape HTTP Cookie File'];
     for (const pair of normalized.split(';')) {
@@ -927,34 +861,29 @@ export function convertHeaderCookiesToNetscape(text) {
         const name = trimmed.slice(0, eqIdx).trim();
         const value = trimmed.slice(eqIdx + 1).trim();
         if (!name) continue;
-        // The header was captured from a request to youtube.com, so that's
-        // the only domain we know the value is valid for -- but yt-dlp's
-        // YouTube extractor also makes requests that aren't strictly scoped
-        // to youtube.com (Google's shared account-auth infrastructure). A
-        // cookie jar that only recognizes .youtube.com won't get attached to
-        // those, even though a real browser's cookie store would apply here
-        // more broadly. Registering each cookie under both domains costs
-        // nothing (cookie jars key by domain+path+name, so this can't
-        // conflict) and maximizes the chance it's actually sent where needed.
+        // The header was captured from a request to youtube.com, but
+        // yt-dlp's YouTube extractor also makes requests to Google's shared
+        // account-auth infrastructure -- registering under both domains
+        // (cookie jars key by domain+path+name, so this can't conflict)
+        // maximizes the chance the cookie is sent where needed.
         for (const domain of ['.youtube.com', '.google.com']) {
             lines.push([domain, 'TRUE', '/', 'TRUE', String(farFutureExpiry), name, value].join('\t'));
         }
     }
-    // Validity/skip counts are derived centrally in validateNetscapeLines
-    // (by the caller) rather than tracked here, so they're correct for both
-    // this converted output and a raw Netscape passthrough alike.
+    // Validity/skip counts are derived centrally in validateNetscapeLines,
+    // so they're correct for both this converted output and a raw Netscape
+    // passthrough alike.
     return lines.join('\n') + '\n';
 }
 
-// Regardless of which input path produced it, verify the final file is
-// actually well-formed Netscape cookie format (every non-comment, non-blank
-// line has exactly 7 tab-separated fields) before trusting it -- a raw
-// Netscape paste can suffer the exact same wrapped-copy corruption as the
+// Verifies the final file is well-formed Netscape cookie format (every
+// non-comment, non-blank line has exactly 7 tab-separated fields) -- a raw
+// Netscape paste can suffer the same wrapped-copy corruption as the
 // header-string path. "valid" counts *distinct cookie names*, not lines --
-// a single cookie may legitimately appear on more than one line (e.g. our
-// own dual .youtube.com/.google.com registration, or a real export that has
-// entries for both youtube.com and www.youtube.com), and reporting raw line
-// counts back to the user would overstate how many cookies were loaded.
+// a cookie may legitimately appear on more than one line (our own dual
+// .youtube.com/.google.com registration, or a real export covering both
+// youtube.com and www.youtube.com), and raw line counts would overstate how
+// many cookies were loaded.
 export function validateNetscapeLines(content) {
     const validNames = new Set();
     let invalid = 0;
@@ -1013,10 +942,8 @@ ipcMain.handle('cookies:getConfig', async () => {
 
 ipcMain.handle('cookies:setConfig', async (e, { cookiesMode, cookiesBrowser }) => {
     // An empty cookiesBrowser is allowed through even in 'browser' mode --
-    // it's the explicit "Clear" state (no browser selected yet/anymore),
-    // which cookiesArgs() already treats as a no-op fallback to file-mode
-    // cookies (or none). Only a real, non-empty, *unsupported* value is
-    // rejected.
+    // it's the explicit "Clear" state, which cookiesArgs() already treats as
+    // a no-op fallback. Only a real, unsupported value is rejected.
     if (cookiesMode === 'browser' && cookiesBrowser && !SUPPORTED_COOKIE_BROWSERS.includes(cookiesBrowser)) {
         throw new Error(`Unsupported browser: ${cookiesBrowser}`);
     }
@@ -1066,9 +993,8 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options)
     });
 })
 
-// Matches runFfmpegWithProgress's own '-b:a 192k' for the actual MP3
-// extraction pass -- the estimate has to agree with what really gets
-// encoded, or it's not an estimate of anything real.
+// Matches runFfmpegWithProgress's own '-b:a 192k' for the MP3 extraction
+// pass -- the estimate has to agree with what really gets encoded.
 const MP3_BITRATE_KBPS = 192;
 
 export function buildResolutions(info) {
@@ -1076,10 +1002,9 @@ export function buildResolutions(info) {
     const resolutions = [];
 
     // Every real download is bestvideo+bestaudio merged (see
-    // buildDownloadArgs), so a video-only format's own filesize always
-    // understates the actual merged output -- add the best available
-    // audio-only track's size to every video resolution's estimate below,
-    // same way yt-dlp itself would pick "bestaudio".
+    // buildDownloadArgs), so a video-only format's filesize understates the
+    // merged output -- add the best available audio-only track's size to
+    // every estimate below, same as yt-dlp's own "bestaudio" pick.
     const audioFormats = (info.formats || []).filter((fmt) => fmt.vcodec === 'none' && fmt.acodec && fmt.acodec !== 'none');
     const bestAudio = audioFormats.reduce((best, fmt) => ((fmt.abr || 0) > (best?.abr || 0) ? fmt : best), null);
     let bestAudioSize = bestAudio ? (bestAudio.filesize || bestAudio.filesize_approx) : null;
@@ -1153,31 +1078,24 @@ export function reshapeVideoInfo(info) {
 }
 
 // A video is effectively dead (unavailable/private/deleted/region-locked)
-// even when yt-dlp still exits 0 and hands back a parseable info dict --
-// --ignore-no-formats-error (below) exists specifically to let that
-// non-fatal case through rather than hard-failing on format-selector
-// resolution. The remaining signal: no channel/uploader at all -- yt-dlp
-// can't resolve who uploaded a video it can't actually load the real page
-// for, so a real, available video never has both null.
+// even when yt-dlp exits 0 with a parseable info dict --
+// --ignore-no-formats-error (below) lets that non-fatal case through rather
+// than hard-failing. The remaining signal: no channel/uploader at all, since
+// yt-dlp can't resolve who uploaded a video it can't actually load the page
+// for.
 //
-// This used to *also* treat zero height-having resolutions as dead -- removed
-// (multi-platform downloads): that's not actually a "this video is broken"
-// signal, it's the normal, valid shape of an audio-only source like
-// SoundCloud (confirmed via a real live fetch: every format has no `height`
-// at all, differentiated by bitrate instead). The genuinely-no-formats-
-// whatsoever case is already caught earlier, before reshapeVideoInfo even
-// runs (see the `info.formats.length === 0` check below) -- that's the real
-// "yt-dlp got nothing at all" signal, not this function's job.
+// Does NOT also treat zero height-having resolutions as dead: that's the
+// normal, valid shape of an audio-only source like SoundCloud, not a broken
+// video. The genuinely-no-formats-at-all case is caught earlier (see the
+// `info.formats.length === 0` check below), before this function even runs.
 export function isDeadVideoInfo(response) {
     if (!response.channelId && !response.uploader) return true;
     return false;
 }
 
 // Drives which error message the empty-formats check below shows -- kept as
-// its own small local copy rather than importing the renderer's
-// src/utils/utils.ts one (this process and the renderer are different
-// worlds in this codebase; nothing else crosses that boundary either, e.g.
-// sanitizeForFilesystem lives in library.mjs, not shared from anywhere).
+// its own local copy rather than importing the renderer's src/utils/utils.ts
+// one, matching this codebase's main-process/renderer separation elsewhere.
 function isYouTubeUrl(url) {
     try {
         const hostname = new URL(url).hostname.replace(/^www\./, '');
@@ -1187,11 +1105,10 @@ function isYouTubeUrl(url) {
     }
 }
 
-// Matches yt-dlp's own real error strings for a genuinely dead video --
-// confirmed live against a real private video (yt-dlp: "Private video. Sign
-// in if you've been granted access..."). Deliberately distinct from a
-// bot-check failure (e.g. "Sign in to confirm you're not a bot"), which is a
-// transient request-level block, not a fact about the video itself.
+// Matches yt-dlp's own real error strings for a genuinely dead video.
+// Deliberately distinct from a bot-check failure (e.g. "Sign in to confirm
+// you're not a bot"), which is a transient request-level block, not a fact
+// about the video itself.
 const DEAD_VIDEO_ERROR_PATTERNS = [
     /private video/i,
     /video (is |has been )?(unavailable|removed|deleted)/i,
@@ -1205,24 +1122,20 @@ const DEAD_VIDEO_ERROR_PATTERNS = [
     /members-only|join this channel/i,
 ];
 
-// getVideoInfoPython's main fetch always passes --ignore-no-formats-error
-// (see its own comment), which swallows yt-dlp's real error message
-// entirely -- confirmed live: exit 0, empty stderr, degraded JSON, whether
-// the actual cause is a private/deleted video or a bot-check block. There is
-// no way to tell those apart from that call's own output. This makes one
-// extra, short-lived call *without* that flag, purely to read yt-dlp's real
-// error string -- only ever triggered on the already-unusual "formats came
-// back empty" path for a YouTube URL, never on a normal successful fetch.
+// getVideoInfoPython's main fetch always passes --ignore-no-formats-error,
+// which swallows yt-dlp's real error message entirely -- exit 0, empty
+// stderr, degraded JSON, whether the cause is a private/deleted video or a
+// bot-check block. This makes one extra, short-lived call *without* that
+// flag, purely to read yt-dlp's real error string -- only triggered on the
+// already-unusual "formats came back empty" path for a YouTube URL.
 function classifyDeadYouTubeVideo(url) {
     return new Promise((resolve) => {
         const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url]);
         let stderrOutput = '';
         let settled = false;
-        // This only ever runs on a path that already failed once (the
-        // primary fetch's formats came back empty), so a real dead-video
-        // error is expected to surface fast -- guards against this
-        // classification-only call hanging the whole getVideoInfoPython
-        // response if the network stalls instead of erroring outright.
+        // Only runs on a path that already failed once, so a real dead-video
+        // error should surface fast -- guards against this classification
+        // call hanging the whole getVideoInfoPython response.
         const timeout = setTimeout(() => {
             if (settled) return;
             settled = true;
@@ -1251,10 +1164,8 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
     const cache = readVideoInfoCache();
     const cached = cache[url];
     if (cached && Date.now() - cached.savedEpoch < VIDEO_INFO_CACHE_TTL_MS) {
-        // Self-healing: a dead-video response cached before this check
-        // existed (or from a transient gap) doesn't get served as valid
-        // forever -- drop it and fall through to a real, fresh fetch below
-        // instead of returning early.
+        // Self-healing: a dead-video response doesn't get served as valid
+        // forever -- drop it and fall through to a fresh fetch.
         if (!isDeadVideoInfo(cached.response)) {
             return { success: true, data: { response: cached.response, fromCache: true } };
         }
@@ -1263,18 +1174,13 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
     }
 
     return new Promise((resolve, reject) => {
-        // --ignore-no-formats-error matters here specifically: -J alone does NOT
-        // put yt-dlp into a formats-only mode that skips format-selector
-        // resolution (only --list-formats/--simulate do that). So even a pure
-        // metadata dump still tries to resolve yt-dlp's *default* format
-        // selector against the available formats, and aborts the whole call
-        // with "Requested format is not available" if that fails -- e.g. when
-        // an authenticated session's format list doesn't happen to satisfy
-        // the default selector. We don't need format resolution at all here,
-        // only the raw formats list embedded in the JSON, so this flag makes
-        // that failure mode non-fatal. Verified directly: reproduced this
-        // exact error with a deliberately-unmatchable -f selector (no cookies
-        // needed) and confirmed this flag alone makes -J succeed regardless.
+        // --ignore-no-formats-error matters here specifically: -J alone does
+        // NOT skip format-selector resolution (only --list-formats/--simulate
+        // do that), so even a pure metadata dump aborts with "Requested
+        // format is not available" if the default selector doesn't match --
+        // e.g. an authenticated session whose format list doesn't satisfy it.
+        // Only the raw formats list is needed here, so this flag makes that
+        // failure mode non-fatal.
         const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ignore-no-formats-error', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url]);
         let data = '';
         let error = '';
@@ -1296,17 +1202,14 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
             } else {
                 try {
                     const info = JSON.parse(data);
-                    // --ignore-no-formats-error (see above) makes yt-dlp swallow real
-                    // extraction failures -- most commonly YouTube's "Sign in to
-                    // confirm you're not a bot" bot-check when no cookies are loaded
-                    // -- entirely internally: exit code 0, empty stderr, just a
-                    // degraded JSON blob (formats: [], duration/channel_id missing,
-                    // title/uploader still present from the flat webpage data).
-                    // Without this check that silently saved as a real library entry
-                    // with an empty download-quality list and no way to tell why.
-                    // A selector-mismatch (the case the flag above is actually for)
-                    // always leaves formats non-empty, so this only catches genuine
-                    // extraction failures.
+                    // --ignore-no-formats-error makes yt-dlp swallow real
+                    // extraction failures internally -- most commonly
+                    // YouTube's bot-check with no cookies loaded -- as a
+                    // degraded JSON blob (formats: [], but title/uploader
+                    // still present) rather than a thrown error. A
+                    // selector-mismatch (the case the flag is actually for)
+                    // always leaves formats non-empty, so this only catches
+                    // genuine extraction failures.
                     if (!info.formats || info.formats.length === 0) {
                         if (isYouTubeUrl(url) && await classifyDeadYouTubeVideo(url)) {
                             reject(new Error('This video is unavailable on YouTube -- it may be private, deleted, or removed by the uploader.'));
@@ -1319,9 +1222,9 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
                         return;
                     }
                     const response = reshapeVideoInfo(info);
-                    // Reject before this ever gets cached or handed to a
-                    // caller that would otherwise go on to create a library
-                    // folder for a video with nothing real to archive.
+                    // Reject before this gets cached or handed to a caller
+                    // that would create a library folder with nothing to
+                    // archive.
                     if (isDeadVideoInfo(response)) {
                         reject(new Error('No downloadable formats found for this video -- it may be unavailable, private, or region-locked.'));
                         return;
@@ -1345,9 +1248,8 @@ export function needsDirectFfmpegPass({ format, resolution }) {
 
 // The extension actually produced by the direct ffmpeg pass above -- MP3
 // wins over an explicit format choice since resolution:'mp3' means audio-only
-// regardless of whatever format dropdown value happens to be selected.
-// Returns null when no postprocessing happens (yt-dlp's own download/merge
-// picks its own correct extension in that case, untouched here).
+// regardless of the format dropdown. Returns null when no postprocessing
+// happens (yt-dlp's own download/merge picks its own extension untouched).
 export function ffmpegTargetExtension({ format, resolution }) {
     if (resolution && resolution.toLowerCase() === 'mp3') return 'mp3';
     if (format && !['undefined', 'dflt'].includes(format)) return format.toLowerCase();
@@ -1355,29 +1257,25 @@ export function ffmpegTargetExtension({ format, resolution }) {
 }
 
 // yt-dlp auto-appends the right extension to an extension-less outtmpl, but
-// our own ffmpeg postprocess pass (runFfmpegWithProgress) does not -- it
-// needs a real extension (or -f) to pick a muxer at all. outputPath handed
-// in here can arrive two ways, both wrong for ffmpeg: the Library view's
-// deterministic path has no extension whatsoever (ffmpeg fails outright --
-// the "MP3 download fails" bug), and the Downloader tab's Save-dialog path
-// always carries a video extension (mp4/mkv/3gp -- there's no MP3 filter
-// option), which for an MP3 selection means ffmpeg happily muxes MP3 audio
-// into a file merely *named* .mp4 (the "saves as video.mp4" bug). Stripping
-// whatever extension is already there and appending the real target one
-// fixes both regardless of which path the caller supplied.
+// our own ffmpeg postprocess pass (runFfmpegWithProgress) needs a real
+// extension to pick a muxer. outputPath can arrive two ways, both wrong for
+// ffmpeg: the Library view's deterministic path has no extension at all, and
+// the Downloader tab's Save-dialog path always carries a video extension
+// (no MP3 filter option), so an MP3 selection would mux audio into a file
+// merely named .mp4. Stripping whatever extension is there and appending the
+// real target one fixes both.
 export function withTargetExtension(outputPath, ext) {
     const { dir, name } = path.parse(outputPath);
     return path.join(dir, `${name}.${ext}`);
 }
 
-// yt-dlp itself only ever downloads (and merges separate video+audio streams,
-// when both are selected) from here on -- MP3 extraction and format recode
-// are handled by our own direct ffmpeg pass afterward (see
-// runFfmpegWithProgress), since yt-dlp's own postprocessing can never report
-// real progress for those (TD-004). outputPath is either the user's final
-// chosen path (no postprocessing needed) or a raw intermediate path in a temp
-// dir (postprocessing needed) -- the caller decides which, this function just
-// downloads to whatever it's given.
+// yt-dlp itself only downloads (and merges video+audio streams, when both
+// are selected) -- MP3 extraction and format recode are handled by our own
+// direct ffmpeg pass afterward (see runFfmpegWithProgress), since yt-dlp's
+// own postprocessing can never report real progress for those (TD-004).
+// outputPath is either the user's final chosen path or a raw intermediate
+// temp path -- the caller decides which, this function downloads to
+// whatever it's given.
 export function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteMode }) {
     // Note: --print (even "after_move:...") makes yt-dlp buffer ALL stdout/stderr
     // until the process is about to exit, defeating live progress reporting entirely.
@@ -1407,35 +1305,27 @@ export function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteM
         args.push('-f', 'bestaudio/best');
     } else {
         // 'best' (not a number) is the Downloader tab's simplified
-        // multi-platform download flow (OtherPlatformDownloadCard.tsx) --
-        // there's no resolution picker there, since a real per-height
-        // quality ladder isn't consistently available outside YouTube
-        // (confirmed: SoundCloud has none at all -- audio-only, bitrate-
-        // differentiated formats; TikTok/Instagram typically expose only one
-        // real quality). yt-dlp's own generic "best video+audio, merge if
-        // needed" selector is the correct default when there's no
-        // meaningful height to constrain against.
+        // multi-platform flow -- no resolution picker there, since a real
+        // per-height quality ladder isn't consistently available outside
+        // YouTube (SoundCloud is audio-only; TikTok/Instagram typically
+        // expose one real quality). yt-dlp's generic "best, merge if needed"
+        // selector is the right default with no meaningful height to
+        // constrain against.
         args.push('-f', resolution === 'best' ? 'bestvideo*+bestaudio/best' : `bestvideo[height<=${resolution}]+bestaudio/best`);
-        // Without this, yt-dlp's own merge step picks MKV by default whenever the
-        // chosen video+audio pair isn't natively MP4-safe (e.g. Opus audio) --
-        // which Chromium's <video> element (this app's own Library player) can't
-        // play at all, container aside from codecs (see LibraryVideoPlayer.tsx's
-        // PLAYABLE_VIDEO_EXTENSIONS). --merge-output-format only picks the
-        // container for the stream-copy merge, it doesn't transcode, and modern
-        // ffmpeg's MP4 muxer already supports every codec combination yt-dlp's own
-        // format selector above can produce (H.264/VP9/AV1 video, AAC/Opus audio),
-        // so this is a free fix with no quality/compatibility cost. Only applies
-        // to this default (no explicit format chosen) path -- an explicit format
-        // choice (Downloader tab) still goes through the direct ffmpeg postprocess
-        // pass instead and picks its own target container there.
+        // Without this, yt-dlp's merge step picks MKV whenever the chosen
+        // pair isn't natively MP4-safe (e.g. Opus audio) -- which Chromium's
+        // <video> element can't play at all (see LibraryVideoPlayer.tsx's
+        // PLAYABLE_VIDEO_EXTENSIONS). This only picks the stream-copy
+        // container, it doesn't transcode, and modern ffmpeg's MP4 muxer
+        // already supports every codec this selector can produce, so it's a
+        // free fix. Only applies to this default path -- an explicit format
+        // choice goes through the ffmpeg postprocess pass instead.
         args.push('--merge-output-format', 'mp4');
     }
 
-    // Overwrite behavior is a real user choice now (see the renderer's existing-file
-    // dialog), not a hardcoded flag: "overwrite" forces a full re-download, anything
-    // else (no existing file, or the user chose "resume") leaves yt-dlp's own default
-    // behavior in place -- which already resumes a partial file via range requests and
-    // skips re-downloading a file that's already complete.
+    // "overwrite" forces a full re-download; anything else leaves yt-dlp's
+    // own default in place, which already resumes a partial file via range
+    // requests and skips one that's already complete.
     if (overwriteMode === 'overwrite') {
         args.push('--force-overwrites');
     }
@@ -1446,8 +1336,8 @@ export function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteM
 
 // yt-dlp postprocessors append their target extension to the requested
 // outtmpl rather than swapping it (e.g. "video.mp4" + mp3 extraction ->
-// "video.mp4.mp3"), and that behavior isn't a documented, stable contract
-// worth hardcoding. Instead, look at what actually landed on disk.
+// "video.mp4.mp3"), not a documented contract worth hardcoding against --
+// look at what actually landed on disk instead.
 export function findFinalFile(outputPath) {
     const dir = path.dirname(outputPath);
     const base = path.basename(outputPath);
@@ -1499,26 +1389,19 @@ function getMediaDurationSeconds(filePath) {
 }
 
 // ffmpeg's stderr is a wall of banner/build-config/stream-metadata noise even
-// on success, and on failure the real cause is buried in there as plain text
-// (there's no separate structured error output). This extracts just the
-// root-cause line rather than surfacing the whole dump to the user: strip
-// every line that's recognizably banner/metadata/progress noise, then take
-// the *first* remaining line that looks like an actual error -- the first
-// one is the root cause, later ones tend to be consequences of it (e.g. "-to
-// value smaller than -ss; aborting." followed by "Error opening output
-// file..." -- the first line is the fix-worthy one). Falls back to a plain
-// generic message if nothing recognizable survives the filtering, rather
-// than risk dumping something huge/useless.
+// on success, with the real failure cause buried in there as plain text.
+// This strips the recognizable noise, then takes the *first* remaining line
+// that looks like an actual error -- the first is the root cause, later
+// ones tend to be consequences of it. Falls back to a generic message if
+// nothing recognizable survives.
 const FFMPEG_NOISE_LINE = /^(ffmpeg version|built with|configuration:|lib(avutil|avcodec|avformat|avdevice|avfilter|swscale|swresample|postproc)|Input #\d|Duration:|Stream #|Stream mapping:|Press \[q\]|frame=|size=|time=|bitrate=|speed=|\s*Metadata:$|\s*(major_brand|minor_version|compatible_brands|title|artist|date|encoder|description|handler_name|vendor_id|comment|composer|genre)\s*:)/i;
 const FFMPEG_ERROR_KEYWORDS = /\b(error|invalid|cannot|could not|no such|permission denied|failed|unable|aborting|not found|no space|unknown|unrecognized)\b/i;
 const FFMPEG_LINE_PREFIX = /^\[[^\]]*\]\s*/;
 
-// The extracted root-cause line is still raw ffmpeg jargon ("-to value
-// smaller than -ss; aborting." means nothing to a non-technical user) --
-// this translates the handful of causes we can actually expect to hit from
-// this app's own ffmpeg invocations into plain language. Matched against the
-// already-extracted single line, not the full dump, so each pattern only
-// needs to account for ffmpeg's own wording, not where it appears.
+// Translates the handful of failure causes this app's ffmpeg invocations can
+// actually hit into plain language -- the extracted root-cause line is still
+// raw ffmpeg jargon otherwise. Matched against the already-extracted single
+// line, so each pattern only needs to account for wording, not position.
 const FFMPEG_FRIENDLY_ERRORS = [
     { pattern: /-to value smaller than -ss/i, message: 'The clip end time must be after the start time.' },
     { pattern: /permission denied/i, message: 'Permission denied while writing the output file -- check that the destination folder is writable.' },
@@ -1541,10 +1424,10 @@ function summarizeFfmpegError(stderr, code) {
     return message.length > 300 ? `${message.slice(0, 300)}...` : message;
 }
 
-// Bypasses yt-dlp's own postprocessing entirely -- see TD-004. yt-dlp runs its
-// postprocessing ffmpeg subprocess with a blocking call that only reads output
-// after the process exits, so it can never report real progress; spawning
-// ffmpeg ourselves with -progress pipe:1 gives a genuine, continuous percentage.
+// Bypasses yt-dlp's own postprocessing entirely (TD-004): its postprocessing
+// subprocess only reads output after the process exits, so it can never
+// report real progress; spawning ffmpeg ourselves with -progress pipe:1
+// gives a genuine, continuous percentage.
 function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress, extraInputArgs = [] }) {
     return new Promise((resolve, reject) => {
         const args = ['-i', inputPath, ...extraInputArgs, ...codecArgs, '-progress', 'pipe:1', '-y', outputPath];
@@ -1578,10 +1461,8 @@ function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDuration
 
 // Try a fast remux first (no quality loss, just a container swap); fall back
 // to a full re-encode if the source codec isn't compatible with the target
-// container. Reasonably close to yt-dlp's own remux-preferred behavior
-// without hand-maintaining a codec/container compatibility matrix ourselves.
-// Shared by the download-time format recode below and the Library view's
-// standalone "Convert to" ffmpeg utility.
+// container. Shared by the download-time format recode below and the
+// Library view's standalone "Convert to" utility.
 async function convertWithFallback({ inputPath, outputPath, format, totalDurationSeconds, onProgress }) {
     try {
         await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: ['-c', 'copy'], totalDurationSeconds, onProgress });
@@ -1603,31 +1484,29 @@ let activeDownloadCount = 0;
 ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     activeDownloadCount++;
     // requestId is echoed onto every message on this shared/unscoped
-    // broadcast channel (TD-008) -- generated renderer-side by
-    // useDownloadVideo.tsx's startDownload(), not here, so every consumer of
-    // this handler (manual download, Library-view download, the bulk-add
-    // queue) can filter to just its own in-flight download.
+    // broadcast channel (TD-008) -- generated renderer-side, so every
+    // consumer of this handler can filter to just its own in-flight
+    // download.
     const send = (msg) => BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', { ...msg, requestId: options.requestId });
 
-    // MP3 extraction and format recode need our own ffmpeg pass afterward (TD-004),
-    // so yt-dlp downloads to a raw intermediate file in a dedicated temp dir instead
-    // of the user's final chosen path -- deliberately outside that directory so it
-    // can never spuriously match findFinalFile's/checkFileExists' prefix-based
-    // lookups for the real target.
+    // MP3 extraction and format recode need our own ffmpeg pass afterward
+    // (TD-004), so yt-dlp downloads to a raw intermediate file in a
+    // dedicated temp dir -- deliberately outside the final directory so it
+    // can never spuriously match findFinalFile's prefix-based lookups.
     const postprocess = needsDirectFfmpegPass(options);
-    // Only ever used in place of options.outputPath inside the postprocess
-    // branch below -- see withTargetExtension for why the caller-supplied
-    // path can't be trusted as-is for that step.
+    // Only used in place of options.outputPath inside the postprocess branch
+    // below -- see withTargetExtension for why the caller's path can't be
+    // trusted as-is for that step.
     const postprocessOutputPath = postprocess
         ? withTargetExtension(options.outputPath, ffmpegTargetExtension(options))
         : options.outputPath;
     let rawDir = null;
     let downloadArgs;
     if (postprocess) {
-        // Derived from outputPath (not a random UUID) so retrying the same download
-        // reuses the same raw dir -- otherwise every retry of an MP3/recode download
-        // would start yt-dlp's own download from scratch even when a partial raw file
-        // already existed, silently losing the resume behavior TD-001 relies on.
+        // Derived from outputPath (not a random UUID) so retrying the same
+        // download reuses the same raw dir -- otherwise every retry would
+        // restart yt-dlp's download from scratch, losing TD-001's resume
+        // behavior even when a partial raw file already existed.
         const rawDirId = crypto.createHash('sha1').update(options.outputPath).digest('hex').slice(0, 16);
         rawDir = path.join(app.getPath('temp'), 'yt-archiver-raw', rawDirId);
         if (options.overwriteMode === 'overwrite') {
@@ -1752,25 +1631,20 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
 // --- Library view: ffmpeg utilities (extract MP3, convert format, extract
 // clip, embed metadata) ---------------------------------------------------
 // These all run ffmpeg directly against an *already-downloaded* library
-// file (not a fresh yt-dlp download), so they're deliberately kept separate
-// from downloadVideoWithProgressUpdates/'progressUpdate' above rather than
-// overloading that pipeline's meaning -- one shared broadcast channel here,
-// same "one at a time" assumption as everywhere else in this app (see
-// TD-008, reports/TechnicalDebt.md).
+// file, so they're kept separate from downloadVideoWithProgressUpdates/
+// 'progressUpdate' above rather than overloading that pipeline's meaning --
+// one shared broadcast channel here, same "one at a time" assumption as
+// elsewhere in this app (see TD-008, reports/TechnicalDebt.md).
 function sendFfmpegUtilityProgress(msg) {
     BrowserWindow.getAllWindows()[0]?.webContents.send('ffmpegUtilityProgress', msg);
 }
 
 // Generic "export a derived file" save dialog -- distinct from
-// dialog:saveVideoFile (which is hardcoded to video-download filters and the
+// dialog:saveVideoFile (hardcoded to video-download filters and the
 // configured download dir) since these exports can be audio, a different
-// container, or an arbitrary user-typed "Other" format. defaultName is
-// sanitized the same way library folder/file names already are, since it's
-// often derived straight from a video's title. Defaults to the source file's
-// own folder (inputPath) rather than the configured download dir -- these
-// exports are edits of a library file the user is already looking at, so
-// saving next to it is the more useful default; falls back to the download
-// dir/OS downloads folder only when no inputPath is given.
+// container, or an arbitrary "Other" format. Defaults to the source file's
+// own folder rather than the configured download dir, since these exports
+// are edits of a library file the user is already looking at.
 ipcMain.handle('dialog:saveExportedFile', async (e, { defaultName, extensions, inputPath }) => {
     const { downloadDir } = readSettings();
     const baseDir = (inputPath && path.dirname(inputPath)) || downloadDir || app.getPath('downloads');
@@ -1815,14 +1689,12 @@ ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, forma
 });
 
 // start/end are passed straight through to ffmpeg's own -ss/-to, which
-// already accepts the flexible time formats the UI's plain text fields take
-// (SS, MM:SS, HH:MM:SS[.ms]) -- no need to parse/validate them ourselves.
-// Both as output options (after -i), not input-seeking, so they're
-// unambiguous absolute timestamps in the source's own timeline -- slower to
-// seek than input-side -ss on a long file, but -c copy never decodes video
-// either way, so it's still just an I/O cost, not a CPU one. -c copy snaps
-// to the nearest keyframe rather than an exact frame (a real, documented
-// tradeoff, not a bug) -- a full re-encode for frame-accurate cuts is a
+// already accepts the flexible time formats the UI's fields take -- no need
+// to parse/validate them ourselves. Both as output options (after -i), so
+// they're unambiguous timestamps in the source's timeline -- slower to seek
+// than input-side -ss, but -c copy never decodes video either way, so it's
+// only an I/O cost. -c copy snaps to the nearest keyframe rather than an
+// exact frame, a documented tradeoff; frame-accurate re-encoded cuts are a
 // deliberately separate, not-yet-offered option.
 ipcMain.handle('library:extractClip', async (e, { inputPath, outputPath, start, end }) => {
     try {
@@ -1840,31 +1712,21 @@ ipcMain.handle('library:extractClip', async (e, { inputPath, outputPath, start, 
 });
 
 // Edits "in place" from the user's perspective, but ffmpeg can never read
-// and write the same file at once -- same safe temp-then-rename pattern
-// swapLibraryDownload (library.mjs) already established for quality swaps:
-// write to a distinct video.new.<ext> path first, only delete the working
-// file and rename the new one into its exact place once ffmpeg actually
-// succeeds, so a failed/interrupted run never touches the original.
-// Doesn't touch metadata.json at all -- downloadedFilePath/Resolution/Format
-// are all unchanged, only the bytes at that same path are.
+// and write the same file at once -- same temp-then-rename pattern
+// swapLibraryDownload (library.mjs) uses for quality swaps: write to
+// video.new.<ext> first, only delete the working file and rename once
+// ffmpeg succeeds. Doesn't touch metadata.json -- only the bytes at that
+// same path change.
 //
-// thumbnailPath (the video-level video-thumbnail.* file, may be jpg/png/webp
-// -- see downloadImageToFile) is embedded as cover art alongside the plain
-// text tags, when given. -map explicitly drops any video stream(s) beyond
-// the real one (video's own v:0) / any pre-existing cover on audio, so
-// re-running this doesn't accumulate a stack of old covers -- each run
-// replaces whatever cover was there with the current thumbnail. The cover
-// stream itself is always re-encoded to mjpeg (never copied) since a webp
-// thumbnail isn't a valid embedded-cover codec for ID3/mov -- everything
-// else stays -c copy, no quality loss.
+// thumbnailPath (video-thumbnail.*, may be jpg/png/webp) is embedded as
+// cover art when given. -map drops any pre-existing cover so re-running
+// this replaces it rather than stacking old covers. The cover stream is
+// always re-encoded to mjpeg since webp isn't a valid embedded-cover codec
+// for ID3/mov -- everything else stays -c copy, no quality loss.
 ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thumbnailPath, kind }) => {
-    // Downloader-tab callers (OtherPlatformDownloadCard.tsx) don't have a
-    // library entry with a pre-cached video-thumbnail.* file -- they only
-    // have yt-dlp's remote thumbnail URL. Rather than push a separate
-    // download+cleanup step onto every caller, fetch it here into a temp
-    // file (reusing the same downloadImageToFile the library's own
-    // thumbnail caching uses) whenever thumbnailPath looks like a URL
-    // instead of a local path already on disk.
+    // Downloader-tab callers only have yt-dlp's remote thumbnail URL, not a
+    // pre-cached local file -- fetch it here into a temp file whenever
+    // thumbnailPath looks like a URL instead of a local path.
     let downloadedThumbnailPath = null;
     try {
         const ext = path.extname(inputPath);
@@ -1885,9 +1747,9 @@ ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thu
         }
 
         const hasThumbnail = !!thumbnailPath && fs.existsSync(thumbnailPath);
-        // Audio (mp3) has no pre-existing video stream, so the embedded cover
-        // becomes v:0; a video file's real video stream is always v:0 (it's
-        // mapped first below), so the cover lands at v:1.
+        // Audio (mp3) has no pre-existing video stream, so the cover becomes
+        // v:0; a video file's own stream is always v:0 (mapped first below),
+        // so the cover lands at v:1.
         const coverStreamIndex = kind === 'audio' ? 0 : 1;
         const streamMapArgs = hasThumbnail
             ? (kind === 'audio' ? ['-map', '0:a', '-map', '1'] : ['-map', '0:v:0', '-map', '0:a?', '-map', '1'])
@@ -1966,28 +1828,24 @@ ipcMain.handle('app:getVersion', async () => {
 ipcMain.handle('system:openFileInDirectory', async (e, filepath) => {
     shell.showItemInFolder(filepath);
 });
-// Was previously (and incorrectly, unused until now) implemented with
-// shell.showItemInFolder, which for a directory path reveals its *parent*
-// folder with that directory selected -- not what "open this folder" means.
+// shell.showItemInFolder, for a directory path, reveals its *parent* folder
+// with that directory selected -- not what "open this folder" means.
 // shell.openPath opens the given folder's own contents directly.
 ipcMain.handle('system:openDirectory', async (e, dirPath) => {
     shell.openPath(dirPath);
 });
 
-// Opens a file in the OS's default app for it (e.g. QuickTime/VLC for a
-// video) -- shell.openPath works for files just as well as directories.
-// Deliberately unconditional on file type: it's a generically useful escape
-// hatch (different codec/hardware support, a bigger window) even for
-// formats the in-app player already handles, not just the MKV case
-// Chromium's <video> element can't play at all.
+// Opens a file in the OS's default app (e.g. QuickTime/VLC for a video).
+// Deliberately unconditional on file type -- a generically useful escape
+// hatch even for formats the in-app player already handles, not just MKV
+// (which Chromium's <video> element can't play at all).
 ipcMain.handle('system:openFileExternally', async (e, filepath) => {
     shell.openPath(filepath);
 });
 
 // Renderer-side errors (window.onerror/unhandledrejection, see App.tsx)
-// can't write to main.log directly -- the renderer has no fs access under
-// contextIsolation/sandbox -- so they're forwarded here to share the same
-// log file main-process crashes already go to.
+// can't write to main.log directly -- no fs access under
+// contextIsolation/sandbox -- so they're forwarded here.
 ipcMain.handle('errorLog:report', async (e, { message, stack }) => {
     log('[rendererError]', new Date().toISOString(), stack || message || 'Unknown renderer error');
 });

@@ -9,13 +9,12 @@ function useDownloadVideo() {
   const [isDone, setIsDone] = useState(false);
   const [isError, setIsError] = useState(false);
   const [downloadError, setDownloadError] = useState<object | null> ();
-  // 'progressUpdate' is one shared broadcast channel, not scoped per-download
-  // (TD-008) -- this hook can be mounted several times at once (manual
-  // download, a Library-view download, the always-mounted bulk-add queue),
-  // so every message needs to be checked against *this* instance's own
-  // in-flight request before touching state, or one download's progress
-  // would bleed into another's UI. A ref (not state) since the listener
-  // closure needs the current value without re-subscribing on every change.
+  // 'progressUpdate' is one shared broadcast channel, not scoped
+  // per-download (TD-008) -- this hook can be mounted several times at
+  // once, so every message must be checked against this instance's own
+  // in-flight request first, or one download's progress bleeds into
+  // another's UI. A ref, not state, since the listener closure needs the
+  // current value without re-subscribing on every change.
   const requestIdRef = useRef<string | null>(null);
 
 
@@ -42,12 +41,11 @@ function useDownloadVideo() {
         let accumErr = msg;
         switch(type) {
           case 'progress': {
-            // yt-dlp reports download progress per-stream, not for the download as a
-            // whole -- a video+audio download runs as two separate 0-100% sequences
-            // (the video stream, then the audio stream), so a naive assignment here
-            // would visibly jump back down when the second stream starts. Simplest
-            // fix: never let the displayed value decrease within a single download
-            // (it's reset to 0 at the start of each new one in startDownload above).
+            // yt-dlp reports progress per-stream, not for the whole download
+            // -- a video+audio download runs as two separate 0-100%
+            // sequences, so a naive assignment would jump back down when the
+            // second stream starts. Simplest fix: never let the displayed
+            // value decrease within a single download.
             const newPercent = parseInt(payload.percent.replace('%', ''));
             setDownloadProgress((prev) => Math.max(prev, newPercent));
             setDownloadStatus('progress');
@@ -60,20 +58,17 @@ function useDownloadVideo() {
             setDownloadStatus('Postprocessing...')
             if (typeof payload.postprocessPercent === 'number') {
               // A real, continuous percentage from our own direct ffmpeg pass
-              // (MP3 extraction/format recode, TD-004). Deliberately NOT clamped
-              // to be non-decreasing like the download case below: yt-dlp's own
-              // merge step (coarse 50/100 approximation, see the else branch)
-              // already runs before this and can leave postprocessProgress at
-              // 100 -- clamping here would make our real percent, which
-              // legitimately starts back near 0, get stuck showing 100% for the
-              // whole recode instead of real progress.
+              // (TD-004). Deliberately NOT clamped non-decreasing like the
+              // download case above: yt-dlp's own merge step (the else
+              // branch) can leave postprocessProgress at 100 already, and
+              // clamping here would stick our real, near-0-starting percent
+              // at 100 instead of showing real progress.
               setPostprocessProgress(payload.postprocessPercent);
             } else {
-              // yt-dlp's own merge-step postprocessing (still handled internally
-              // for non-MP3 downloads) only ever reports started/finished, never
-              // a real percentage -- this is a deliberate 2-state approximation
-              // rather than fake precision, and it's fine here since a plain
-              // stream merge is fast, not the slow re-encode case TD-004 is about.
+              // yt-dlp's own merge-step postprocessing only ever reports
+              // started/finished, never a real percentage -- a deliberate
+              // 2-state approximation, fine here since a plain stream merge
+              // is fast, not the slow re-encode case TD-004 is about.
               setPostprocessProgress(payload.stage === 'start' ? 50 : 100);
             }
             break;

@@ -67,9 +67,8 @@ export type LibraryVideoMetadata = {
   downloadedFilePath: string | null;
   downloadedResolution: string | null;
   downloadedFormat: string | null;
-  // MP3 is a separate, coexisting artifact of the video, not a competing
-  // "quality" -- its own slot, entirely independent of the video fields
-  // above (which a real video download can populate at the same time).
+  // MP3 is a separate, coexisting artifact, not a competing "quality" -- its
+  // own slot, independent of the video fields above.
   downloadedAudioFilePath: string | null;
 };
 
@@ -88,18 +87,16 @@ function formatEpochLabel(epoch: string): string {
   return new Date(Number(epoch)).toLocaleString();
 }
 
-// Same small extension-extraction as LibraryVideoPlayer.tsx's own copy --
-// not shared, this file has no other coupling to that component.
+// Same small extension-extraction as LibraryVideoPlayer.tsx's own copy, not
+// shared -- this file has no other coupling to that component.
 function getExtension(filePath: string): string {
   const lastDot = filePath.lastIndexOf('.');
   return lastDot === -1 ? '' : filePath.slice(lastDot + 1).toLowerCase();
 }
 
-// Digit-only, auto-formatting clip-timestamp input -- strips anything that
-// isn't a digit (so there's no way to type a stray letter or extra colon)
-// and right-aligns the typed digits into HH:MM:SS as they come in, growing
-// an hours group once there's more than 4 digits. Needed because archived
-// videos can easily run past an hour, so a plain MM:SS field isn't enough.
+// Digit-only, auto-formatting clip-timestamp input -- strips non-digits and
+// right-aligns the typed digits into HH:MM:SS, growing an hours group past 4
+// digits. Needed since archived videos can easily run past an hour.
 function formatClipTimestampInput(raw: string): string {
   const digits = raw.replace(/\D/g, '').slice(0, 6);
   const len = digits.length;
@@ -108,11 +105,9 @@ function formatClipTimestampInput(raw: string): string {
   return `${digits.slice(0, len - 4)}:${digits.slice(len - 4, len - 2)}:${digits.slice(len - 2)}`;
 }
 
-// Backs the clip fields' up/down spinner arrows -- parses whatever's
-// currently typed (any of the SS / MM:SS / HH:MM:SS shapes the formatter
-// above can produce, plus empty) down to a plain second count, nudges it,
-// and always renders back out fully zero-padded HH:MM:SS so the result stays
-// unambiguous once the spinner's been used.
+// Backs the clip fields' up/down spinner arrows -- parses whatever's typed
+// (SS / MM:SS / HH:MM:SS, or empty) down to a second count, nudges it, and
+// renders back out fully zero-padded so the result stays unambiguous.
 function parseClipTimestampSeconds(value: string): number {
   const parts = value.split(':').map((p) => parseInt(p, 10) || 0);
   while (parts.length < 3) parts.unshift(0);
@@ -134,24 +129,18 @@ function stepClipTimestamp(value: string, deltaSeconds: number): string {
 
 // Sentinel Select value for "Other" -- a one-off custom format typed for
 // just this conversion, distinct from the persisted custom list Options
-// manages (that one adds a format to the dropdown itself; this one doesn't
-// save anything, just lets a single conversion target something not listed).
+// manages (that one adds a format to the dropdown; this one doesn't save
+// anything).
 const OTHER_FORMAT_VALUE = '__other__';
 
 // Mirrors library.mjs's own CURRENT_VIDEO_SCHEMA_VERSION (main process and
-// renderer never cross-import in this codebase, so small shared constants
-// like this get a duplicated copy on each side) -- an entry whose own stored
-// schemaVersion is older than this predates a metadata-shape change (e.g.
-// the `resolutions` field added at 2) and won't have whatever that change
-// added. "Refresh from YouTube" (already wired to refreshLibraryEntryMetadata,
-// which always writes the current version) is what actually fixes it.
+// renderer never cross-import here). An entry whose stored schemaVersion is
+// older than this predates a metadata-shape change and won't have whatever
+// that change added -- "Refresh from YouTube" is what fixes it.
 const CURRENT_VIDEO_SCHEMA_VERSION = 3;
 
-
-// Same visual pattern as VideoDetailCard.tsx's buffer bar -- kept as a
-// separate copy rather than a shared import since this file has no other
-// coupling to that component (different data shape, no Save-dialog/TD-001
-// overwrite flow here, the library controls its own deterministic path).
+// Same visual pattern as VideoDetailCard.tsx's buffer bar, kept as a
+// separate copy since this file has no other coupling to that component.
 function LinearProgressWithLabel({ value, valueBuffer }: { value: number; valueBuffer: number }) {
   const displayValue = value > 0 ? value : valueBuffer;
   return (
@@ -166,10 +155,10 @@ function LinearProgressWithLabel({ value, valueBuffer }: { value: number; valueB
   );
 }
 
-// Shared between the first-download and "download different quality" flows --
-// excludeResolution blocks re-picking whatever's already downloaded (that's
-// not a "different" quality) rather than hiding it, so it's clear why one
-// button is greyed out instead of it just silently not being there.
+// Shared between the first-download and "download different quality" flows
+// -- excludeResolution blocks re-picking whatever's already downloaded
+// rather than hiding it, so it's clear why one button is greyed out instead
+// of silently missing.
 function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFormat, onFormatChange, isError, disabled }: {
   resolutions: LibraryResolution[];
   excludeResolution?: string | null;
@@ -242,37 +231,32 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const [refreshMetadataError, setRefreshMetadataError] = useState<string | null>(null);
   // 'initial' vs 'swap' decides which backend call the isDone effect below
   // makes -- both flows reuse the same useDownloadVideo() instance below
-  // (startDownload resets isDone/isError/progress at the start of every
-  // call, so a second download through the same hook instance is safe).
+  // (startDownload resets isDone/isError/progress on every call, so reusing
+  // one hook instance across calls is safe).
   const [downloadMode, setDownloadMode] = useState<'initial' | 'swap'>('initial');
-  // Video and audio (MP3) downloads coexist as separate files, but they
-  // still share this one useDownloadVideo() hook instance -- its progress
-  // events aren't tagged per-download (see TD-008), so two independent
-  // instances running at once would cross-talk. downloadTarget says which
-  // one the currently in-flight download (if any) belongs to; the UI
-  // disables the *other* target's controls while one is active rather than
-  // letting both fire at once.
+  // Video and audio (MP3) downloads coexist as separate files but share this
+  // one useDownloadVideo() instance -- its progress events aren't tagged
+  // per-download (TD-008), so two running at once would cross-talk.
+  // downloadTarget says which one owns the in-flight download; the UI
+  // disables the *other* target's controls while one is active.
   const [downloadTarget, setDownloadTarget] = useState<'video' | 'audio'>('video');
   // Bumped after a successful quality swap and threaded into the player's
-  // src URL -- a swap can land back on the exact same file path+extension,
-  // and without this the <video>/<audio> element has no signal that the
-  // underlying bytes changed, so it just keeps showing the old content.
+  // src URL -- a swap can land on the same file path+extension, and without
+  // this the <video>/<audio> element has no signal the bytes changed.
   const [cacheBustKey, setCacheBustKey] = useState(0);
 
-  // FFMPEG utilities -- kept minimal deliberately: a single target-format
-  // choice for convert, and plain start/end text fields for the clip trim
-  // rather than a scrubber.
+  // FFMPEG utilities -- kept minimal: a single target-format choice for
+  // convert, plain start/end text fields for the clip trim, no scrubber.
   const [convertFormat, setConvertFormat] = useState('mp4');
   const [otherFormatInput, setOtherFormatInput] = useState('');
   const [clipStart, setClipStart] = useState('');
   const [clipEnd, setClipEnd] = useState('');
   // Backs the clip fields' "pick from player" buttons -- LibraryVideoPlayer
-  // exposes the <video> element's own currentTime through this handle, since
-  // the element itself lives inside that component, not here.
+  // exposes the <video> element's currentTime through this handle, since the
+  // element lives inside that component, not here.
   const playerRef = useRef<LibraryVideoPlayerHandle>(null);
-  // User-added muxers from Options, on top of the small popular default set
-  // -- fetched once on mount, same as any other settings-backed value with
-  // no live-update need within a single session.
+  // User-added muxers from Options, on top of the popular default set --
+  // fetched once on mount, no live-update need within a session.
   const [customConvertFormats, setCustomConvertFormats] = useState<string[]>([]);
   useEffect(() => {
     window.electronAPI.getCustomConvertFormats().then(({ customConvertFormats }) => setCustomConvertFormats(customConvertFormats));
@@ -282,17 +266,16 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     ...customConvertFormats.filter((f) => !POPULAR_CONVERT_FORMATS.includes(f.toLowerCase())),
   ];
 
-  // Which ffmpeg utility (if any) is currently running -- gates the rest of
-  // the panel the same way downloadTarget gates video-vs-audio above,
-  // except entirely separate from that hook/channel (see main.js's
-  // ffmpegUtilityProgress comment for why: these run against an
-  // already-downloaded file, not a fresh yt-dlp download).
+  // Which ffmpeg utility (if any) is currently running -- gates the panel
+  // the same way downloadTarget gates video-vs-audio above, but on an
+  // entirely separate hook/channel: these run against an already-downloaded
+  // file, not a fresh yt-dlp download (see main.js's ffmpegUtilityProgress).
   const [ffmpegAction, setFfmpegAction] = useState<'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | null>(null);
   const [ffmpegProgress, setFfmpegProgress] = useState(0);
   const [ffmpegError, setFfmpegError] = useState<string | null>(null);
   // Separate from ffmpegError -- embedding is fast enough that a plain
-  // disabled->enabled flicker on the button isn't a reliable "it worked"
-  // signal, so a toast confirms it explicitly.
+  // disabled->enabled flicker isn't a reliable "it worked" signal, so a
+  // toast confirms it explicitly.
   const [embedSuccessSnackbarOpen, setEmbedSuccessSnackbarOpen] = useState(false);
   const [linkCopiedSnackbarOpen, setLinkCopiedSnackbarOpen] = useState(false);
   useEffect(() => {
@@ -312,10 +295,9 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video.videoDir]);
 
-  // The epoch currently being viewed may have just been deleted (this
-  // component's own version-scoped delete) -- if a refresh comes through and
-  // it's no longer in the list, fall back to whatever's now latest rather
-  // than silently pointing at a version that no longer exists.
+  // The epoch currently viewed may have just been deleted -- if a refresh
+  // shows it's no longer in the list, fall back to the new latest rather
+  // than pointing at a version that no longer exists.
   useEffect(() => {
     if (selectedEpoch && !video.epochs.some((e) => e.epoch === selectedEpoch)) {
       setSelectedEpoch(video.latestEpoch);
@@ -344,9 +326,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setCreatingVersion(true);
     setCreateVersionError(null);
     // Tracks whether addLibraryVersion has actually created a new epoch on
-    // disk yet -- if anything fails after that point (e.g. the resync below),
-    // this lets the catch block roll it back instead of leaving an orphaned
-    // epoch folder around that the UI never surfaced.
+    // disk -- if anything fails after that (e.g. the resync below), the
+    // catch block rolls it back instead of leaving an orphaned epoch folder.
     let createdEpoch: string | null = null;
     try {
       await window.electronAPI.deleteVideoInfoCacheEntry(metadata.originalUrl);
@@ -354,21 +335,18 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
       if (!result.success) {
         throw new Error('Failed to fetch fresh video data.');
       }
-      // getVideoInfoPython already rejects a genuinely dead video server-side
-      // (main.js's own isDeadVideoInfo) before ever resolving success -- this
-      // is a defense-in-depth repeat of that exact same check, so "the fetch
-      // technically resolved but the data is dead" can never slip through to
-      // actually creating a new version.
+      // getVideoInfoPython already rejects a dead video server-side -- this
+      // repeats that same check as defense in depth, so a technically
+      // successful fetch with dead data can never create a new version.
       const freshResponse = result.data.response;
       if (!freshResponse.channelId && !freshResponse.uploader) {
         throw new Error('This video appears to be unavailable on YouTube (private, deleted, or removed) -- no new version was created.');
       }
       const added = await window.electronAPI.addLibraryVersion(freshResponse, video.videoDir);
       createdEpoch = added.epoch;
-      // Needs the deeper resync (not plain onLibraryChanged) -- this just
-      // added a new epoch, so the version selector's option list (read
-      // straight from the `video` prop's `epochs` array) needs a fresh
-      // `video` prop, not just a refreshed root channel list.
+      // Needs the deeper resync, not plain onLibraryChanged: the version
+      // selector's option list reads from the `video` prop's own `epochs`
+      // array, which needs a fresh prop after adding an epoch.
       await onVersionsChanged();
       setSelectedEpoch(added.epoch);
       setMetadata(added.metadata);
@@ -391,12 +369,10 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setLinkCopiedSnackbarOpen(true);
   };
 
-  // "Refresh from YouTube" -- re-fetches live data the same way "Download new
+  // "Refresh from YouTube" -- re-fetches live data like "Download new
   // version" does, but writes it into the *currently selected* version in
-  // place (refreshLibraryEntry) instead of adding a new one. For when the
-  // version itself hasn't changed (still the video you want), just its
-  // metadata has gone stale -- a retitled video, a description edit, or one
-  // that's since gone private/unlisted and should be flagged as such.
+  // place instead of adding a new one, for when just the metadata (title,
+  // description, or a since-private/unlisted status) has gone stale.
   const handleRefreshFromYouTube = async () => {
     if (!metadata.originalUrl || !selectedEpoch) return;
     setRefreshingMetadata(true);
@@ -426,24 +402,19 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setDownloadTarget('video');
     setDownloadMode('initial');
     setSelectedResolution(resolution);
-    // Deterministic path inside the video's own storage -- no Save dialog,
-    // no overwrite/resume prompt needed (this folder is ours, not a
-    // user-picked location with pre-existing files to worry about). Keyed
-    // off whichever version is currently selected, not always the newest --
-    // a "download new version" that hasn't been downloaded yet is still
-    // browsable and downloadable like any other version. A fixed base
-    // filename avoids any need to sanitize the title again for the renderer
-    // side; yt-dlp/ffmpeg fill in the right extension, same
-    // findFinalFile-style resolution used everywhere else in this app.
+    // Deterministic path inside the video's own storage -- no Save dialog or
+    // overwrite prompt needed, since this folder is ours, not a user-picked
+    // location. Keyed off whichever version is currently selected, not
+    // always the newest. yt-dlp/ffmpeg fill in the right extension, same
+    // findFinalFile-style resolution used elsewhere in this app.
     const outputPath = `${video.videoDir}/${selectedEpoch}/video`;
     startDownload({ videoUrl: metadata.originalUrl || '', outputPath, format: selectedFormat, resolution });
   };
 
   // "Download different quality" -- downloads to a distinct "video.new.<ext>"
-  // path rather than the live file's own path, so a failed/interrupted
-  // download never touches the working file (the safety rule this feature
-  // was specced with). The actual delete-old/rename-new swap only happens in
-  // the isDone effect below, once the new file is confirmed complete.
+  // path rather than the live file's path, so a failed/interrupted download
+  // never touches the working file. The actual delete-old/rename-new swap
+  // only happens in the isDone effect below, once the new file is complete.
   const handleSwapDownload = (resolution: string) => {
     if (!selectedEpoch) return;
     setDownloadTarget('video');
@@ -454,12 +425,10 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   };
 
   // Covers both "download MP3 for the first time" and "re-download to
-  // replace an existing one" -- which of those it is just depends on
-  // whether downloadedAudioFilePath is already set, no separate confirm-UI
-  // needed the way the video quality-swap flow has one (there's only ever
-  // one MP3 option, nothing to pick between). The re-download case still
-  // gets the same safe temp-then-rename treatment via swapLibraryDownload
-  // in the isDone effect below.
+  // replace an existing one" -- decided by whether downloadedAudioFilePath
+  // is already set, no confirm-UI needed since there's only one MP3 option.
+  // The re-download case still gets the safe temp-then-rename treatment via
+  // swapLibraryDownload in the isDone effect below.
   const handleAudioDownload = () => {
     if (!selectedEpoch) return;
     const isReplacing = !!metadata.downloadedAudioFilePath;
@@ -501,19 +470,14 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           ? { ...prev, downloadedAudioFilePath: finalFilePath }
           : { ...prev, downloadedFilePath: finalFilePath, downloadedResolution: selectedResolution, downloadedFormat: selectedFormat }));
         // Audio has no video-style "swap confirm UI" to fall back out of --
-        // always clear selectedResolution for it so the Audio section's
-        // active-download check (which, unlike the video one, doesn't also
-        // gate on !downloadedAudioFilePath) doesn't stay stuck showing progress.
+        // always clear selectedResolution so the Audio section's
+        // active-download check doesn't stay stuck showing progress.
         if (kind === 'audio') setSelectedResolution('');
       }
-      // Deep resync, not the shallow onLibraryChanged -- a regular download
-      // or quality-swap only touches the currently-selected epoch's own
-      // fields, but handleSelectEpoch re-reads straight from the `video`
-      // prop's `epochs` array on every switch. Without this, switching away
-      // from this epoch and back would silently revert to whatever
-      // downloadedFilePath the prop had *before* this download completed,
-      // showing the YouTube embed again for a version that's actually
-      // already downloaded.
+      // Deep resync, not the shallow onLibraryChanged: handleSelectEpoch
+      // re-reads from the `video` prop's `epochs` array on every switch, so
+      // without this, switching away from this epoch and back would revert
+      // to the stale downloadedFilePath the prop had before this download.
       await onVersionsChanged();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -578,13 +542,10 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   };
 
   // "Pick timestamp" -- grabs wherever the player's playback currently sits
-  // and drops it straight into the clip field, instead of the user manually
-  // watching the clock and typing a timestamp. Rounds down to a whole second
-  // since the clip fields themselves are whole-second precision (HH:MM:SS,
-  // no fractional part). A silent no-op when there's no active local video
-  // element to read from (nothing downloaded yet, or a container this player
-  // can't play at all) -- ffmpegControlsDisabled already keeps the buttons
-  // themselves disabled in exactly that case.
+  // and drops it into the clip field, rounded down to a whole second since
+  // the clip fields are whole-second precision. A silent no-op with no
+  // active video element to read from -- ffmpegControlsDisabled already
+  // keeps the buttons disabled in that case.
   const handleSetClipStartFromPlayer = () => {
     const time = playerRef.current?.getCurrentTime();
     if (time == null) return;
@@ -619,13 +580,12 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setFfmpegAction(null);
   };
 
-  // Local ffmpeg extraction straight from the already-downloaded video file,
-  // landing directly in this version's own audio slot -- unlike
-  // handleExtractMp3 above (which exports a copy to a user-picked location),
-  // this one saves and plays back through the library the same way a real
-  // MP3 download does, just without re-fetching anything from YouTube. Only
-  // ever invoked from the "no MP3 yet" branch of the Audio section, so no
-  // replace/swap path is needed here.
+  // Local ffmpeg extraction from the already-downloaded video file, landing
+  // directly in this version's own audio slot -- unlike handleExtractMp3
+  // above (exports a copy to a user-picked location), this saves and plays
+  // back through the library like a real MP3 download, without re-fetching
+  // from YouTube. Only invoked from the "no MP3 yet" branch, so no
+  // replace/swap path is needed.
   const handleExtractAudioToLibrary = async () => {
     if (!selectedEpoch || !metadata.downloadedFilePath || metadata.downloadedAudioFilePath) return;
     setFfmpegAction('extractAudioToLibrary');
@@ -643,8 +603,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
         kind: 'audio',
       });
       setMetadata((prev) => ({ ...prev, downloadedAudioFilePath: outputPath }));
-      // Same deep resync reason as the isDone effect above -- switching
-      // versions and back would otherwise revert to the stale `video` prop.
+      // Same deep resync reason as the isDone effect above.
       await onVersionsChanged();
     } else {
       setFfmpegError(res.message || 'Failed to extract MP3.');
@@ -653,11 +612,9 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   };
 
   const handleEmbedMetadata = async () => {
-    // Embeds into whichever of the video/audio files this version actually
-    // has -- either, or both, since they're independent coexisting slots
-    // (see downloadedAudioFilePath's own comment above). kind tells main.js
-    // which stream index the embedded cover art lands at (a video file
-    // already has its own video stream at v:0; audio doesn't).
+    // Embeds into whichever of the video/audio files this version has --
+    // either, or both, since they're independent coexisting slots. kind
+    // tells main.js which stream index the cover art lands at.
     const targets: { path: string; kind: 'video' | 'audio' }[] = [
       metadata.downloadedFilePath ? { path: metadata.downloadedFilePath, kind: 'video' as const } : null,
       metadata.downloadedAudioFilePath ? { path: metadata.downloadedAudioFilePath, kind: 'audio' as const } : null,
@@ -699,11 +656,9 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setDeleteError(null);
     try {
       // Deletes only the currently-displayed version -- if that was the
-      // last one, the whole video (now-empty folder) goes with it and we
-      // land back at the library root, same as delete always worked before
-      // versioning existed. Otherwise the video survives and the parent
-      // needs to refresh both the root channel list and this stale
-      // `video` prop snapshot so the view swaps to whatever's now latest.
+      // last one, the whole video goes with it and we land back at the
+      // library root. Otherwise the parent refreshes both the root channel
+      // list and this stale `video` prop so the view swaps to the new latest.
       const { videoDeleted } = await window.electronAPI.deleteLibraryEntry(video.videoDir, selectedEpoch || undefined);
       if (videoDeleted) {
         await onLibraryChanged();
@@ -722,35 +677,29 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const isAudioActionActive = downloadTarget === 'audio' && !!selectedResolution && !isError;
   const isDownloading = downloadTarget === 'video' && !!selectedResolution && !isError && !metadata.downloadedFilePath && !swappingQuality;
   const isSwapDownloading = downloadTarget === 'video' && !!selectedResolution && !isError && swappingQuality;
-  // Derived from the same two flags above (not its own standalone check)
-  // specifically so it clears the instant a video download finishes -- an
-  // earlier, looser version of this stayed true after an initial (non-swap)
-  // video download completed, since selectedResolution is deliberately left
-  // set in that case (see the isDone effect) and nothing else cleared it,
-  // permanently locking out the Audio button until a full reload.
+  // Derived from the two flags above, not a standalone check, so it clears
+  // the instant a video download finishes -- selectedResolution is
+  // deliberately left set after an initial download (see the isDone
+  // effect), so nothing else would clear this and it would lock out Audio.
   const isVideoActionActive = isDownloading || isSwapDownloading;
-  // Gates the whole FFMPEG utilities section below -- every tool there
-  // operates on the video file itself, not the separate MP3 slot.
+  // Gates the whole FFMPEG utilities section -- every tool there operates on
+  // the video file, not the separate MP3 slot.
   const isVideoDownloaded = !!metadata.downloadedFilePath;
-  // Every ffmpeg-utility control shares this one disabled condition: no
-  // video downloaded yet, or another utility is already mid-run (they share
-  // one ffmpegAction slot, same "one at a time" reasoning as video/audio
-  // downloads above).
+  // Shared disabled condition for every ffmpeg-utility control: no video
+  // downloaded, or another utility already mid-run (one ffmpegAction slot).
   const ffmpegControlsDisabled = !isVideoDownloaded || ffmpegAction !== null;
-  // Embed Metadata is the one FFMPEG utility that doesn't need the video
-  // file specifically -- it can tag whichever of video/audio exists, so it's
-  // enabled whenever either one is downloaded, not gated on isVideoDownloaded
-  // like the rest of the panel.
+  // Embed Metadata doesn't need the video file specifically -- it can tag
+  // whichever of video/audio exists, so it's enabled whenever either is
+  // downloaded, not gated on isVideoDownloaded like the rest of the panel.
   const embedMetadataDisabled = (!isVideoDownloaded && !metadata.downloadedAudioFilePath) || ffmpegAction !== null;
   // ffmpeg's -to is an absolute end timestamp, not a duration -- if it isn't
-  // at least a second past -ss, ffmpeg aborts immediately with "-to value
-  // smaller than -ss" (a real error a tester hit). Caught here instead, since
-  // there's nothing useful to extract from an end <= start request anyway.
+  // at least a second past -ss, ffmpeg aborts with "-to value smaller than
+  // -ss". Caught here since there's nothing to extract from end <= start.
   const clipRangeInvalid = !!clipStart.trim() && !!clipEnd.trim()
     && parseClipTimestampSeconds(clipEnd) < parseClipTimestampSeconds(clipStart) + 1;
   const resolutions = metadata.resolutions || [];
-  // MP3 is rendered in its own Audio sub-section below, not mixed into the
-  // video quality grid -- see the Library-view MP3-coexistence design.
+  // MP3 is rendered in its own Audio sub-section, not mixed into the video
+  // quality grid.
   const videoResolutions = resolutions.filter((r) => r.resolution !== 'MP3');
   const mp3Resolution = resolutions.find((r) => r.resolution === 'MP3');
   const isSchemaOutdated = (metadata.schemaVersion ?? 0) < CURRENT_VIDEO_SCHEMA_VERSION;
@@ -835,20 +784,17 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
       {refreshMetadataError &&
         <Typography color="error" variant="body2" sx={{ mb: 2 }}>{refreshMetadataError}</Typography>}
 
-      {/* Keyed on the selected version so switching versions always forces a
-          full remount of the player + download panel below, instead of
-          relying on every branch inside them to correctly react to a props
-          change -- a plain data refresh alone wasn't reliably enough to get
-          the player to swap between the local-file and YouTube-embed
-          branches when switching to a version with different download
-          status than the one just displayed. */}
+      {/* Keyed on the selected version so switching versions forces a full
+          remount of the player + download panel, rather than relying on
+          every branch inside them to react correctly to a props change --
+          a plain data refresh wasn't reliable enough to swap the player
+          between local-file and YouTube-embed branches on version switch. */}
       <Stack key={selectedEpoch || 'no-epoch'} direction={{ xs: 'column', md: 'row' }} spacing={2}>
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '70%' } }}>
           <LibraryVideoPlayer ref={playerRef} metadata={metadata} thumbnailPath={video.thumbnailPath} cacheBustKey={cacheBustKey} />
 
-          {/* Bounded + scrollable rather than letting a long description push
-              the instrument panel below the fold -- max height picked to
-              comfortably fit a few paragraphs before scrolling kicks in. */}
+          {/* Bounded + scrollable rather than letting a long description
+              push the instrument panel below the fold. */}
           <Card variant="outlined" sx={{ p: 1.5, maxHeight: 260, overflowY: 'auto' }}>
             <Typography variant="body2" sx={{ textAlign: 'justify' }}>
               {formatComment(metadata.description || '')}
@@ -857,8 +803,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
         </Stack>
 
         {/* "Instrument panel" -- version selector, download status, and every
-            download/quality-swap control grouped into one Card so they read
-            as a single section rather than a loose stack of controls. */}
+            download/quality-swap control in one Card so they read as a
+            single section. */}
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '30%' } }}>
           <Card sx={{ p: 1.5 }} variant="outlined">
             <Stack spacing={1.5}>
@@ -954,10 +900,10 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
             )}
 
             {/* Audio (MP3) -- a separate, always-available download,
-                independent of whatever video quality is or isn't downloaded.
-                Shares the single download hook with the video controls above
-                (see downloadTarget/TD-008), so it's disabled while a video
-                download/swap is actually in flight rather than fully hidden. */}
+                independent of video quality. Shares the single download
+                hook with the video controls above (downloadTarget/TD-008),
+                so it's disabled rather than hidden during a video
+                download/swap. */}
             {mp3Resolution &&
               <>
                 <Divider sx={{ my: 1.5 }} />
@@ -974,9 +920,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                     </Stack>
                   ) : metadata.downloadedAudioFilePath ? (
                     // Replaces the download button in place -- the player
-                    // itself lives here in the instrument panel, not
-                    // alongside the video above, so it stays visually tied
-                    // to its own download controls.
+                    // lives here in the instrument panel, tied to its own
+                    // download controls, not alongside the video above.
                     <Stack spacing={0.5}>
                       <Box
                         component="audio"
@@ -1045,10 +990,10 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
               </>}
 
             {/* FFMPEG utilities -- every control operates on the video
-                *file*, disabled as a whole whenever this version doesn't
-                have one downloaded yet (regardless of whether an MP3
-                already exists for it), or while another utility is already
-                running (they share one ffmpegAction slot). */}
+                *file*, disabled whenever this version has no video
+                downloaded (regardless of an existing MP3), or while another
+                utility is already running (they share one ffmpegAction
+                slot). */}
             <Divider sx={{ my: 1.5 }} />
             <Stack spacing={1}>
               <Stack direction="row" spacing={0.5} alignItems="center">

@@ -36,16 +36,12 @@ import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils
 import LibrarySearchBar from './LibrarySearchBar';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 
-// Mirrors library.mjs's own CURRENT_PLAYLIST_SCHEMA_VERSION (main process and
-// renderer never cross-import in this codebase, so small shared constants
-// like this get a duplicated copy on each side).
+// Mirrors library.mjs's own CURRENT_PLAYLIST_SCHEMA_VERSION (main process
+// and renderer never cross-import in this codebase).
 const CURRENT_PLAYLIST_SCHEMA_VERSION = 1;
 
 // Kept local rather than imported from electron-api.d.ts -- matches how
-// every other library data shape in this app (LibraryScreen.tsx's own
-// LibraryChannel/LibraryVideoMetadata) is defined per-file rather than
-// shared, since that .d.ts file's types aren't exported from a module other
-// files can import from anyway.
+// every other library data shape in this app is defined per-file.
 type PlaylistSummary = {
   playlistId: string;
   title: string | null;
@@ -54,10 +50,9 @@ type PlaylistSummary = {
   addedEpoch: number;
   lastRefreshedEpoch: number | null;
   hasPreviousMetadata: boolean;
-  // thumbnailUrl is the current first entry's own thumbnail (preferred --
-  // always live, no extra fetch) -- thumbnailPath is a locally-cached
-  // fallback (ensurePlaylistThumbnail, main.js) for when that's unavailable
-  // (an empty playlist, or a dead first entry).
+  // thumbnailUrl is the current first entry's own thumbnail (preferred,
+  // always live); thumbnailPath is a locally-cached fallback
+  // (ensurePlaylistThumbnail, main.js) for when that's unavailable.
   thumbnailUrl: string | null;
   thumbnailPath: string | null;
 };
@@ -86,29 +81,24 @@ type PlaylistSnapshot = {
   thumbnailPath: string | null;
 };
 
-// Epoch folder names/timestamps are Date.now() ms values -- same formatter
+// Epoch timestamps are Date.now() ms values -- same formatter
 // LibraryVideoDetail.tsx's own formatEpochLabel uses, kept as a separate
-// copy here rather than shared for the same reason that file gives (no other
-// coupling between these components).
+// copy since there's no other coupling between these components.
 function formatEpochLabel(epoch: number): string {
   return new Date(epoch).toLocaleString();
 }
 
-// Prefers the live first-entry thumbnail (always current, zero extra fetch)
-// over the locally-cached fallback (ensurePlaylistThumbnail, main.js) --
-// that fallback only actually matters once there's no live one to show (an
-// empty playlist, or one whose first entry is a dead/"Not on YouTube"
-// placeholder with no thumbnailUrl of its own).
+// Prefers the live first-entry thumbnail over the locally-cached fallback
+// (ensurePlaylistThumbnail, main.js), which only matters once there's no
+// live one to show (an empty playlist, or a dead first entry).
 function playlistThumbnailSrc(thumbnailUrl: string | null | undefined, thumbnailPath: string | null | undefined): string | undefined {
   if (thumbnailUrl) return thumbnailUrl;
   if (thumbnailPath) return buildAppVideoUrl(thumbnailPath);
   return undefined;
 }
 
-// Deliberately minimal for this first version -- a plain list and a plain
-// detail view, no extra polish beyond title search (sorting, bulk actions on
-// entries, etc). The user's own framing: this gets refined in a later pass
-// once the reconciliation logic underneath it has been used for a while.
+// Deliberately minimal for this first version -- a plain list and detail
+// view, no extra polish beyond title search (sorting, bulk actions, etc).
 export default function PlaylistsSection() {
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [loading, setLoading] = useState(true);

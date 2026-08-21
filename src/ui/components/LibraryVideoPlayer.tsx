@@ -8,25 +8,19 @@ import { buildAppVideoUrl } from '../../utils/utils.ts';
 
 // Exposed so LibraryVideoDetail.tsx's clip tool can grab "wherever playback
 // currently is" for its "Set as start"/"Set as end" buttons -- the <video>
-// element (and its currentTime) only exists inside this component, which
-// otherwise has no reason to hand anything back up to its parent. Returns
-// null when there's no actual local video element mounted right now (no
-// downloaded file yet, or a downloaded container this player can't play at
-// all -- see PLAYABLE_VIDEO_EXTENSIONS below), rather than a misleading 0.
+// element only exists inside this component. Returns null (not a misleading
+// 0) when no local video element is mounted right now.
 export type LibraryVideoPlayerHandle = {
   getCurrentTime: () => number | null;
 };
 
 // Only mp4/webm play reliably in Chromium's <video> element -- MKV is a
-// Chromium container-parsing limitation that no delivery mechanism (custom
-// protocol or otherwise) can work around, even though it used to be a
-// possible outcome of a default (no explicit format chosen) download before
-// buildDownloadArgs (main.js) started forcing --merge-output-format mp4.
-// That's exactly why "open in default player" exists as an unconditional
-// button in LibraryVideoDetail -- this component just quietly falls back to
-// the static thumbnail rather than attempting a player known to fail to
-// load, for any file downloaded before that fix (or any other container
-// Chromium doesn't support landing here some other way).
+// container-parsing limitation no delivery mechanism can work around, and
+// could still land here from a download made before buildDownloadArgs
+// (main.js) started forcing --merge-output-format mp4. This component
+// quietly falls back to the static thumbnail rather than attempting a
+// player known to fail; "open in default player" exists in
+// LibraryVideoDetail for exactly this case.
 const PLAYABLE_VIDEO_EXTENSIONS = new Set(['mp4', 'webm']);
 
 function getExtension(filePath: string): string {
@@ -47,19 +41,16 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   cacheBustKey?: number;
 }>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0 }, ref) {
   const { downloadedFilePath, thumbnail, videoId } = metadata;
-  // Extension alone says "this container is a Chromium demuxer can at least
-  // attempt", not "this exact file will actually decode" -- an unusual codec
-  // inside an otherwise-playable mp4/webm, or a truncated/corrupt file, can
-  // still fail at runtime. playbackFailed catches that case via the <video>
-  // element's own error event, so this component degrades to the same
-  // thumbnail-plus-"open externally" fallback as a known-unplayable
-  // extension, instead of leaving a black, silently-broken player on screen.
+  // Extension alone says Chromium's demuxer can attempt this container, not
+  // that this exact file will decode -- an unusual codec or a truncated file
+  // can still fail at runtime. Catches that via the <video> element's error
+  // event, degrading to the same fallback as a known-unplayable extension
+  // instead of a silently-broken black player.
   const [playbackFailed, setPlaybackFailed] = useState(false);
-  // Purely a one-time "you can start playback here" affordance, not a
-  // persistent pause indicator -- once the video has ever started playing
-  // for this file, the overlay is gone for good (native controls already
-  // handle play/pause from then on). Resets alongside playbackFailed
-  // whenever the underlying file actually changes.
+  // One-time "you can start playback here" affordance, not a persistent
+  // pause indicator -- gone for good once playback has ever started (native
+  // controls take over from there). Resets alongside playbackFailed when the
+  // file changes.
   const [hasStartedPlayback, setHasStartedPlayback] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
@@ -71,10 +62,9 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     getCurrentTime: () => (videoRef.current ? videoRef.current.currentTime : null),
   }), []);
 
-  // Prefer the locally-cached, offline-capable copy (video-level, shared
-  // across every version of this video) over the hotlinked YouTube URL --
-  // that URL is still the fallback for entries added before this feature
-  // existed, or if the background fetch hasn't landed yet.
+  // Prefer the locally-cached, offline-capable thumbnail over the hotlinked
+  // YouTube URL -- that URL is the fallback for entries added before this
+  // feature existed, or while the background fetch hasn't landed yet.
   const posterSrc = thumbnailPath ? buildAppVideoUrl(thumbnailPath) : (thumbnail || undefined);
 
   if (!downloadedFilePath) {
@@ -96,10 +86,9 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             component="video"
             ref={videoRef}
             controls
-            // Chromium's native "3 dot" controls menu offers a Download
-            // entry by default -- redundant here (this file is already on
-            // disk, "Open file location"/"Open in default player" exist
-            // right next to this player) and confusing on top of that.
+            // Chromium's native controls menu offers a Download entry by
+            // default -- redundant and confusing here since the file is
+            // already on disk with its own "Open" controls nearby.
             controlsList="nodownload"
             poster={posterSrc}
             src={buildAppVideoUrl(downloadedFilePath, cacheBustKey)}
@@ -124,12 +113,9 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     );
   }
 
-  // Named explicitly (the actual extension) rather than a generic "can't be
-  // played" -- this app's own Downloader tab lets users deliberately choose
-  // mkv/3gp as a conversion target (see SUPPORTED_FORMATS, constants.mjs),
-  // so a video landing here in one of those formats isn't necessarily a bug
-  // to report, just an expected consequence of that choice the user should
-  // be able to recognize at a glance.
+  // Names the actual extension rather than a generic "can't be played" --
+  // the Downloader tab lets users deliberately choose mkv/3gp as a
+  // conversion target, so landing here isn't necessarily a bug to report.
   return (
     <ResizableMediaContainer sx={containerSx}>
       <Box sx={{ ...fillSx, position: 'relative' }}>

@@ -47,15 +47,15 @@ export default function DownloaderScreen() {
   const [libraryAddStatus, setLibraryAddStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
   const [libraryErrorMessage, setLibraryErrorMessage] = useState<string | null>(null);
   const [librarySuccessSnackbarOpen, setLibrarySuccessSnackbarOpen] = useState(false);
-  // Captured alongside the snackbar open (not read from videoInfo later) since
-  // all three add paths below clear videoInfo right after a successful add --
-  // this is what the toast's "View" link navigates to.
+  // Captured alongside the snackbar open, not read from videoInfo later,
+  // since all three add paths below clear videoInfo right after a
+  // successful add -- this is what the toast's "View" link navigates to.
   const [lastAddedVideoId, setLastAddedVideoId] = useState<string | null>(null);
   const [duplicateMatch, setDuplicateMatch] = useState<{ channelDisplayName: string | null; videoDir: string } | null>(null);
   // Drives both which card renders below (VideoDetailCard vs. the simplified
-  // OtherPlatformDownloadCard) and whether "add to library" can activate at
-  // all -- multi-platform downloads are Downloader-tab-only and download-only
-  // for v1 (no library entry), see OtherPlatformDownloadCard.tsx.
+  // OtherPlatformDownloadCard) and whether "add to library" can activate --
+  // multi-platform downloads are Downloader-tab-only and download-only for
+  // v1, see OtherPlatformDownloadCard.tsx.
   const isYouTube = isYouTubeUrl(debouncedVideoUrl);
 
 
@@ -235,12 +235,9 @@ export default function DownloaderScreen() {
                     width: 56,
                     height: 56,
                     borderRadius: 1,
-                    // Only colored once a video is actually loaded -- applying this
-                    // bgcolor/color override unconditionally (including while disabled)
-                    // fought MUI's own disabled-button styling and made the button
-                    // render invisibly, even though its Tooltip still worked (the
-                    // span wrapper it needs to show a tooltip on a disabled button
-                    // doesn't depend on the button itself being visible).
+                    // Only colored once a video is loaded -- applying this override
+                    // unconditionally (including while disabled) fought MUI's own
+                    // disabled-button styling and rendered the button invisible.
                     ...(videoInfo && isYouTube && {
                       bgcolor: libraryAddStatus === 'error' ? 'error.main' : libraryAddStatus === 'done' ? 'success.main' : 'primary.main',
                       color: 'primary.contrastText',

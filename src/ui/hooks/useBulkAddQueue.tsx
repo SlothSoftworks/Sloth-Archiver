@@ -4,8 +4,8 @@ import useDownloadVideo from './useDownloadVideo.tsx';
 export type BulkAddStatus = 'pending' | 'fetching' | 'downloading' | 'done' | 'skipped' | 'failed' | 'cancelled';
 
 // videoId is only known upfront for playlist-sourced entries (the flat
-// listing already has real ids) -- undefined for the comma/newline-list
-// case until that entry's own info gets fetched.
+// listing already has real ids); undefined for the comma/newline-list case
+// until that entry's own info gets fetched.
 export type BulkAddEntry = { id: string; title: string | null; url: string; videoId?: string };
 
 export type BulkAddItem = {
@@ -16,12 +16,10 @@ export type BulkAddItem = {
   error?: string;
   videoId?: string;
   thumbnailUrl?: string;
-  // Set once this item's library entry actually exists on disk (the
-  // add-to-library step succeeded) -- lets processItem/retry resume
-  // straight at the download step instead of re-running the whole
-  // fetch/dedup/add pipeline, which would otherwise see the entry already
-  // exists and wrongly mark it "skipped" rather than retrying the part
-  // that actually failed.
+  // Set once this item's library entry exists on disk (add-to-library
+  // succeeded) -- lets processItem/retry resume straight at the download
+  // step instead of re-running fetch/dedup/add, which would otherwise see
+  // the entry already exists and wrongly mark it "skipped".
   videoDir?: string;
   epoch?: string;
   resolution?: string;
@@ -35,44 +33,37 @@ export type BulkAddItem = {
 
 // playlistId is set only when this batch came from a single playlist link
 // (BulkAddDialog) -- lets processItem below patch that playlist's saved
-// snapshot with each item's real info as it's fetched, instead of leaving
-// it stuck with whatever the cheap flat-listing initially guessed.
+// snapshot with each item's real info as it's fetched, instead of leaving it
+// stuck with whatever the cheap flat-listing initially guessed.
 type StartOptions = { download: boolean; targetResolution: string; playlistId?: string };
 
-// The "indicator" retry needs: whether this item still has to go all the
-// way back to fetching its info (nothing persisted yet, or the add itself
-// never succeeded), or whether the library entry already exists and only
-// the download actually needs retrying. Derived from the item's own stashed
-// fields rather than a separate flag that could drift out of sync with them.
+// Derived from the item's own stashed fields (not a separate flag, which
+// could drift) -- 'download' means the library entry already exists and
+// only the download needs retrying; 'fetch' means starting over.
 export function getRetryStage(item: BulkAddItem): 'fetch' | 'download' {
   return item.videoDir && item.epoch && item.resolution ? 'download' : 'fetch';
 }
 
-// Gap between one slot finishing an item and it picking up its next one --
-// a deliberate, hardcoded default (no settings UI for v1) to spread out the
-// per-video yt-dlp calls this loop makes, rather than firing them back to
-// back like a burst. Applies per-slot, not globally -- with several slots
-// running at once (see maxSimultaneousDownloads, Options) this still means
-// several items can be genuinely in flight at the same time; it just keeps
-// any *one* slot from immediately re-firing the instant its item finishes.
+// Deliberate, hardcoded gap between one slot finishing an item and picking
+// up its next, so this loop's yt-dlp calls don't fire back-to-back in a
+// burst. Per-slot, not global -- several items can still be in flight at
+// once across slots.
 const ITEM_DELAY_MS = 2000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Matches main.js's MAX_SIMULTANEOUS_DOWNLOADS_CEILING and
-// OptionsScreen.tsx's MAX_SIMULTANEOUS_DOWNLOADS_OPTIONS -- the fixed number
-// of useDownloadVideo() instances this hook keeps ready. Hooks can't be
-// called a variable number of times, so this is a fixed-size worker pool;
-// the user's actual "max simultaneous downloads" setting (1-5) just decides
-// how many of these MAX_DOWNLOAD_SLOTS get handed an item at once, the rest
-// simply sit unused.
+// Hooks can't be called a variable number of times, so this is a fixed-size
+// worker pool of useDownloadVideo() instances; the user's actual "max
+// simultaneous downloads" setting (1-5, Options) just decides how many of
+// these get handed an item at once. Matches main.js's
+// MAX_SIMULTANEOUS_DOWNLOADS_CEILING and OptionsScreen.tsx's
+// MAX_SIMULTANEOUS_DOWNLOADS_OPTIONS.
 const MAX_DOWNLOAD_SLOTS = 5;
 
 // Picks the closest available height to the requested ceiling, preferring
 // not to exceed it (falls back to the closest above only if nothing at or
-// under the target exists) -- same "sort + pick closest" idea already
-// scoped for the Robust-library-detection spec, applied per-video here since
-// each video's own available resolutions can differ.
+// under the target exists) -- run per-video since each one's own available
+// resolutions can differ.
 function pickClosestResolution(resolutions: { resolution: string }[], target: string): string | null {
   const heights = resolutions
     .map((r) => Number(r.resolution))
@@ -88,10 +79,9 @@ function pickClosestResolution(resolutions: { resolution: string }[], target: st
 
 // One concurrent "download worker" -- wraps a single useDownloadVideo()
 // instance and reports back through onDone whenever THIS instance's own
-// isDone/isError flips, tagged with its own slot index so the caller knows
-// which concurrently-running item just finished. onDone is read from a ref
-// (not a direct dependency) so the effect doesn't need to re-subscribe every
-// time the parent re-renders with a new closure.
+// isDone/isError flips, tagged with its own slot index. onDone/onProgress
+// are read from a ref so the effects below don't need to re-subscribe on
+// every parent re-render.
 function useDownloadSlot(
   slotIndex: number,
   onDone: (slotIndex: number, result: { isError: boolean; finalFilePath: string }) => void,
@@ -129,25 +119,21 @@ function useBulkAddQueueState() {
   const [items, setItems] = useState<BulkAddItem[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
-  // Purely for rendering -- "Stop after current item" otherwise gives no
-  // feedback at all until the in-flight item actually finishes, which can
-  // take a while. This is a plain, non-authoritative mirror of
-  // stopRequestedRef (below), which stays the loop's own source of truth.
+  // Purely for rendering, so "Stop after current item" gives feedback before
+  // the in-flight item actually finishes -- stopRequestedRef (below) stays
+  // the loop's own source of truth.
   const [stopRequested, setStopRequested] = useState(false);
 
-  // Mirrors `items` for the loop's own use -- the loop is a plain recursive
+  // Mirrors `items` for the loop's own use: the loop is a plain recursive
   // set of async functions, not a React effect, so it needs a way to read
-  // the *current* list without falling prey to stale closures over the
-  // `items` state captured at whatever render it happened to be defined in.
+  // the *current* list without a stale closure over `items` state.
   const itemsRef = useRef<BulkAddItem[]>([]);
   const optionsRef = useRef<StartOptions & { maxSimultaneous: number }>({ download: false, targetResolution: 'dflt', maxSimultaneous: 1 });
   const stopRequestedRef = useRef(false);
-  // slotItemRef[i] holds the itemId currently occupying slot i (through both
-  // its fetch *and* download phases), or null while that slot is free --
-  // this is what fillFreeSlots checks to decide how many new items it can
-  // hand out. slotDownloadMetaRef[i] holds exactly what handleSlotDone needs
-  // to finish recording a completed download, since isDone/finalFilePath
-  // alone don't carry which item or where it should be recorded.
+  // slotItemRef[i]: itemId occupying slot i (fetch and download phases both),
+  // or null while free -- what fillFreeSlots checks. slotDownloadMetaRef[i]:
+  // what handleSlotDone needs to record a completed download, since
+  // isDone/finalFilePath alone don't carry which item or where to record it.
   const slotItemRef = useRef<Array<string | null>>(new Array(MAX_DOWNLOAD_SLOTS).fill(null));
   const slotDownloadMetaRef = useRef<Array<{ videoDir: string; epoch: string; resolution: string; kind: 'video' | 'audio' } | null>>(new Array(MAX_DOWNLOAD_SLOTS).fill(null));
 
@@ -165,11 +151,10 @@ function useBulkAddQueueState() {
     }
   };
 
-  // Call after anything that might leave the queue with nothing left to do
-  // (a slot freeing up with no pending work to hand it, cancelling every
-  // pending item, etc.) -- flips isRunning off once every slot is idle and
-  // there's no pending work left, or immediately once a stop was requested
-  // and the last in-flight slot has settled.
+  // Call after anything that might leave the queue with nothing left to do --
+  // flips isRunning off once every slot is idle and no pending work remains,
+  // or immediately once a stop was requested and the last in-flight slot
+  // has settled.
   const maybeFinishRun = () => {
     const anySlotBusy = slotItemRef.current.some((id) => id !== null);
     if (anySlotBusy) return;
@@ -186,17 +171,15 @@ function useBulkAddQueueState() {
   };
 
   // Fills every currently-free slot (up to maxSimultaneousDownloads) with
-  // the next 'pending' item, if any. Safe to call liberally -- it's a no-op
-  // once every allowed slot is busy or there's nothing left to hand out.
-  // Slots are claimed synchronously in this one pass: processItem's first
-  // action is always to flip the item's status away from 'pending' before
-  // its first await, so the itemsRef.current.find() below never hands the
-  // same item to two slots in the same call.
+  // the next 'pending' item, if any. Safe to call liberally -- a no-op once
+  // every allowed slot is busy or there's nothing left to hand out. Slots are
+  // claimed synchronously in this one pass: processItem's first action is
+  // always to flip the item's status away from 'pending' before its first
+  // await, so the find() below never hands the same item to two slots.
   const fillFreeSlots = () => {
-    // Still has to reach maybeFinishRun below even when stopped -- without
-    // it, isRunning/stopRequested never reset once the last in-flight slot
-    // actually drains post-stop, leaving the UI stuck showing a "stop
-    // requested" queue that never visibly finishes stopping.
+    // Must still reach maybeFinishRun even when stopped, or
+    // isRunning/stopRequested never reset once the last in-flight slot
+    // drains post-stop, leaving the UI stuck on "stop requested".
     if (stopRequestedRef.current) {
       maybeFinishRun();
       return;
@@ -232,11 +215,9 @@ function useBulkAddQueueState() {
   };
 
   const processItem = async (item: BulkAddItem, slot: number) => {
-    // getRetryStage === 'download' means the library entry already exists
-    // from an earlier attempt (see its docstring) -- resume straight at
-    // downloading with everything already known, instead of re-fetching
-    // info and re-running the dedup check (which would just see the entry
-    // already exists and mark it "skipped" again).
+    // 'download' means the library entry already exists from an earlier
+    // attempt (see getRetryStage) -- resume straight at downloading instead
+    // of re-fetching info and re-running the dedup check.
     if (getRetryStage(item) === 'download') {
       beginDownload(item, slot, item.videoDir!, item.epoch!, item.resolution!, item.kind || 'video');
       return;
@@ -254,11 +235,10 @@ function useBulkAddQueueState() {
         thumbnailUrl: videoInfo.thumbnail || item.thumbnailUrl,
       });
 
-      // This is the real, authoritative data the spec cares about -- if this
-      // item's playlist ever sees this video go unavailable later, its
-      // saved snapshot already has the real title/date/thumbnail captured
-      // now rather than whatever the cheap flat-listing guessed. Best-effort:
-      // never lets a failure here interrupt the actual bulk-add item.
+      // Captures the real title/date/thumbnail into the playlist's saved
+      // snapshot now, so it survives even if this video later goes
+      // unavailable. Best-effort: never lets a failure here interrupt the
+      // actual bulk-add item.
       if (optionsRef.current.playlistId) {
         try {
           await window.electronAPI.enrichPlaylistEntry({
@@ -312,7 +292,7 @@ function useBulkAddQueueState() {
 
   // Fired by whichever download slot's own isDone/isError just flipped (see
   // useDownloadSlot above) -- finishes recording that one item, independent
-  // of whatever the other slots are doing.
+  // of the other slots.
   const handleSlotDone = async (slot: number, result: { isError: boolean; finalFilePath: string }) => {
     const itemId = slotItemRef.current[slot];
     const meta = slotDownloadMetaRef.current[slot];
@@ -321,12 +301,9 @@ function useBulkAddQueueState() {
     if (result.isError) {
       updateItem(itemId, { status: 'failed', error: 'Download failed.' });
     } else {
-      // recordLibraryDownload is a real IPC call (writes metadata to disk) and
-      // can reject -- an uncaught rejection here used to throw out of this
-      // async function entirely, skipping freeSlot below and leaving this
-      // slot permanently marked busy. Since freeSlot is what lets
-      // isRunning/stopRequested ever reset, that wedged the whole queue's
-      // "stop after current item"/resume UI forever, not just this one item.
+      // recordLibraryDownload can reject -- an uncaught rejection here used
+      // to skip freeSlot below and leave this slot permanently busy, wedging
+      // the whole queue's stop/resume UI, not just this one item.
       try {
         await window.electronAPI.recordLibraryDownload({
           videoDir: meta.videoDir,
@@ -353,9 +330,8 @@ function useBulkAddQueueState() {
     updateItem(itemId, progress);
   };
 
-  // MAX_DOWNLOAD_SLOTS is a fixed, hardcoded constant (not a variable), so
-  // this is exactly five literal hook calls every render, not a loop or
-  // dynamic count -- rules-of-hooks compliant.
+  // Five literal hook calls, not a loop over MAX_DOWNLOAD_SLOTS -- rules of
+  // hooks require a fixed, static call count every render.
   const downloadSlots = [
     useDownloadSlot(0, handleSlotDone, handleSlotProgress),
     useDownloadSlot(1, handleSlotDone, handleSlotProgress),
@@ -364,18 +340,15 @@ function useBulkAddQueueState() {
     useDownloadSlot(4, handleSlotDone, handleSlotProgress),
   ];
 
-  // Appends rather than replaces -- pasting a second batch while the first
-  // is still running (or sitting finished in the list) queues up after it
-  // instead of losing it.
-  // Deliberately not async, even though it kicks off an async settings fetch
-  // below -- a user pasting a batch and hitting "Add" should see the panel
-  // and "fetching" status appear immediately, in the same tick, not after an
-  // awaited settings fetch (an async start with an await up front previously
-  // regressed exactly this). maxSimultaneous keeps whatever value a previous
-  // start() run (or the initial default of 1) already resolved to for
-  // fillFreeSlots below; the real, current setting is fetched in the
-  // background and applied the moment it's back, re-running fillFreeSlots in
-  // case that unlocks more capacity than the stale/default value allowed for.
+  // Appends rather than replaces, so pasting a second batch while the first
+  // is still running queues up after it instead of losing it.
+  //
+  // Deliberately not async: the panel and "fetching" status must appear in
+  // the same tick as the click, not after an awaited settings fetch (an
+  // earlier async version regressed exactly this). maxSimultaneous keeps
+  // whatever value a previous run already resolved to; the current setting
+  // is fetched in the background and applied once back, re-running
+  // fillFreeSlots in case that unlocks more capacity.
   const start = (entries: BulkAddEntry[], options: StartOptions) => {
     optionsRef.current = { ...options, maxSimultaneous: optionsRef.current.maxSimultaneous };
     stopRequestedRef.current = false;
@@ -387,11 +360,9 @@ function useBulkAddQueueState() {
       status: 'pending',
       videoId: entry.videoId,
       // YouTube's thumbnail CDN URL is a stable, public, unauthenticated
-      // pattern keyed purely on videoId -- free to construct directly for
-      // playlist-sourced entries (real id known upfront) with no extra
-      // fetch; list-sourced entries pick this up once their info is fetched
-      // (see processItem), same pattern already used elsewhere in this app
-      // for hotlinked thumbnails.
+      // pattern keyed on videoId -- free to construct for playlist-sourced
+      // entries with no extra fetch; list-sourced entries pick this up once
+      // processItem fetches their info.
       thumbnailUrl: entry.videoId ? `https://i.ytimg.com/vi/${entry.videoId}/mqdefault.jpg` : undefined,
     }));
     itemsRef.current = [...itemsRef.current, ...newItems];
@@ -406,19 +377,15 @@ function useBulkAddQueueState() {
     });
   };
 
-  // Lets every in-flight slot finish its current item (their own promise
-  // chains / handleSlotDone already handle that) rather than killing
-  // anything -- no process-kill tracking needed, unlike a true background
-  // worker.
+  // Lets every in-flight slot finish its current item (handleSlotDone
+  // handles that) rather than killing anything -- no process-kill tracking
+  // needed, unlike a true background worker.
   const stop = () => {
     stopRequestedRef.current = true;
     setStopRequested(true);
   };
 
-  // Continues processing whatever's still 'pending' after a stop -- without
-  // this, a stopped queue had no way back except retrying/removing every
-  // remaining item one at a time (retry only ever applied to 'failed' items
-  // anyway, not 'pending' ones sitting frozen after a stop).
+  // Continues processing whatever's still 'pending' after a stop.
   const resume = () => {
     stopRequestedRef.current = false;
     setStopRequested(false);
@@ -426,10 +393,9 @@ function useBulkAddQueueState() {
     fillFreeSlots();
   };
 
-  // The bulk counterpart to resume -- instead of continuing, gives up on
-  // every item still 'pending' after a stop in one action, moving them to
-  // their own 'cancelled' status so they read as a deliberate choice (not a
-  // failure) and can then be swept away together by clearFinished below.
+  // The bulk counterpart to resume: gives up on every 'pending' item in one
+  // action, moving them to 'cancelled' so they read as a deliberate choice
+  // (not a failure) and can be swept away by clearFinished below.
   const cancelAllPending = () => {
     itemsRef.current = itemsRef.current.map((it) => (it.status === 'pending' ? { ...it, status: 'cancelled' } : it));
     setItems(itemsRef.current);
@@ -449,11 +415,9 @@ function useBulkAddQueueState() {
     setItems(itemsRef.current);
   };
 
-  // "Finished" covers every end state that isn't actionable anymore -- done
-  // (downloaded/added), skipped (already in the library, so there was never
-  // anything to do), and cancelled (explicitly given up on via
-  // cancelAllPending). failed is deliberately excluded: it still needs a
-  // retry or an explicit individual removal.
+  // "Finished" covers every non-actionable end state: done, skipped (already
+  // in the library), and cancelled. failed is excluded -- it still needs a
+  // retry or explicit removal.
   const clearFinished = () => {
     itemsRef.current = itemsRef.current.filter((it) => it.status !== 'done' && it.status !== 'skipped' && it.status !== 'cancelled');
     setItems(itemsRef.current);

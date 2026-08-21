@@ -102,10 +102,10 @@ function probe(command, args, { onLog, timeoutMs = DEFAULT_TIMEOUT_MS, ...spawnO
 
 // Kept as a standalone constant rather than parsed out of
 // src/python/requirements-build.txt: that file pins yt-dlp to an exact
-// version on purpose (reproducible dev/CI builds), but the whole point of
-// this module is to install the *latest* yt-dlp -- reusing that file as-is
-// would silently re-pin every update to the same stale version. Keep this
-// roughly in sync with requirements-build.txt's own PyInstaller constraint.
+// version for reproducible dev/CI builds, but this module's whole point is
+// installing the *latest* yt-dlp -- reusing it as-is would re-pin every
+// update to the same stale version. Keep roughly in sync with
+// requirements-build.txt's own PyInstaller constraint.
 const PYINSTALLER_CONSTRAINT = 'pyinstaller>=6.10,<7';
 const PYTHON_RUNTIME_MINOR = '3.11';
 const PYTHON_BUILD_STANDALONE_REPO = 'astral-sh/python-build-standalone';
@@ -179,8 +179,7 @@ export async function getLatestYtdlpVersionFromPyPI() {
 
 // PyPI's version string ("2026.7.4") and yt-dlp's own --version output
 // ("2026.07.04", zero-padded) refer to the same release but aren't equal as
-// raw strings -- normalize each dot-separated segment to an integer before
-// comparing, or every check would report an update available forever.
+// raw strings -- normalize each segment to an integer before comparing.
 export function isNewerVersion(candidate, current) {
     const normalize = (v) => v.trim().split('.').map((seg) => parseInt(seg, 10) || 0);
     const a = normalize(candidate);
@@ -204,7 +203,7 @@ export async function getCurrentYtdlpVersion(ytdlpPath, { onLog } = {}) {
 //   cpython-3.11.15+20260728-x86_64-apple-darwin-install_only.tar.gz
 //   cpython-3.11.15+20260728-aarch64-pc-windows-msvc-install_only.tar.gz
 // Matched by regex (not an exact name) since the patch version and release
-// tag both float independently of what we care about (minor version + platform/arch).
+// tag both float independently of the minor version/platform/arch we care about.
 function findPythonRuntimeAsset(releaseJson) {
     const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
     const platformPart = process.platform === 'win32' ? 'pc-windows-msvc' : 'apple-darwin';
@@ -301,10 +300,11 @@ async function rebuildYtdlp({ pythonExe, pythonSrcDir, stagingWorkDir, onProgres
     return path.join(rawDist, 'yt-dlp');
 }
 
-// Same manual dereferencing copy used by scripts/build-ytdlp-bin.mjs: PyInstaller's
-// macOS onedir output uses an absolute symlink for _internal/Python that points back
-// into this exact build's temp work dir, so a naive copy (or a plain rename across
-// filesystems) can leave a dangling reference. statSync follows symlinks; lstatSync doesn't.
+// Same manual dereferencing copy used by scripts/build-ytdlp-bin.mjs:
+// PyInstaller's macOS onedir output uses an absolute symlink for
+// _internal/Python pointing back into this build's temp work dir, so a
+// naive copy can leave a dangling reference. statSync follows symlinks;
+// lstatSync doesn't.
 function copyDereferenced(src, dest) {
     const stat = fs.statSync(src);
     if (stat.isDirectory()) {

@@ -27,9 +27,9 @@ import { useThemeMode } from '../hooks/useThemeMode.tsx';
 import { POPULAR_CONVERT_FORMATS, SUGGESTED_EXTRA_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 
 // Display labels for yt-dlp's --cookies-from-browser browser keys -- kept
-// here rather than main.js's SUPPORTED_COOKIE_BROWSERS (which is the source
-// of truth for the actual list) since that array is plain lowercase keyring
-// names, not fit for showing in a dropdown.
+// here rather than main.js's SUPPORTED_COOKIE_BROWSERS (the source of truth
+// for the actual list), which is plain lowercase keyring names, not fit for
+// a dropdown.
 const COOKIE_BROWSER_LABELS: Record<string, string> = {
   brave: 'Brave',
   chrome: 'Chrome',
@@ -42,10 +42,9 @@ const COOKIE_BROWSER_LABELS: Record<string, string> = {
   whale: 'Whale',
 };
 
-// Matches main.js's MAX_SIMULTANEOUS_DOWNLOADS_CEILING -- kept in sync by
-// hand (both are small, deliberately hardcoded, not worth a shared-constant
-// file for one number). useBulkAddQueue.tsx's fixed download-hook pool is
-// sized to this same ceiling.
+// Matches main.js's MAX_SIMULTANEOUS_DOWNLOADS_CEILING, kept in sync by
+// hand. useBulkAddQueue.tsx's fixed download-hook pool is sized to this
+// same ceiling.
 const MAX_SIMULTANEOUS_DOWNLOADS_OPTIONS = [1, 2, 3, 4, 5];
 
 const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
@@ -58,11 +57,10 @@ const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
 ]);
 
 // Divider styles for the 2-column option grids below -- a real border keeps
-// each item visually distinct instead of relying on spacing alone. Position
-// in the grid decides which edges apply: an item beside another needs a left
-// border on sm+ (where it's a column neighbor) but a top border on xs (where
-// it stacks below instead); an item starting a new row always needs a top
-// border, on every breakpoint, since it's below the previous row either way.
+// each item visually distinct instead of relying on spacing alone. An item
+// beside another needs a left border on sm+ (column neighbor) but a top
+// border on xs (stacks below instead); a row-starting item always needs a
+// top border, on every breakpoint.
 const dividerLeftOnSmTopOnXs = {
   borderLeft: { xs: 'none', sm: '1px solid' },
   borderTop: { xs: '1px solid', sm: 'none' },
@@ -80,10 +78,8 @@ const dividerTopAndLeftOnSm = {
 };
 
 // Each group (Media vs. General) renders as its own bordered Card rather
-// than just a text label -- an inline overline heading tried first turned
-// out too easy to miss against the same-page options below it, since
-// nothing about it visually separated one group's controls from the next.
-// A real container boundary makes the grouping obvious at a glance instead.
+// than just a text label -- an inline overline heading was too easy to miss
+// against the options below it, with nothing visually separating groups.
 function OptionsGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
     <Card variant="outlined" sx={{ p: 2.5, mb: 3 }}>
@@ -169,10 +165,9 @@ export default function OptionsScreen() {
     window.electronAPI.getAppVersion().then(setAppVersion);
   }, []);
 
-  // Autocomplete's own value normalization (lowercasing, de-duping against
-  // the always-available popular set) happens here rather than in the
-  // Library view, so the persisted list is already clean everywhere it's
-  // read from.
+  // Value normalization (lowercasing, de-duping against the popular set)
+  // happens here rather than in the Library view, so the persisted list is
+  // already clean everywhere it's read from.
   const handleCustomConvertFormatsChange = async (formats: string[]) => {
     const cleaned = Array.from(new Set(
       formats.map((f) => f.trim().toLowerCase()).filter((f) => f && !POPULAR_CONVERT_FORMATS.includes(f)),
@@ -181,11 +176,10 @@ export default function OptionsScreen() {
     await window.electronAPI.setCustomConvertFormats(cleaned);
   };
 
-  // Comma-to-commit, tag-input style (Enter already does this for free --
-  // MUI's Autocomplete commits typed freeSolo text as a tag on Enter on its
-  // own). Comma isn't a built-in trigger, so it's intercepted here: swallow
-  // the character itself (nobody wants a literal "," in a saved format name)
-  // and commit whatever's typed so far as a new tag instead.
+  // Comma-to-commit, tag-input style -- Enter already does this via MUI
+  // Autocomplete's own freeSolo behavior, but comma isn't a built-in
+  // trigger, so it's intercepted here: swallow the character and commit
+  // whatever's typed as a new tag instead.
   const [convertFormatInput, setConvertFormatInput] = useState('');
   const commitConvertFormatInput = () => {
     if (!convertFormatInput.trim()) return;
@@ -260,17 +254,14 @@ export default function OptionsScreen() {
     setThemeMode(mode);
   };
 
-  // Switching modes alone doesn't need a browser picked yet (the 'browser'
-  // toggle button can be selected before a browser is chosen from the empty
-  // dropdown that follows) -- only persisted once cookiesBrowser is also set,
-  // by handleSelectBrowser below. Switching back to 'file' saves immediately
-  // since there's nothing further to pick.
+  // Switching to 'browser' mode alone doesn't need a browser picked yet --
+  // only persisted once cookiesBrowser is also set, by handleSelectBrowser
+  // below. Switching back to 'file' saves immediately.
   //
   // cookiesBrowser is explicitly cleared (both here and persisted) whenever
-  // the user switches away from browser mode -- previously it just sat in
-  // state untouched, so switching to paste-cookie mode and back showed a
-  // stale "Using Firefox" chip/dropdown value even though nothing was
-  // actually selected anymore (a real reported quirk).
+  // the user switches away from browser mode -- previously it sat in state
+  // untouched, so switching to paste-cookie mode and back showed a stale
+  // "Using Firefox" value even though nothing was actually selected.
   const handleModeChange = async (_e: MouseEvent<HTMLElement>, mode: 'file' | 'browser' | null) => {
     if (!mode || mode === cookiesMode) return;
     setCookiesModeState(mode);
