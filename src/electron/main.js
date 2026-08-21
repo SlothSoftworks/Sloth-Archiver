@@ -1800,11 +1800,14 @@ ipcMain.handle('ytdlp:startUpdate', async () => {
             ytdlpBinaryName,
             isDownloadActive: () => activeDownloadCount > 0,
             onProgress: send,
+            onLog: log,
         });
         return { success: true, version: result.version };
     } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log('[ytdlp-update] update failed:', message);
         send('error');
-        throw err instanceof Error ? err : new Error(String(err));
+        throw err instanceof Error ? err : new Error(message);
     }
 });
 
