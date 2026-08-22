@@ -72,9 +72,17 @@ function AppContent() {
 function App() {
 
   if (!window.electronAPI) {
-    window.mockingElectron = "yes";
-    window.electronAPI = electronAPIMock;
-    window.electronAPIPythonDownload = electronAPIPythonDownloadMock;
+    // Only fall back to the mock bridge in dev (e.g. previewing the Vite
+    // dev server in a plain browser, with no Electron preload attached).
+    // In a real build, a missing electronAPI means the preload failed to
+    // attach -- that should fail loudly, not silently render fake data.
+    if (import.meta.env.DEV) {
+      window.mockingElectron = "yes";
+      window.electronAPI = electronAPIMock;
+      window.electronAPIPythonDownload = electronAPIPythonDownloadMock;
+    } else {
+      throw new Error('window.electronAPI is missing -- the preload bridge failed to attach.');
+    }
   }
 
   useRendererErrorLogging();

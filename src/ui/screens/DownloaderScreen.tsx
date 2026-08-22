@@ -29,7 +29,7 @@ import OtherPlatformDownloadCard from './OtherPlatformDownloadCard';
 
 import { useDebounce } from '../../utils/useDebounce';
 
-import { videoResponseMock } from '../../../testing/mockData/pythonResponseMocks.ts';
+import { getInitialDownloaderVideoInfo } from '../../../testing/mockData/electronAPIMocks.ts';
 import VideoDetailCardSkeleton from './VideoDetailCardSkeleton.tsx';
 import { useLibraryNotification } from '../hooks/useLibraryNotifications';
 
@@ -41,7 +41,7 @@ export default function DownloaderScreen() {
   const [loadingVideoData, setLoadingVideoData] = useState(false);
   const [isUrlError, setIsUrlError] = useState(false);
   const debouncedVideoUrl = useDebounce(videoUrl);
-  const [videoInfo, setVideoInfo] = useState(window.mockingElectron !== "yes" ? null : videoResponseMock.data.response); // TODO change this after testing
+  const [videoInfo, setVideoInfo] = useState(getInitialDownloaderVideoInfo());
   const [videoInfoError, setVideoInfoError] = useState<string | null>(null);
   const [videoInfoFromCache, setVideoInfoFromCache] = useState(false);
   const [libraryAddStatus, setLibraryAddStatus] = useState<'idle' | 'saving' | 'error'>('idle');
