@@ -32,6 +32,7 @@ beforeEach(() => {
     setThemeMode: vi.fn().mockResolvedValue({ success: true, themeMode: 'dark' }),
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
     setMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ success: true, maxSimultaneousDownloads: 1 }),
+    getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
   };
 });
 

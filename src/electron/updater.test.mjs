@@ -93,7 +93,9 @@ describe('getLatestYtdlpVersionFromPyPI', () => {
             res.emit('data', JSON.stringify({ info: { version: '2026.7.4' } }));
             res.emit('end');
           });
-          return new EventEmitter();
+          const req = new EventEmitter();
+          req.setTimeout = vi.fn();
+          return req;
         },
       },
     }));
@@ -114,7 +116,9 @@ describe('getLatestYtdlpVersionFromPyPI', () => {
           res.headers = {};
           res.resume = vi.fn();
           callback(res);
-          return new EventEmitter();
+          const req = new EventEmitter();
+          req.setTimeout = vi.fn();
+          return req;
         },
       },
     }));
