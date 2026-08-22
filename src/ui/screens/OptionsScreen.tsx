@@ -106,6 +106,9 @@ export default function OptionsScreen() {
   const [cookieText, setCookieText] = useState('');
   const [error, setError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
+  // Suffixed ...State on several setters below (not a React requirement) to keep
+  // the raw useState setter distinct from the same-named window.electronAPI.setX
+  // IPC bridge method (e.g. setDownloadDirState vs. electronAPI.setDownloadDir).
   const [cookiesMode, setCookiesModeState] = useState<'file' | 'browser'>('file');
   const [cookiesBrowser, setCookiesBrowserState] = useState('');
   const [supportedBrowsers, setSupportedBrowsers] = useState<string[]>([]);
