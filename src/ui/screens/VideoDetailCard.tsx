@@ -23,7 +23,7 @@ import {
   TextareaAutosize,
   Link
 } from '@mui/material';
-import type { DownloadVideoParams } from '../../types';
+import type { DownloadVideoParams, Resolution } from '../../types';
 
 import InfoOutlineIcon from '@mui/icons-material/InfoOutline';
 import FileOpenIcon from '@mui/icons-material/FileOpen';
@@ -42,11 +42,6 @@ import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
 
 async function handleOpenFileLocation(filePath: string) {
   await window.electronAPI.openFileInDirectory(filePath);
-}
-
-interface Resolution {
-    resolution: string;
-    filesizeMb: string;
 }
 
 interface VideoDataProps {

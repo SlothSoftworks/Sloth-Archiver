@@ -49,28 +49,7 @@ import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import LibraryVideoPlayer, { type LibraryVideoPlayerHandle } from '../components/LibraryVideoPlayer';
 import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
-
-type LibraryResolution = { resolution: string; filesizeMb: string };
-
-export type LibraryVideoMetadata = {
-  schemaVersion?: number;
-  videoId: string;
-  channel: string | null;
-  title: string | null;
-  fullTitle: string | null;
-  description: string | null;
-  thumbnail: string | null;
-  originalUrl: string | null;
-  durationString: string | null;
-  uploadDate: string | null;
-  resolutions?: LibraryResolution[];
-  downloadedFilePath: string | null;
-  downloadedResolution: string | null;
-  downloadedFormat: string | null;
-  // MP3 is a separate, coexisting artifact, not a competing "quality" -- its
-  // own slot, independent of the video fields above.
-  downloadedAudioFilePath: string | null;
-};
+import type { LibraryVideoMetadata, Resolution } from '../../types';
 
 type LibraryVideo = {
   videoFolderName: string;
@@ -138,7 +117,7 @@ const CURRENT_VIDEO_SCHEMA_VERSION = 3;
 // rather than hiding it, so it's clear why one button is greyed out instead
 // of silently missing.
 function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFormat, onFormatChange, isError, disabled }: {
-  resolutions: LibraryResolution[];
+  resolutions: Resolution[];
   excludeResolution?: string | null;
   onSelect: (resolution: string) => void;
   selectedFormat: string;

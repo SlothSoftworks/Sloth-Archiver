@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Box, CardMedia, IconButton, Typography } from '@mui/material';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
-import type { LibraryVideoMetadata } from '../screens/LibraryVideoDetail';
+import type { LibraryVideoMetadata } from '../../types';
 import YouTubeEmbed from './YouTubeEmbed';
 import ResizableMediaContainer from './ResizableMediaContainer';
 import { buildAppVideoUrl } from '../../utils/utils.ts';

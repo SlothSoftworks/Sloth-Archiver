@@ -10,14 +10,17 @@ let registeredCallback: ((msg: DownloadProgressMessage) => void) | null = null;
 function baseMetadata(overrides: Record<string, unknown> = {}) {
   return {
     videoId: 'vid1',
+    channelId: null,
     channel: 'Channel A',
     title: 'Alpha Video',
     fullTitle: 'Alpha Video',
     description: 'a description',
     thumbnail: null,
     originalUrl: 'https://youtube.com/watch?v=vid1',
+    duration: null,
     durationString: '2:00',
     uploadDate: '20260115',
+    addedEpoch: 0,
     resolutions: [
       { resolution: '720', filesizeMb: '10' },
       { resolution: '480', filesizeMb: '5' },
