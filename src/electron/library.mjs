@@ -33,7 +33,8 @@ export const CURRENT_PLAYLIST_SCHEMA_VERSION = 1;
 export function sanitizeForFilesystem(input, maxLength = 100) {
     if (!input) return 'untitled';
     let cleaned = input
-        .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+        // \x00-\x1F is deliberate: control characters are as illegal in a filename as < > : etc.
+        .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_') // eslint-disable-line no-control-regex
         .replace(/[.\s]+$/, '')
         .trim();
     cleaned = cleaned.slice(0, maxLength) || 'untitled';
@@ -45,6 +46,22 @@ export function sanitizeForFilesystem(input, maxLength = 100) {
         cleaned += '_';
     }
     return cleaned;
+}
+
+// The one safety invariant every destructive/write operation below (and
+// handleAppVideoRequest, main.js) depends on: never touch a path outside the
+// configured library folder. Returns the resolved absolute path when
+// targetPath is genuinely inside libraryDir, or null otherwise -- callers
+// that need to throw do so themselves with their own wording; main.js's
+// app-video:// handler instead turns a null into a 403 response.
+export function resolveInsideLibrary(libraryDir, targetPath) {
+    const resolvedLibraryDir = path.resolve(libraryDir || '');
+    const resolvedTarget = path.resolve(targetPath || '');
+    const relative = path.relative(resolvedLibraryDir, resolvedTarget);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        return null;
+    }
+    return resolvedTarget;
 }
 
 export function channelFolderName(channel) {
@@ -120,10 +137,8 @@ export function writeLibraryEntry({ libraryDir, videoMetaData }) {
 // the video was first tracked, re-deriving could land the new version in a
 // different folder than its own history.
 export function addLibraryVersion({ libraryDir, videoDir, videoMetaData }) {
-    const resolvedLibraryDir = path.resolve(libraryDir || '');
-    const resolvedVideoDir = path.resolve(videoDir || '');
-    const relative = path.relative(resolvedLibraryDir, resolvedVideoDir);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
         throw new Error('Refusing to add a version outside the configured library folder.');
     }
 
@@ -145,10 +160,8 @@ export function addLibraryVersion({ libraryDir, videoDir, videoMetaData }) {
 // the existing metadata rather than reset -- refreshing metadata never
 // touches what's already on disk for this version.
 export function refreshLibraryEntryMetadata({ libraryDir, videoDir, epoch, videoMetaData }) {
-    const resolvedLibraryDir = path.resolve(libraryDir || '');
-    const resolvedVideoDir = path.resolve(videoDir || '');
-    const relative = path.relative(resolvedLibraryDir, resolvedVideoDir);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
         throw new Error('Refusing to refresh a path outside the configured library folder.');
     }
 
@@ -192,10 +205,8 @@ export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, f
 // after startDownload's isDone/isError confirms the new file is real and
 // complete.
 export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format, kind = 'video' }) {
-    const resolvedLibraryDir = path.resolve(libraryDir || '');
-    const resolvedTempFilePath = path.resolve(tempFilePath || '');
-    const relative = path.relative(resolvedLibraryDir, resolvedTempFilePath);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    const resolvedTempFilePath = resolveInsideLibrary(libraryDir, tempFilePath);
+    if (!resolvedTempFilePath) {
         throw new Error('Refusing to swap in a file outside the configured library folder.');
     }
 
@@ -240,10 +251,8 @@ export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath,
 // whether to navigate back to the library root or let a refresh pick the
 // new latest.
 export function deleteLibraryEntry({ libraryDir, videoDir, epoch }) {
-    const resolvedLibraryDir = path.resolve(libraryDir || '');
-    const resolvedVideoDir = path.resolve(videoDir || '');
-    const relative = path.relative(resolvedLibraryDir, resolvedVideoDir);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
         throw new Error('Refusing to delete a path outside the configured library folder.');
     }
 
@@ -764,13 +773,12 @@ export function undoPlaylistRefresh({ libraryDir, playlistId }) {
 // of any playlist pointing at them. Same containment check every other
 // destructive library operation in this file uses.
 export function deletePlaylistSnapshot({ libraryDir, playlistId }) {
-    const resolvedLibraryDir = path.resolve(libraryDir || '');
-    const playlistDir = path.resolve(path.join(resolvedLibraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId)));
-    const relative = path.relative(resolvedLibraryDir, playlistDir);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    const playlistDir = path.join(path.resolve(libraryDir || ''), PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
+    const resolvedPlaylistDir = resolveInsideLibrary(libraryDir, playlistDir);
+    if (!resolvedPlaylistDir) {
         throw new Error('Refusing to delete a path outside the configured library folder.');
     }
 
-    fs.rmSync(playlistDir, { recursive: true, force: true });
+    fs.rmSync(resolvedPlaylistDir, { recursive: true, force: true });
     return { success: true };
 }

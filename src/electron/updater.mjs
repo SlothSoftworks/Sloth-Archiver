@@ -131,7 +131,7 @@ function fetchJson(url, { onLog, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
             res.on('end', () => {
                 try {
                     resolve(JSON.parse(data));
-                } catch (e) {
+                } catch {
                     reject(new Error(`Failed to parse JSON from ${url}`));
                 }
             });

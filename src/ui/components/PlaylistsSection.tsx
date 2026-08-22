@@ -32,7 +32,7 @@ import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, buildAppVideoUrl, formatEpochLabel } from '../../utils/utils.ts';
 import LibrarySearchBar from './LibrarySearchBar';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 
@@ -80,13 +80,6 @@ type PlaylistSnapshot = {
   previousMetadataSavedEpoch: number | null;
   thumbnailPath: string | null;
 };
-
-// Epoch timestamps are Date.now() ms values -- same formatter
-// LibraryVideoDetail.tsx's own formatEpochLabel uses, kept as a separate
-// copy since there's no other coupling between these components.
-function formatEpochLabel(epoch: number): string {
-  return new Date(epoch).toLocaleString();
-}
 
 // Prefers the live first-entry thumbnail over the locally-cached fallback
 // (ensurePlaylistThumbnail, main.js), which only matters once there's no

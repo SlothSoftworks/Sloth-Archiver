@@ -8,9 +8,10 @@ import http from 'node:http';
 import https from 'node:https';
 import os from 'node:os';
 
+import { isYouTubeUrl } from './utils/youtube.mjs';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, PLAYLISTS_DIR_NAME } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME } from './library.mjs';
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -180,10 +181,10 @@ function startRendererServer() {
 }
 
 // Handles app-video://local/<encodeURIComponent(absolutePath)> requests.
-// Guard-railed against the configured libraryDir with the same
-// path.relative check deleteLibraryEntry (library.mjs) uses -- defense in
-// depth, since the renderer only ever constructs these URLs from data it
-// already has.
+// Guard-railed against the configured libraryDir via resolveInsideLibrary
+// (library.mjs), the same check every destructive library operation uses --
+// defense in depth, since the renderer only ever constructs these URLs from
+// data it already has.
 //
 // Uses net.fetch() against a file:// URL as the byte-stream source (fixed an
 // earlier "AbortError" bug from hand-rolling a Node fs.ReadStream-to-Response
@@ -200,10 +201,8 @@ async function handleAppVideoRequest(request) {
     const filePath = decodeURIComponent(url.pathname.slice(1));
 
     const { libraryDir } = readSettings();
-    const resolvedLibraryDir = path.resolve(libraryDir || '');
-    const resolvedFilePath = path.resolve(filePath);
-    const relative = path.relative(resolvedLibraryDir, resolvedFilePath);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    const resolvedFilePath = resolveInsideLibrary(libraryDir, filePath);
+    if (!resolvedFilePath) {
         return new Response('Forbidden', { status: 403 });
     }
 
@@ -1093,18 +1092,6 @@ export function isDeadVideoInfo(response) {
     return false;
 }
 
-// Drives which error message the empty-formats check below shows -- kept as
-// its own local copy rather than importing the renderer's src/utils/utils.ts
-// one, matching this codebase's main-process/renderer separation elsewhere.
-function isYouTubeUrl(url) {
-    try {
-        const hostname = new URL(url).hostname.replace(/^www\./, '');
-        return hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'music.youtube.com' || hostname === 'youtu.be';
-    } catch {
-        return false;
-    }
-}
-
 // Matches yt-dlp's own real error strings for a genuinely dead video.
 // Deliberately distinct from a bot-check failure (e.g. "Sign in to confirm
 // you're not a bot"), which is a transient request-level block, not a fact
@@ -1233,7 +1220,7 @@ ipcMain.handle('getVideoInfoPython', async (event, url) => {
                     freshCache[url] = { savedEpoch: Date.now(), response };
                     writeVideoInfoCache(freshCache);
                     resolve({ success: true, data: { response, fromCache: false } });
-                } catch (e) {
+                } catch {
                     reject(new Error('Failed to parse video data'));
                 }
             }
@@ -1350,7 +1337,7 @@ export function findFinalFile(outputPath) {
             })
             .sort((a, b) => b.mtimeMs - a.mtimeMs);
         return matches.length > 0 ? matches[0].full : outputPath;
-    } catch (e) {
+    } catch {
         return outputPath;
     }
 }
@@ -1381,7 +1368,7 @@ function getMediaDurationSeconds(filePath) {
             try {
                 const duration = parseFloat(JSON.parse(stdout).format.duration);
                 resolve(Number.isFinite(duration) ? duration : 0);
-            } catch (e) {
+            } catch {
                 reject(new Error('Failed to parse ffprobe output'));
             }
         });

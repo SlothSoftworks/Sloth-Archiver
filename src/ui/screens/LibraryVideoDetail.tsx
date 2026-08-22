@@ -17,7 +17,6 @@ import {
   Grid,
   IconButton,
   InputLabel,
-  LinearProgress,
   MenuItem,
   Select,
   Snackbar,
@@ -44,11 +43,12 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
-import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, buildAppVideoUrl, formatEpochLabel } from '../../utils/utils.ts';
 import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import LibraryVideoPlayer, { type LibraryVideoPlayerHandle } from '../components/LibraryVideoPlayer';
+import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
 
 type LibraryResolution = { resolution: string; filesizeMb: string };
 
@@ -80,12 +80,6 @@ type LibraryVideo = {
   epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
   thumbnailPath: string | null;
 };
-
-// Epoch folder names are Date.now() ms timestamps -- no existing formatter
-// anywhere in the renderer turns one into something readable.
-function formatEpochLabel(epoch: string): string {
-  return new Date(Number(epoch)).toLocaleString();
-}
 
 // Same small extension-extraction as LibraryVideoPlayer.tsx's own copy, not
 // shared -- this file has no other coupling to that component.
@@ -138,22 +132,6 @@ const OTHER_FORMAT_VALUE = '__other__';
 // older than this predates a metadata-shape change and won't have whatever
 // that change added -- "Refresh from YouTube" is what fixes it.
 const CURRENT_VIDEO_SCHEMA_VERSION = 3;
-
-// Same visual pattern as VideoDetailCard.tsx's buffer bar, kept as a
-// separate copy since this file has no other coupling to that component.
-function LinearProgressWithLabel({ value, valueBuffer }: { value: number; valueBuffer: number }) {
-  const displayValue = value > 0 ? value : valueBuffer;
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center' }}>
-      <Box sx={{ width: '100%', mr: 1 }}>
-        <LinearProgress variant="buffer" value={value} valueBuffer={valueBuffer} />
-      </Box>
-      <Box sx={{ minWidth: 35 }}>
-        <Typography variant="body2" sx={{ color: 'text.secondary' }}>{`${Math.round(displayValue)}%`}</Typography>
-      </Box>
-    </Box>
-  );
-}
 
 // Shared between the first-download and "download different quality" flows
 // -- excludeResolution blocks re-picking whatever's already downloaded

@@ -5,7 +5,6 @@ import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import './App.css'
 import MainPage from './MainPage';
-import Other from './other';
 import { electronAPIMock, electronAPIPythonDownloadMock } from '../../testing/mockData/electronAPIMocks.ts'
 import { getTheme } from './theme';
 import { YtdlpUpdaterProvider } from './hooks/useYtdlpUpdater';
@@ -62,7 +61,6 @@ function AppContent() {
                   with their own element; they're just locations MainPage's
                   own tab logic reads reactively (see MainPage.tsx). */}
               <Route path="/*" element={<MainPage />}></Route>
-              <Route path="/other" element={<Other />}/>
             </Routes>
           </BulkAddProvider>
         </LibraryNotificationProvider>

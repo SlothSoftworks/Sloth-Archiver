@@ -15,7 +15,6 @@ import {
   Divider,
   Grid,
   IconButton,
-  LinearProgress,
   Link,
   Snackbar,
   Stack,
@@ -23,7 +22,6 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import type { LinearProgressProps } from '@mui/material/LinearProgress';
 import FileOpenIcon from '@mui/icons-material/FileOpen';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import DownloadIcon from '@mui/icons-material/Download';
@@ -31,24 +29,7 @@ import LabelOutlinedIcon from '@mui/icons-material/LabelOutlined';
 import type { DownloadVideoParams } from '../../types';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import { getPlatformLabel } from '../../utils/utils.ts';
-
-// Same visual pattern as VideoDetailCard.tsx's own progress bar, kept as a
-// separate copy rather than shared -- matches this codebase's convention
-// for these small per-file visual helpers.
-function LinearProgressWithLabel(props: LinearProgressProps & { value: number; valueBuffer: number }) {
-  const { value, valueBuffer } = props;
-  const displayValue = value > 0 ? value : valueBuffer;
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center' }}>
-      <Box sx={{ width: '100%', mr: 1 }}>
-        <LinearProgress variant="buffer" {...props} />
-      </Box>
-      <Box sx={{ minWidth: 35 }}>
-        <Typography variant="body2" sx={{ color: 'text.secondary' }}>{`${Math.round(displayValue)}%`}</Typography>
-      </Box>
-    </Box>
-  );
-}
+import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
 
 // Deliberately minimal, and deliberately NOT a branch inside VideoDetailCard
 // -- that component already has real YouTube-specific logic threaded
