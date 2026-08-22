@@ -13,7 +13,7 @@ import { BulkAddProvider } from './hooks/useBulkAddQueue.tsx';
 import { ThemeModeProvider, useThemeMode } from './hooks/useThemeMode.tsx';
 
 // Forwards uncaught renderer errors to the same main.log a crashed main
-// process already writes to (see errorLog:report in main.js) -- the renderer
+// process already writes to (see errorLog:report in main.mjs) -- the renderer
 // has no filesystem access of its own under contextIsolation/sandbox, so
 // this is the only way a JS error here ends up somewhere the user can read.
 function useRendererErrorLogging() {

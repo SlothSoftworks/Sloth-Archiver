@@ -63,7 +63,7 @@ function formatEpochLabel(epoch: string | number): string {
 }
 
 // Builds a URL for a local file inside the configured library directory,
-// served via the app-video:// protocol (main.js's handleAppVideoRequest).
+// served via the app-video:// protocol (main.mjs's handleAppVideoRequest).
 // filePath must already be a trusted, server-resolved absolute path -- never
 // arbitrary/user-typed input. cacheBustKey is appended as a query param
 // (the protocol handler ignores it, only reading the pathname) purely to

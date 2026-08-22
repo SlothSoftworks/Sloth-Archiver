@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-// main.js is the real Electron entry point -- it imports 'electron' directly
+// main.mjs is the real Electron entry point -- it imports 'electron' directly
 // and, at module-evaluation time, computes paths off app.getPath('userData')
 // and registers ipcMain handlers/process listeners. All of that is made safe
 // to import here by mocking 'electron' entirely (same technique as
@@ -11,15 +11,15 @@ import path from 'path';
 // any incidental fs reads/writes (readSettings, cookiesArgs) land somewhere
 // real and harmless instead of the actual OS userData folder.
 //
-// This file only covers main.js's exported pure/near-pure helpers -- the
+// This file only covers main.mjs's exported pure/near-pure helpers -- the
 // ~50 ipcMain.handle(...) bodies (download orchestration, library IPC,
 // cookie dialogs, etc.) are still inline, unexported callbacks and are out
 // of scope for this pass; see the commit this landed in for the reasoning.
 // vi.mock (and everything it needs from vi.hoisted) is hoisted above every
 // other statement in this file, including plain top-level `const`s and even
-// the static `import './main.js'` below -- so the mock's return value has to
+// the static `import './main.mjs'` below -- so the mock's return value has to
 // be a value computable without any fs/os calls (a plain string is enough at
-// import time, since main.js's own top-level code only builds path strings
+// import time, since main.mjs's own top-level code only builds path strings
 // from it, it doesn't read/write anything there yet). The real directory is
 // created for real just below, before any test runs.
 const electronMocks = vi.hoisted(() => {
@@ -59,7 +59,7 @@ import {
   buildDownloadArgs,
   findFinalFile,
   findRawDownloadedFile,
-} from './main.js';
+} from './main.mjs';
 
 fs.mkdirSync(electronMocks.mockUserDataDir, { recursive: true });
 const settingsPath = path.join(electronMocks.mockUserDataDir, 'settings.json');

@@ -28,7 +28,7 @@ import { POPULAR_CONVERT_FORMATS, SUGGESTED_EXTRA_CONVERT_FORMATS } from '../../
 import { MAX_SIMULTANEOUS_DOWNLOADS_CEILING } from '../../utils/constants.ts';
 
 // Display labels for yt-dlp's --cookies-from-browser browser keys -- kept
-// here rather than main.js's SUPPORTED_COOKIE_BROWSERS (the source of truth
+// here rather than main.mjs's SUPPORTED_COOKIE_BROWSERS (the source of truth
 // for the actual list), which is plain lowercase keyring names, not fit for
 // a dropdown.
 const COOKIE_BROWSER_LABELS: Record<string, string> = {
@@ -44,7 +44,7 @@ const COOKIE_BROWSER_LABELS: Record<string, string> = {
 };
 
 // Shared with useBulkAddQueue.tsx's own fixed download-hook pool size
-// (utils/constants.ts); main.js keeps its own copy of the same number,
+// (utils/constants.ts); main.mjs keeps its own copy of the same number,
 // since main-process and renderer never cross-import in this codebase.
 const MAX_SIMULTANEOUS_DOWNLOADS_OPTIONS = Array.from({ length: MAX_SIMULTANEOUS_DOWNLOADS_CEILING }, (_, i) => i + 1);
 

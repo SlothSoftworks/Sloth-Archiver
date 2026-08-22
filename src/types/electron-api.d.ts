@@ -69,7 +69,7 @@ type PlaylistSummary = {
     // The current first entry's own thumbnailUrl (preferred display source)
     // and a locally-cached fallback file path for when that's unavailable
     // (an empty playlist, or a dead first entry) -- see ensurePlaylistThumbnail
-    // (main.js).
+    // (main.mjs).
     thumbnailUrl: string | null;
     thumbnailPath: string | null;
 };

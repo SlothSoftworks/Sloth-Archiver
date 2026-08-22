@@ -247,7 +247,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // Which ffmpeg utility (if any) is currently running -- gates the panel
   // the same way downloadTarget gates video-vs-audio above, but on an
   // entirely separate hook/channel: these run against an already-downloaded
-  // file, not a fresh yt-dlp download (see main.js's ffmpegUtilityProgress).
+  // file, not a fresh yt-dlp download (see main.mjs's ffmpegUtilityProgress).
   const [ffmpegAction, setFfmpegAction] = useState<'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | null>(null);
   const [ffmpegProgress, setFfmpegProgress] = useState(0);
   const [ffmpegError, setFfmpegError] = useState<string | null>(null);
@@ -592,7 +592,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const handleEmbedMetadata = async () => {
     // Embeds into whichever of the video/audio files this version has --
     // either, or both, since they're independent coexisting slots. kind
-    // tells main.js which stream index the cover art lands at.
+    // tells main.mjs which stream index the cover art lands at.
     const targets: { path: string; kind: 'video' | 'audio' }[] = [
       metadata.downloadedFilePath ? { path: metadata.downloadedFilePath, kind: 'video' as const } : null,
       metadata.downloadedAudioFilePath ? { path: metadata.downloadedAudioFilePath, kind: 'audio' as const } : null,

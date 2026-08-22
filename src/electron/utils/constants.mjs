@@ -8,7 +8,7 @@ const allVideoFilter = [{ name: 'All Files', extensions: ['*']}];
 
 // 'Audio Files' is a separate filter (SUPPORTED_FORMATS is video-recode
 // formats only) so the Save dialog actually offers an mp3 option --
-// main.js's withTargetExtension guarantees the final file lands on .mp3
+// main.mjs's withTargetExtension guarantees the final file lands on .mp3
 // regardless of what's picked here.
 const getSupportedVideoFilters = () => {
     return [

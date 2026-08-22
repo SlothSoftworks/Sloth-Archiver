@@ -50,7 +50,7 @@ interface OtherPlatformVideoDataProps {
     description: string | null;
     originalUrl: string;
     // Computed generically for every platform (see buildResolutions,
-    // main.js), unused here except for Dailymotion, the one non-YouTube
+    // main.mjs), unused here except for Dailymotion, the one non-YouTube
     // platform confirmed to reliably expose a real per-height ladder.
     resolutions?: { resolution: string; filesizeMb: string }[];
   };

@@ -52,7 +52,7 @@ type PlaylistSummary = {
   hasPreviousMetadata: boolean;
   // thumbnailUrl is the current first entry's own thumbnail (preferred,
   // always live); thumbnailPath is a locally-cached fallback
-  // (ensurePlaylistThumbnail, main.js) for when that's unavailable.
+  // (ensurePlaylistThumbnail, main.mjs) for when that's unavailable.
   thumbnailUrl: string | null;
   thumbnailPath: string | null;
 };
@@ -82,7 +82,7 @@ type PlaylistSnapshot = {
 };
 
 // Prefers the live first-entry thumbnail over the locally-cached fallback
-// (ensurePlaylistThumbnail, main.js), which only matters once there's no
+// (ensurePlaylistThumbnail, main.mjs), which only matters once there's no
 // live one to show (an empty playlist, or a dead first entry).
 function playlistThumbnailSrc(thumbnailUrl: string | null | undefined, thumbnailPath: string | null | undefined): string | undefined {
   if (thumbnailUrl) return thumbnailUrl;

@@ -49,10 +49,10 @@ export function sanitizeForFilesystem(input, maxLength = 100) {
 }
 
 // The one safety invariant every destructive/write operation below (and
-// handleAppVideoRequest, main.js) depends on: never touch a path outside the
+// handleAppVideoRequest, main.mjs) depends on: never touch a path outside the
 // configured library folder. Returns the resolved absolute path when
 // targetPath is genuinely inside libraryDir, or null otherwise -- callers
-// that need to throw do so themselves with their own wording; main.js's
+// that need to throw do so themselves with their own wording; main.mjs's
 // app-video:// handler instead turns a null into a 403 response.
 export function resolveInsideLibrary(libraryDir, targetPath) {
     const resolvedLibraryDir = path.resolve(libraryDir || '');
@@ -353,7 +353,7 @@ export async function scanLibrary(libraryDir) {
 
             if (!metadata) continue;
 
-            // Video-level, not per-epoch -- ensureVideoThumbnail (main.js)
+            // Video-level, not per-epoch -- ensureVideoThumbnail (main.mjs)
             // saves exactly one video-thumbnail.* file directly in videoPath,
             // a sibling of the epoch folders, same pattern as channel-icon.*
             // one level up.
@@ -372,7 +372,7 @@ export async function scanLibrary(libraryDir) {
         if (videos.length === 0) continue;
         videos.sort((a, b) => (b.metadata.addedEpoch || 0) - (a.metadata.addedEpoch || 0));
 
-        // Cached by ensureChannelIcon (main.js) the first time a video from
+        // Cached by ensureChannelIcon (main.mjs) the first time a video from
         // this channel gets added -- videoEntries already lists everything
         // directly inside channelPath (files included), so this is a free
         // lookup rather than a second readdir.
@@ -553,7 +553,7 @@ function resolvePlaylistEpochDir(playlistDir) {
 
 // Playlist-level (not per-epoch), a sibling of the epoch folders -- same
 // pattern as channel-icon.*/video-thumbnail.*. Cached by
-// ensurePlaylistThumbnail (main.js) as a fallback for when the live first
+// ensurePlaylistThumbnail (main.mjs) as a fallback for when the live first
 // entry has no thumbnailUrl of its own (empty playlist, or a dead first
 // entry) -- the renderer always prefers the live entries[0].thumbnailUrl
 // when available.

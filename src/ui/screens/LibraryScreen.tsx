@@ -281,7 +281,7 @@ export default function LibraryScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoIdToOpen]);
 
-  // Fire-and-forget channel-icon/video-thumbnail fetches (main.js) only get
+  // Fire-and-forget channel-icon/video-thumbnail fetches (main.mjs) only get
   // picked up on the *next* index refresh -- without this, an already-
   // mounted Library tab would never show a newly-added video's channel icon
   // until the user re-navigated or hit manual refresh. Reuses

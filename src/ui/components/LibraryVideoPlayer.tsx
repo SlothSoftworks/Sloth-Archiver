@@ -17,7 +17,7 @@ export type LibraryVideoPlayerHandle = {
 // Only mp4/webm play reliably in Chromium's <video> element -- MKV is a
 // container-parsing limitation no delivery mechanism can work around, and
 // could still land here from a download made before buildDownloadArgs
-// (main.js) started forcing --merge-output-format mp4. This component
+// (main.mjs) started forcing --merge-output-format mp4. This component
 // quietly falls back to the static thumbnail rather than attempting a
 // player known to fail; "open in default player" exists in
 // LibraryVideoDetail for exactly this case.
