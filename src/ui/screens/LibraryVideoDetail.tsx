@@ -11,45 +11,27 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
-  Divider,
-  FormControl,
-  FormGroup,
-  Grid,
   IconButton,
-  InputLabel,
-  MenuItem,
-  Select,
   Snackbar,
   Stack,
-  TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import FolderOpenIcon from '@mui/icons-material/FolderOpen';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
-import DownloadDoneIcon from '@mui/icons-material/DownloadDone';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import AudiotrackIcon from '@mui/icons-material/Audiotrack';
-import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
-import ContentCutIcon from '@mui/icons-material/ContentCut';
-import LabelOutlinedIcon from '@mui/icons-material/LabelOutlined';
-import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import AccessTimeIcon from '@mui/icons-material/AccessTime';
-import { convertYYYYMMDDStringToDate, buildAppVideoUrl, formatEpochLabel } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
 import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import LibraryVideoPlayer, { type LibraryVideoPlayerHandle } from '../components/LibraryVideoPlayer';
-import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
-import type { LibraryVideoMetadata, Resolution } from '../../types';
+import VideoQualityDownload from './VideoQualityDownload';
+import FfmpegUtilitiesPanel, { OTHER_FORMAT_VALUE, formatSecondsAsClipTimestamp } from './FfmpegUtilitiesPanel';
+import type { LibraryVideoMetadata } from '../../types';
 
 type LibraryVideo = {
   videoFolderName: string;
@@ -67,105 +49,11 @@ function getExtension(filePath: string): string {
   return lastDot === -1 ? '' : filePath.slice(lastDot + 1).toLowerCase();
 }
 
-// Digit-only, auto-formatting clip-timestamp input -- strips non-digits and
-// right-aligns the typed digits into HH:MM:SS, growing an hours group past 4
-// digits. Needed since archived videos can easily run past an hour.
-function formatClipTimestampInput(raw: string): string {
-  const digits = raw.replace(/\D/g, '').slice(0, 6);
-  const len = digits.length;
-  if (len <= 2) return digits;
-  if (len <= 4) return `${digits.slice(0, len - 2)}:${digits.slice(len - 2)}`;
-  return `${digits.slice(0, len - 4)}:${digits.slice(len - 4, len - 2)}:${digits.slice(len - 2)}`;
-}
-
-// Backs the clip fields' up/down spinner arrows -- parses whatever's typed
-// (SS / MM:SS / HH:MM:SS, or empty) down to a second count, nudges it, and
-// renders back out fully zero-padded so the result stays unambiguous.
-function parseClipTimestampSeconds(value: string): number {
-  const parts = value.split(':').map((p) => parseInt(p, 10) || 0);
-  while (parts.length < 3) parts.unshift(0);
-  const [h, m, s] = parts.slice(-3);
-  return h * 3600 + m * 60 + s;
-}
-
-function formatSecondsAsClipTimestamp(totalSeconds: number): string {
-  const clamped = Math.max(0, totalSeconds);
-  const h = Math.floor(clamped / 3600);
-  const m = Math.floor((clamped % 3600) / 60);
-  const s = clamped % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
-function stepClipTimestamp(value: string, deltaSeconds: number): string {
-  return formatSecondsAsClipTimestamp(parseClipTimestampSeconds(value) + deltaSeconds);
-}
-
-// Sentinel Select value for "Other" -- a one-off custom format typed for
-// just this conversion, distinct from the persisted custom list Options
-// manages (that one adds a format to the dropdown; this one doesn't save
-// anything).
-const OTHER_FORMAT_VALUE = '__other__';
-
 // Mirrors library.mjs's own CURRENT_VIDEO_SCHEMA_VERSION (main process and
 // renderer never cross-import here). An entry whose stored schemaVersion is
 // older than this predates a metadata-shape change and won't have whatever
 // that change added -- "Refresh from YouTube" is what fixes it.
 const CURRENT_VIDEO_SCHEMA_VERSION = 3;
-
-// Shared between the first-download and "download different quality" flows
-// -- excludeResolution blocks re-picking whatever's already downloaded
-// rather than hiding it, so it's clear why one button is greyed out instead
-// of silently missing.
-function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFormat, onFormatChange, isError, disabled }: {
-  resolutions: Resolution[];
-  excludeResolution?: string | null;
-  onSelect: (resolution: string) => void;
-  selectedFormat: string;
-  onFormatChange: (format: string) => void;
-  isError: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <>
-      {isError &&
-        <Typography color="error" variant="body2" sx={{ mb: 1 }}>Download failed -- try again.</Typography>}
-      <Grid container spacing={1} columns={{ xs: 2, sm: 9, md: 12 }}>
-        {resolutions.map((res, idx) => (
-          <Grid size={{ xs: 1, sm: 3 }} key={idx}>
-            <Button
-              onClick={() => onSelect(res.resolution)}
-              disabled={res.resolution === excludeResolution || disabled}
-              sx={{ whiteSpace: 'pre-line' }}
-              fullWidth
-              variant="outlined"
-            >
-              <Stack spacing={0} direction="column" divider={<Divider flexItem sx={{ mx: 1 }} orientation="horizontal" />}>
-                <Typography variant="button" textTransform="none">
-                  {res.resolution}p{res.resolution === excludeResolution ? ' (current)' : ''}
-                </Typography>
-                <Typography variant="caption">{res.filesizeMb}Mb</Typography>
-              </Stack>
-            </Button>
-          </Grid>
-        ))}
-      </Grid>
-      <Divider sx={{ my: 1 }} />
-      <FormGroup>
-        <Select
-          size="small"
-          value={selectedFormat}
-          onChange={(e) => onFormatChange(e.target.value)}
-          variant="standard"
-        >
-          <MenuItem value="dflt">Default (keep origin format)</MenuItem>
-          <MenuItem value="mp4">MP4</MenuItem>
-          <MenuItem value="webm">WEBM</MenuItem>
-          <MenuItem value="mkv">MKV</MenuItem>
-        </Select>
-      </FormGroup>
-    </>
-  );
-}
 
 export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, onDeleted, onVersionsChanged }: {
   video: LibraryVideo;
@@ -516,7 +404,10 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   };
 
   const handleExtractClip = async () => {
-    if (!metadata.downloadedFilePath || !clipStart.trim() || !clipEnd.trim() || clipRangeInvalid) return;
+    // The clip-range-invalid case is already caught by FfmpegUtilitiesPanel
+    // disabling its Extract Clip button (see its own clipRangeInvalid) --
+    // this handler is only ever reachable through that button.
+    if (!metadata.downloadedFilePath || !clipStart.trim() || !clipEnd.trim()) return;
     const ext = getExtension(metadata.downloadedFilePath) || 'mp4';
     const result = await window.electronAPI.saveExportedFile({
       defaultName: `${metadata.title || video.videoFolderName} (clip).${ext}`,
@@ -642,18 +533,6 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // Gates the whole FFMPEG utilities section -- every tool there operates on
   // the video file, not the separate MP3 slot.
   const isVideoDownloaded = !!metadata.downloadedFilePath;
-  // Shared disabled condition for every ffmpeg-utility control: no video
-  // downloaded, or another utility already mid-run (one ffmpegAction slot).
-  const ffmpegControlsDisabled = !isVideoDownloaded || ffmpegAction !== null;
-  // Embed Metadata doesn't need the video file specifically -- it can tag
-  // whichever of video/audio exists, so it's enabled whenever either is
-  // downloaded, not gated on isVideoDownloaded like the rest of the panel.
-  const embedMetadataDisabled = (!isVideoDownloaded && !metadata.downloadedAudioFilePath) || ffmpegAction !== null;
-  // ffmpeg's -to is an absolute end timestamp, not a duration -- if it isn't
-  // at least a second past -ss, ffmpeg aborts with "-to value smaller than
-  // -ss". Caught here since there's nothing to extract from end <= start.
-  const clipRangeInvalid = !!clipStart.trim() && !!clipEnd.trim()
-    && parseClipTimestampSeconds(clipEnd) < parseClipTimestampSeconds(clipStart) + 1;
   const resolutions = metadata.resolutions || [];
   // MP3 is rendered in its own Audio sub-section, not mixed into the video
   // quality grid.
@@ -765,393 +644,62 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '30%' } }}>
           <Card sx={{ p: 1.5 }} variant="outlined">
             <Stack spacing={1.5}>
-              {(video.epochs.length > 1 || metadata.downloadedFilePath) &&
-                <Stack spacing={1.5}>
-                  {video.epochs.length > 1 &&
-                    <FormControl size="small" fullWidth>
-                      <InputLabel id="library-version-select-label">Version</InputLabel>
-                      <Select
-                        labelId="library-version-select-label"
-                        label="Version"
-                        value={selectedEpoch || ''}
-                        onChange={(e) => handleSelectEpoch(e.target.value)}
-                      >
-                        {video.epochs.map(({ epoch, metadata: epochMetadata }) => (
-                          <MenuItem key={epoch} value={epoch}>
-                            <Stack direction="row" spacing={0.5} alignItems="center">
-                              {(epochMetadata.downloadedFilePath || epochMetadata.downloadedAudioFilePath) &&
-                                <DownloadDoneIcon fontSize="small" color="success" />}
-                              <span>
-                                {formatEpochLabel(epoch)}{epoch === video.latestEpoch ? ' (latest)' : ''}
-                              </span>
-                            </Stack>
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>}
-                  {metadata.downloadedFilePath &&
-                    <Chip
-                      color="success"
-                      label={`${metadata.downloadedResolution}p`}
-                      sx={{ alignSelf: 'flex-start' }}
-                    />}
-                  <Divider />
-                </Stack>}
-
-            {swappingQuality ? (
-              isSwapDownloading ? (
-                <Stack spacing={1} sx={{ p: 1 }}>
-                  <Typography variant="subtitle1" textAlign="center">
-                    {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : 'Downloading'}
-                    {selectedResolution && ` (${selectedResolution}${selectedResolution.toLowerCase() === 'mp3' ? '' : 'p'})`}
-                  </Typography>
-                  <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
-                </Stack>
-              ) : (
-                <>
-                  <ResolutionPicker
-                    resolutions={videoResolutions}
-                    excludeResolution={metadata.downloadedResolution}
-                    onSelect={handleSwapDownload}
-                    selectedFormat={selectedFormat}
-                    onFormatChange={setSelectedFormat}
-                    isError={isError}
-                    disabled={isAudioActionActive}
-                  />
-                  <Button size="small" onClick={() => setSwappingQuality(false)} sx={{ mt: 1 }}>
-                    Cancel
-                  </Button>
-                </>
-              )
-            ) : metadata.downloadedFilePath ? (
-              <Stack direction="row" spacing={1}>
-                <Button size="small" startIcon={<FolderOpenIcon />} onClick={handleOpenFileLocation}>
-                  Open file location
-                </Button>
-                <Button size="small" startIcon={<OpenInNewIcon />} onClick={handleOpenExternally}>
-                  Open in default player
-                </Button>
-              </Stack>
-            ) : isDownloading ? (
-              <Stack spacing={1} sx={{ p: 1 }}>
-                <Typography variant="subtitle1" textAlign="center">
-                  {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : 'Downloading'}
-                  {selectedResolution && ` (${selectedResolution}p)`}
-                </Typography>
-                <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
-              </Stack>
-            ) : videoResolutions.length === 0 ? (
-              <Typography variant="body2" color="text.secondary" sx={{ p: 1 }}>
-                No quality info was saved for this entry (it may have been added before this feature, or via testing) --
-                re-add it from the Downloader tab to enable downloading here.
-              </Typography>
-            ) : (
-              <ResolutionPicker
-                resolutions={videoResolutions}
-                onSelect={handleDownload}
+              <VideoQualityDownload
+                video={video}
+                metadata={metadata}
+                selectedEpoch={selectedEpoch}
+                onSelectEpoch={handleSelectEpoch}
+                videoResolutions={videoResolutions}
+                mp3Resolution={mp3Resolution}
                 selectedFormat={selectedFormat}
                 onFormatChange={setSelectedFormat}
+                selectedResolution={selectedResolution}
                 isError={isError}
-                disabled={isAudioActionActive}
+                downloadStatus={downloadStatus}
+                downloadProgress={downloadProgress}
+                postprocessProgress={postprocessProgress}
+                swappingQuality={swappingQuality}
+                onCancelQualitySwap={() => setSwappingQuality(false)}
+                isDownloading={isDownloading}
+                isSwapDownloading={isSwapDownloading}
+                onDownload={handleDownload}
+                onSwapDownload={handleSwapDownload}
+                isAudioActionActive={isAudioActionActive}
+                onOpenFileLocation={handleOpenFileLocation}
+                onOpenExternally={handleOpenExternally}
+                cacheBustKey={cacheBustKey}
+                onAudioDownload={handleAudioDownload}
+                onOpenAudioFileLocation={handleOpenAudioFileLocation}
+                onOpenAudioExternally={handleOpenAudioExternally}
+                isVideoActionActive={isVideoActionActive}
+                isVideoDownloaded={isVideoDownloaded}
+                ffmpegAction={ffmpegAction}
+                ffmpegProgress={ffmpegProgress}
+                onExtractAudioToLibrary={handleExtractAudioToLibrary}
               />
-            )}
 
-            {/* Audio (MP3) -- a separate, always-available download,
-                independent of video quality. Shares the single download
-                hook with the video controls above (downloadTarget/TD-008),
-                so it's disabled rather than hidden during a video
-                download/swap. */}
-            {mp3Resolution &&
-              <>
-                <Divider sx={{ my: 1.5 }} />
-                <Stack spacing={1}>
-                  <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
-                    Audio
-                  </Typography>
-                  {isAudioActionActive ? (
-                    <Stack spacing={1} sx={{ p: 1 }}>
-                      <Typography variant="subtitle1" textAlign="center">
-                        {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : 'Downloading'} (MP3)
-                      </Typography>
-                      <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
-                    </Stack>
-                  ) : metadata.downloadedAudioFilePath ? (
-                    // Replaces the download button in place -- the player
-                    // lives here in the instrument panel, tied to its own
-                    // download controls, not alongside the video above.
-                    <Stack spacing={0.5}>
-                      <Box
-                        component="audio"
-                        controls
-                        src={buildAppVideoUrl(metadata.downloadedAudioFilePath, cacheBustKey)}
-                        sx={{ width: '100%', height: 32 }}
-                      />
-                      <Stack direction="row" spacing={0.5}>
-                        <Tooltip title="Open file location">
-                          <IconButton size="small" onClick={handleOpenAudioFileLocation} aria-label="Open audio file location">
-                            <FolderOpenIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Open in default player">
-                          <IconButton size="small" onClick={handleOpenAudioExternally} aria-label="Open audio in default player">
-                            <OpenInNewIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Re-download MP3">
-                          <span>
-                            <IconButton
-                              size="small"
-                              onClick={handleAudioDownload}
-                              disabled={isVideoActionActive}
-                              aria-label="Re-download MP3"
-                            >
-                              <CloudDownloadIcon fontSize="small" />
-                            </IconButton>
-                          </span>
-                        </Tooltip>
-                      </Stack>
-                    </Stack>
-                  ) : ffmpegAction === 'extractAudioToLibrary' ? (
-                    <Stack spacing={1} sx={{ p: 1 }}>
-                      <Typography variant="subtitle1" textAlign="center">Extracting MP3</Typography>
-                      <LinearProgressWithLabel value={ffmpegProgress} valueBuffer={ffmpegProgress} />
-                    </Stack>
-                  ) : (
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <Button
-                        size="small"
-                        color="secondary"
-                        variant="contained"
-                        startIcon={<CloudDownloadIcon />}
-                        onClick={handleAudioDownload}
-                        disabled={isVideoActionActive}
-                      >
-                        Download MP3 ({mp3Resolution.filesizeMb}Mb)
-                      </Button>
-                      {isVideoDownloaded &&
-                        <Tooltip title="Extract MP3 from the already-downloaded video (no re-download)">
-                          <span>
-                            <IconButton
-                              size="small"
-                              onClick={handleExtractAudioToLibrary}
-                              disabled={isVideoActionActive || ffmpegAction !== null}
-                              aria-label="Extract MP3 from downloaded video"
-                            >
-                              <AudiotrackIcon fontSize="small" />
-                            </IconButton>
-                          </span>
-                        </Tooltip>}
-                    </Stack>
-                  )}
-                </Stack>
-              </>}
-
-            {/* FFMPEG utilities -- every control operates on the video
-                *file*, disabled whenever this version has no video
-                downloaded (regardless of an existing MP3), or while another
-                utility is already running (they share one ffmpegAction
-                slot). */}
-            <Divider sx={{ my: 1.5 }} />
-            <Stack spacing={1}>
-              <Stack direction="row" spacing={0.5} alignItems="center">
-                <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
-                  FFMPEG utilities
-                </Typography>
-                <Tooltip title="FFmpeg is a tool this app uses to edit media files already on your device -- extracting audio, converting formats, trimming clips, or adding info tags -- without re-downloading anything.">
-                  <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                </Tooltip>
-              </Stack>
-              {!isVideoDownloaded && !metadata.downloadedAudioFilePath &&
-                <Typography variant="caption" color="text.secondary">
-                  Download the video or its MP3 for this version to use these tools.
-                </Typography>}
-              {!isVideoDownloaded && metadata.downloadedAudioFilePath &&
-                <Typography variant="caption" color="text.secondary">
-                  Download the video for this version to use Extract MP3, Convert, and Clip.
-                </Typography>}
-              {ffmpegAction &&
-                <LinearProgressWithLabel value={ffmpegProgress} valueBuffer={ffmpegProgress} />}
-              {ffmpegError &&
-                <Typography variant="caption" color="error">{ffmpegError}</Typography>}
-
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="body2" sx={{ flexGrow: 1 }}>Extract MP3</Typography>
-                <Tooltip title="Extract MP3">
-                  <span>
-                    <IconButton size="small" aria-label="Extract MP3" onClick={handleExtractMp3} disabled={ffmpegControlsDisabled}>
-                      <AudiotrackIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </Stack>
-
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="body2" sx={{ flexGrow: 1 }}>Convert to</Typography>
-                <Select
-                  size="small"
-                  variant="standard"
-                  value={convertFormat}
-                  onChange={(e) => setConvertFormat(e.target.value)}
-                  disabled={ffmpegControlsDisabled}
-                >
-                  {convertFormatOptions.map((format) => (
-                    <MenuItem key={format} value={format.toLowerCase()}>{format.toUpperCase()}</MenuItem>
-                  ))}
-                  <MenuItem value={OTHER_FORMAT_VALUE}>Other...</MenuItem>
-                </Select>
-                <Tooltip title="Convert">
-                  <span>
-                    <IconButton size="small" aria-label="Convert to a different format" onClick={handleConvertFormat} disabled={ffmpegControlsDisabled}>
-                      <SwapHorizIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </Stack>
-              {convertFormat === OTHER_FORMAT_VALUE &&
-                <Stack spacing={0.5}>
-                  <TextField
-                    size="small"
-                    variant="standard"
-                    placeholder="Format name"
-                    value={otherFormatInput}
-                    onChange={(e) => setOtherFormatInput(e.target.value)}
-                    disabled={ffmpegControlsDisabled}
-                    slotProps={{ htmlInput: { 'aria-label': 'Custom format name' } }}
-                  />
-                  <Typography variant="caption" color="text.secondary">
-                    Must match a real ffmpeg muxer name (e.g. mp4, matroska, avi).
-                  </Typography>
-                </Stack>}
-
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="body2">Clip</Typography>
-                <Tooltip title="Set start to the player's current position">
-                  <span>
-                    <IconButton
-                      size="small"
-                      onClick={handleSetClipStartFromPlayer}
-                      disabled={ffmpegControlsDisabled}
-                      aria-label="Set clip start from player position"
-                    >
-                      <AccessTimeIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                <TextField
-                  size="small"
-                  variant="standard"
-                  placeholder="HH:MM:SS"
-                  value={clipStart}
-                  onChange={(e) => setClipStart(formatClipTimestampInput(e.target.value))}
-                  disabled={ffmpegControlsDisabled}
-                  sx={{ width: 96 }}
-                  slotProps={{
-                    htmlInput: { inputMode: 'numeric', 'aria-label': 'Clip start (HH:MM:SS)' },
-                    input: {
-                      endAdornment: (
-                        <Stack sx={{ ml: 0.5 }}>
-                          <IconButton
-                            size="small"
-                            sx={{ p: 0 }}
-                            disabled={ffmpegControlsDisabled}
-                            onClick={() => setClipStart((v) => stepClipTimestamp(v, 1))}
-                            aria-label="Increase clip start by 1 second"
-                          >
-                            <KeyboardArrowUpIcon sx={{ fontSize: 14 }} />
-                          </IconButton>
-                          <IconButton
-                            size="small"
-                            sx={{ p: 0 }}
-                            disabled={ffmpegControlsDisabled}
-                            onClick={() => setClipStart((v) => stepClipTimestamp(v, -1))}
-                            aria-label="Decrease clip start by 1 second"
-                          >
-                            <KeyboardArrowDownIcon sx={{ fontSize: 14 }} />
-                          </IconButton>
-                        </Stack>
-                      ),
-                    },
-                  }}
-                />
-                <Typography variant="body2" color="text.secondary">–</Typography>
-                <Tooltip title="Set end to the player's current position">
-                  <span>
-                    <IconButton
-                      size="small"
-                      onClick={handleSetClipEndFromPlayer}
-                      disabled={ffmpegControlsDisabled}
-                      aria-label="Set clip end from player position"
-                    >
-                      <AccessTimeIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                <TextField
-                  size="small"
-                  variant="standard"
-                  placeholder="HH:MM:SS"
-                  value={clipEnd}
-                  onChange={(e) => setClipEnd(formatClipTimestampInput(e.target.value))}
-                  disabled={ffmpegControlsDisabled}
-                  sx={{ width: 96 }}
-                  slotProps={{
-                    htmlInput: { inputMode: 'numeric', 'aria-label': 'Clip end (HH:MM:SS)' },
-                    input: {
-                      endAdornment: (
-                        <Stack sx={{ ml: 0.5 }}>
-                          <IconButton
-                            size="small"
-                            sx={{ p: 0 }}
-                            disabled={ffmpegControlsDisabled}
-                            onClick={() => setClipEnd((v) => stepClipTimestamp(v, 1))}
-                            aria-label="Increase clip end by 1 second"
-                          >
-                            <KeyboardArrowUpIcon sx={{ fontSize: 14 }} />
-                          </IconButton>
-                          <IconButton
-                            size="small"
-                            sx={{ p: 0 }}
-                            disabled={ffmpegControlsDisabled}
-                            onClick={() => setClipEnd((v) => stepClipTimestamp(v, -1))}
-                            aria-label="Decrease clip end by 1 second"
-                          >
-                            <KeyboardArrowDownIcon sx={{ fontSize: 14 }} />
-                          </IconButton>
-                        </Stack>
-                      ),
-                    },
-                  }}
-                />
-                <Box sx={{ flexGrow: 1 }} />
-                <Tooltip title={clipRangeInvalid ? 'End must be at least 1 second after start' : 'Extract clip'}>
-                  <span>
-                    <IconButton
-                      size="small"
-                      aria-label="Extract clip"
-                      onClick={handleExtractClip}
-                      disabled={ffmpegControlsDisabled || !clipStart.trim() || !clipEnd.trim() || clipRangeInvalid}
-                    >
-                      <ContentCutIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </Stack>
-              {clipRangeInvalid &&
-                <Typography variant="caption" color="error">
-                  End must be at least 1 second after start.
-                </Typography>}
-
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="body2" sx={{ flexGrow: 1 }}>Embed metadata</Typography>
-                <Tooltip title="Embed metadata">
-                  <span>
-                    <IconButton size="small" aria-label="Embed metadata into local file" onClick={handleEmbedMetadata} disabled={embedMetadataDisabled}>
-                      <LabelOutlinedIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </Stack>
-            </Stack>
+              <FfmpegUtilitiesPanel
+                ffmpegAction={ffmpegAction}
+                ffmpegProgress={ffmpegProgress}
+                ffmpegError={ffmpegError}
+                isVideoDownloaded={isVideoDownloaded}
+                hasAudioFile={!!metadata.downloadedAudioFilePath}
+                convertFormat={convertFormat}
+                setConvertFormat={setConvertFormat}
+                convertFormatOptions={convertFormatOptions}
+                otherFormatInput={otherFormatInput}
+                setOtherFormatInput={setOtherFormatInput}
+                clipStart={clipStart}
+                setClipStart={setClipStart}
+                clipEnd={clipEnd}
+                setClipEnd={setClipEnd}
+                onSetClipStartFromPlayer={handleSetClipStartFromPlayer}
+                onSetClipEndFromPlayer={handleSetClipEndFromPlayer}
+                onExtractMp3={handleExtractMp3}
+                onConvertFormat={handleConvertFormat}
+                onExtractClip={handleExtractClip}
+                onEmbedMetadata={handleEmbedMetadata}
+              />
             </Stack>
           </Card>
         </Stack>
