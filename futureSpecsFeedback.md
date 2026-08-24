@@ -11,6 +11,17 @@ completion is recorded instead, down in [Archived](#archived), so that history i
 lost when the backlog gets trimmed. The sections above Archived are meant to stay
 short and scannable: only what's still actually open.
 
+**2026-08-20 pass:** three new `futureSpecs.md` items assessed this pass — **Clip
+collection** and **Playlist mode** (both Big features), and **Customizable thumbnail
+sizes** (Small features). None have any code behind them yet; see their own sections
+below. Also logged (not a tracked spec item, came up as a direct bug report):
+**yt-dlp self-update reliability** — the update flow had no timeout anywhere and
+never wrote to `main.log`, so a real reported hang ("stuck at Setting up build
+tools") left zero trail on either the working or non-working machine. Fixed with a
+bounded timeout on every network/subprocess step plus logging threaded through all
+of them, and an "Open error log" button added directly to the update-failed screen.
+See [Archived](#archived) for the full writeup.
+
 **2026-08-15 cleanup:** `futureSpecs.md` was carrying five stale entries this file
 had already flagged shipped across earlier passes — **Multi-platform downloads**,
 **Playlist refresh/versioning**, and all three **Bugs found** entries. All five are
@@ -43,6 +54,8 @@ these are detailed in the dated log under [Archived](#archived).
   - [Bulk select + download/delete](#bulk-select)
   - [Player customization (pick timestamp) — partially shipped](#player-customization)
   - [More resilient embedded player / MKV support](#resilient-player)
+  - [Clip collection](#clip-collection)
+  - [Playlist mode (internal queue playback)](#playlist-mode)
 - [QoL features](#qol-features)
   - [Language support](#language-support)
   - [~~Cookie browser-picker "Clear" quirk~~ — shipped](#cookie-picker-quirk)
@@ -50,6 +63,7 @@ these are detailed in the dated log under [Archived](#archived).
 - [Small features and corrections](#small-features)
   - [Video merger](#video-merger)
   - [Player UX](#player-ux)
+  - [Customizable thumbnail sizes](#thumbnail-sizes)
   - [~~Metadata schema versioning~~ — shipped](#schema-versioning)
   - [~~Copy-link button~~ — shipped](#copy-link)
   - [~~Ordering/"order by" filter~~ — shipped](#ordering-filter)
@@ -98,6 +112,7 @@ flowchart LR
         d19["Playlist thumbnail"]
         d20["Player: pick-timestamp buttons for clip tool"]
         d21["Dailymotion support (curl_cffi) + quality picker"]
+        d22["yt-dlp self-update: timeout + logging + Open error log button"]
     end
 
     subgraph PARTIAL["Partially done"]
@@ -114,14 +129,17 @@ flowchart LR
         t10["Bulk select + download/delete in video grid"]
         t11["Player: click-to-select start/end on scrub bar"]
         t12["Player: MKV/more-codec support"]
+        t13["Clip collection (saved clips + Clips tab)"]
+        t14["Playlist mode (internal queue playback)"]
+        t15["Customizable thumbnail sizes"]
     end
 
     DONE ~~~ PARTIAL ~~~ TODO
 
-    class d1,d1b,p3,t9,t10 library
-    class d2 updater
-    class d3,d8,d9,d10,d11,d12,d17,d19,d21 playlist
-    class d4,d7,d15,d16,d18,t1 smallfeat
+    class d1,d1b,p3,t9,t10,t13 library
+    class d2,d22 updater
+    class d3,d8,d9,d10,d11,d12,d17,d19,d21,t14 playlist
+    class d4,d7,d15,d16,d18,t1,t15 smallfeat
     class d5,d6,d13,d14,t6 qol
     class t7 longshot
     class d20,t11,t12 player
@@ -182,7 +200,8 @@ from `futureSpecs.md` directly 2026-08-15.
 
 Export/Import JSON and Bulk select are unchanged. Player customization's
 "pick timestamp" half shipped 2026-08-14 — see below for what's still open there.
-Resilient player/MKV support is unchanged.
+Resilient player/MKV support is unchanged. Two brand new items this pass — Clip
+collection and Playlist mode — assessed below.
 
 <a id="export-import-json"></a>
 ### Export/Import library JSON
@@ -264,6 +283,74 @@ so this isn't a bug to fix, it's a real gap to close.
 
 **Recommendation:** scope this to Option C (MKV specifically, via the existing ffmpeg remux pipeline) rather than the more open-ended "more codecs" framing in the spec text — it reuses infrastructure that already exists and ships the concrete, named pain point (MKV) without taking on a new dependency or an open-ended "support everything" commitment.
 
+<a id="clip-collection"></a>
+### Clip collection
+
+**New this pass.** **Overall: Medium** — the ffmpeg mechanics are a pure reuse of
+what already exists; what's actually new is a storage location one level up from
+anything else in this app, plus a whole new list/detail UI to browse the result.
+
+**Confirmed directly against the current code:** "Extract clip" today
+(`handleExtractClip`, `LibraryVideoDetail.tsx`) is a pure one-shot export — it always
+goes through a save-file dialog (`saveExportedFile`) to a location the user picks
+outside the library entirely, and the app never records that a clip was made at all.
+There is no clip tracking, storage, or listing anywhere in the codebase today; this
+is a genuinely new capability, not an extension of an existing one.
+
+| Piece | Difficulty | Why |
+|---|---|---|
+| Saving a clip into the library instead of exporting it | Low-Medium | `runFfmpegWithProgress`/the extract-clip ffmpeg invocation (`main.js`) is unchanged — only the output path changes, from a user-picked save-dialog path to a deterministic `<videoDir>/clips/<clipId>.<ext>` path. `videoDir` (channel/videoId level) is already exactly the right unit, per the spec's own "videoID level, not inside the epoch folder" framing — every version of a video shares one clip collection, which matches how a clip is conceptually "of the video," not of one specific downloaded quality. |
+| A metadata record per clip | Low | New, small — a `clips/<clipId>.json` (or one `clips/index.json` covering all of a video's clips) holding at minimum source epoch, start/end timestamps, created-at epoch, and the output filename. Same shape of work as any other `library.mjs` metadata write, just a new file convention. |
+| A "Clips" tab/view | Medium | New UI surface: could be a new top-level tab (sibling to Downloader/Library/Options) showing every clip across the whole library, or a per-video sub-section inside the existing video detail view (simpler, avoids a new cross-video aggregation read). The spec text ("collected in a clips tab where the user can see the list of clips") reads more like the former (library-wide), which needs a new `scanClips()`-style read path over every video's `clips/` folder, similar in shape to how `scanLibrary()` already walks channel/video/epoch. |
+| Playback of a saved clip | Low | Reuses `LibraryVideoPlayer.tsx` as-is (it's already just a `<video>`/`<audio>` element pointed at a local file path) — a saved clip is just another local media file to hand it. |
+| Deleting a saved clip | Low | Same `path.relative`-containment-checked delete pattern every other destructive library operation (`deleteLibraryEntry`, `deletePlaylistSnapshot`) already uses, scoped to the one clip file + its metadata record. |
+
+**Open question worth deciding before building:** is "the Clips tab" library-wide
+(every clip from every video, one flat list) or scoped per-video (a section within
+each video's own detail view)? That decision changes whether this needs a new
+top-level tab + a new whole-library scan, or stays entirely local to a video already
+being viewed — the spec text leans library-wide, but a per-video section is
+meaningfully cheaper and may satisfy the actual want just as well.
+
+**Recommendation:** land the storage change first (clips saved into `<videoDir>/clips/`
+instead of exported away) — that alone is useful even before any listing UI exists,
+since the clip is now at least kept. Then decide the scope question above before
+building the Clips tab itself.
+
+<a id="playlist-mode"></a>
+### Playlist mode (internal queue playback)
+
+**New this pass.** **Overall: Medium-High** — no genuinely hard algorithmic piece,
+but it's a new cross-cutting concept (an ordered "now playing" queue) that today's
+video detail view has no notion of at all, plus real UX design work (autoplay
+timing, what "next" means when the next video isn't downloaded yet).
+
+**Confirmed directly:** `LibraryVideoPlayer.tsx` has no `onEnded`/playback-completion
+callback today (its `useImperativeHandle` only exposes `getCurrentTime()`), and
+`LibraryScreen.tsx`'s `selectedVideo` is plain local component state with no
+surrounding "queue" concept — navigating to a different video today always means
+returning to the grid and picking again (or a one-directional deep link from
+elsewhere in the app). There is nothing to build on here directly, but two of the
+spec's own sub-features each point at data that already exists in the right shape:
+
+| Piece | Difficulty | Why |
+|---|---|---|
+| Queue data structure + next/prev navigation UI | Medium | A new piece of state (an ordered `videoId[]` + current index) held somewhere above the video detail view, plus small arrow-button UI on that screen to move through it. Standard, well-understood pattern, just net-new here. |
+| Autoplay-next once a video finishes | Medium | Needs `LibraryVideoPlayer.tsx` to actually expose an `onEnded` callback (it exposes nothing playback-lifecycle-related today) — a real, if small, addition to that component's own ref API. The harder part is UX, not code: what "autoplay next" means when the next queued video *isn't downloaded yet* needs a decision (skip it? prompt to download? block autoplay until it's local?) — the spec's own toggle ("enable/disable autoplay") only covers whether it happens at all, not what happens when the next item isn't ready. |
+| "Play" playlist button (queue a whole saved playlist back-to-back) | Low, once the queue mechanism exists | A saved playlist snapshot's `entries` array (`library.mjs`) is already an ordered `videoId` list, produced by `--flat-playlist` in the exact order YouTube returns — this is already the right shape for a queue source, no new data needed. The only real gap: not every entry in a saved playlist is necessarily *in the library* yet (`localFiles[videoId]` can be null, per the earlier playlist-linking fix) — queuing needs to skip or otherwise handle entries with nothing local to play. |
+| Context-based playlist from the current search/filter view | Low, once the queue mechanism exists | `LibraryScreen.tsx`'s flat video list already computes a `filtered`/sorted array reflecting exactly whatever's currently on screen (search query + sort field/direction) — handing that same ordered list to the queue as "play this search as a playlist" is direct reuse of state that already exists, not a new computation. |
+
+**Open questions worth deciding before building:**
+1. Where does "now playing" state live — global (survives navigating away and back, visible from anywhere) or scoped to the video detail view (reset if you leave it)? This affects whether next/prev controls need to be reachable from outside the detail screen itself.
+2. Autoplay-next's behavior when the next item isn't downloaded, per above — this is a real product decision, not an implementation detail.
+3. Does skipping to the next video re-navigate via the existing `/library/video/:videoId` route (consistent with how deep-linking already works, but changes the URL/back-button history on every "next" click) or update in place without touching the router?
+
+**Recommendation:** decide the three questions above first — this is a case where the
+"what should this actually do" design work is bigger than the mechanical
+implementation once decided. The two sub-features (Play-playlist, context-playlist)
+are both cheap once the core queue+next/prev mechanism exists, since both already
+have their ordered-list data sitting ready to reuse.
+
 <a id="qol-features"></a>
 ## QoL features
 
@@ -313,7 +400,8 @@ stating the videos themselves aren't removed. Removed from `futureSpecs.md` dire
 
 Two items (Video merger, Player UX) carry over unchanged. The other four — metadata
 schema versioning, copy-link button, ordering/"order by" filter, and playlist
-thumbnail — have all shipped, see below.
+thumbnail — have all shipped, see below. One brand new item this pass —
+Customizable thumbnail sizes — assessed below.
 
 <a id="video-merger"></a>
 ### 1. Video merger
@@ -356,6 +444,40 @@ standalone player-personalization task, not a quick follow-up) — and now that
 have both separately arrived at "a custom player might be needed," this is worth
 scoping as one combined "personalize the player" effort rather than three separate
 partial attempts.
+
+<a id="thumbnail-sizes"></a>
+### 3. Customizable thumbnail sizes
+
+**New this pass.** **Overall: Low-Medium** — mechanically simple (MUI's own grid
+breakpoint system already does most of the work); the only real decision is UI
+placement, since the spec asks for a specific new layout element, not just a control
+dropped into an existing toolbar.
+
+**Confirmed directly:** `VideoCard` (`LibraryScreen.tsx`) has no fixed pixel size of
+its own today — it's rendered inside a MUI `Grid size={{ xs: 12, sm: 6, md: 4 }}`
+(a fixed 1/2/3-column layout depending on viewport width, not user-adjustable), used
+identically in both the flat by-video list and the per-channel drill-in view. Card
+size is entirely a function of how many columns the grid is told to use per row, via
+CSS Grid — a well-understood lever to expose as a size setting.
+
+| Piece | Difficulty | Why |
+|---|---|---|
+| Mapping "4 sizes" onto the grid | Low | Each size level is just a different `Grid size={...}` breakpoint object — Large keeps today's `{xs:12, sm:6, md:4}` (~3 columns) as the spec asks; Medium/Small/Miniature are progressively smaller-fraction/more-columns variants of the same prop. No new layout mechanism needed, just a variable instead of the current hardcoded object. |
+| Persisted setting | Low | Same settings pattern used everywhere else in this app (`settings:getLibraryThumbnailSize`/`setLibraryThumbnailSize`, mirroring `libraryViewMode`) — a `main.js` IPC pair plus a bit of `readSettings`/`writeSettings` plumbing, all existing precedent. |
+| The slider control itself | Low | A plain MUI `Slider` with 4 discrete marked steps (`step={null}`, a `marks` array) — no new component, no new dependency. |
+| Where it lives: a new bottom-of-viewport bar | Medium | This is the one genuinely new piece — the spec explicitly asks for a persistent bottom bar (like Word's zoom control), not a control folded into the existing top toolbar (which already holds search + sort, per the ordering-filter work). Nothing in this app today renders outside the tab-switching content area (`MainPage.tsx`) except the always-mounted bulk-add side panel — a new bottom bar would be a similar structural sibling to that, not a per-screen addition, if it's meant to persist across the whole app rather than just the Library tab. |
+
+**Open question worth deciding before building:** does the size setting apply only to
+the flat by-video grid, or also to the per-channel video grid (both currently render
+the same `VideoCard`, so this is a scope decision, not a technical constraint either
+way) — and is the bottom bar Library-tab-only or app-wide chrome? The spec's own
+Word-zoom-bar comparison suggests something closer to persistent app chrome, but
+it's only ever mentioned in the context of "the video view."
+
+**Recommendation:** land the setting + `VideoCard` size variants first (useful and
+testable even via a temporary dropdown in the existing toolbar), then decide the
+bottom-bar placement question separately — the two are independent pieces of work
+and the visual-chrome decision shouldn't block the underlying resize capability.
 
 <a id="schema-versioning"></a>
 ### ~~3. Metadata schema versioning~~ — SHIPPED
@@ -472,8 +594,12 @@ Removed from `futureSpecs.md` directly 2026-08-15.
 | Ordering/"order by" filter for the flat video list (Title/Date published/Date added/Channel/Downloaded status/Quality) | 2026-08-13 |
 | Player "pick timestamp" -- Set-as-start/Set-as-end buttons next to the clip fields | 2026-08-14 |
 | Dailymotion added as a supported download platform (bundled `curl_cffi` browser-impersonation) + a per-resolution quality picker for it | 2026-08-15 |
+| yt-dlp self-update reliability: bounded timeout on every step (was previously unbounded, could hang forever) + logging threaded through the whole flow to `main.log` + an "Open error log" button on the update-failed screen | 2026-08-20 |
 
 ### Recently shipped, dated log
+
+**2026-08-20:**
+- **yt-dlp self-update reliability**, from a real bug report: the installed app got stuck at "Setting up build tools..." during a self-update while the same update ran fine via `dev:electron` on the same machine, and there was no way to tell why on either one. Confirmed directly: `updater.mjs`'s `run()`/`probe()` (subprocess) and `fetchJson()`/`downloadFile()` (HTTPS) had no timeout at all — a stalled connection or wedged process left the promise pending forever, no resolve/reject, nothing logged, and the update overlay has no cancel button by design (yt-dlp is a required dependency). Fixed: every one of those four helpers now takes a bounded `timeoutMs` (10 minutes, generous on purpose — meant to catch "actually stuck," not "slower than usual") and kills/destroys the stalled operation, turning a silent hang into a real, retryable error. Also threaded an optional `onLog` through the entire call chain (`performYtdlpUpdate` → `ensurePythonRuntime`/`ensurePyinstaller`/`rebuildYtdlp`/`verifyAndSwap` → every `run`/`probe`/`fetchJson`/`downloadFile` call), wired to `main.js`'s existing `log()` (`userData/main.log`) — every step now logs what it's running and how it ended (success, failure with stderr, or an explicit `TIMED OUT` line). Separately, added an "Open error log" button directly to `YtdlpUpdateDialog.tsx`'s "Update failed" screen (reuses the exact same `openErrorLog`/`shell.openPath` handler Options' own button already used) — previously the only options there were Quit or Retry, with no way to see why without leaving the app. Verified with lint + `tsc -b` only, per explicit instruction not to run the test suite this pass.
 
 **2026-08-15:**
 - **Dailymotion support**: wasn't a tracked `futureSpecs.md` item, came up as a direct question ("how difficult would it be to add Dailymotion?"). The app's multi-platform architecture already handled it generically (`isYouTubeUrl`/`getPlatformLabel` already routed any non-YouTube URL through `OtherPlatformDownloadCard`, and `getPlatformLabel` already fell back to "Dailymotion" from the hostname) — but a live test against the real bundled yt-dlp binary found Dailymotion now requires browser-TLS-fingerprint "impersonation" (`curl_cffi`) to get past bot detection, which wasn't bundled. Fixed by pinning `curl_cffi>=0.10,<0.16` in `src/python/requirements-build.txt` (yt-dlp's own compat shim hard-rejects anything outside `0.5.10`/`0.10.x`-`0.15.x` — confirmed live, 0.16.0 is explicitly rejected) and adding `--collect-all curl_cffi` to both PyInstaller invocations (`scripts/build-ytdlp-bin.mjs` and `updater.mjs`'s self-update rebuild, so a self-updated binary doesn't regress). Verified end-to-end against the actual rebuilt frozen binary, not a throwaway venv: a real Dailymotion video went from 0 formats to 6 (up to 4K), and a full real download completed through the app's own format selector. Also checked (from yt-dlp's own source, not a live test) that this same dependency is used unconditionally in Instagram's and TikTok's real request paths too — likely a reliability improvement for those, not just a Dailymotion fix.
