@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 // ipcRenderer.invoke/on('channel', ...) }). The only thing worth testing is
 // that wiring itself -- every exposed key maps to the right IPC channel name
 // with the right args forwarded -- since that's exactly the class of bug a
-// typo'd/renamed channel string introduces (main.js and preload.mjs have to
+// typo'd/renamed channel string introduces (main.mjs and preload.mjs have to
 // agree on these strings independently; nothing enforces it structurally).
 // vi.mock's factory is hoisted above all top-level code in this file,
 // including plain `const` declarations -- vi.hoisted() is what lets these

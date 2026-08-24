@@ -5,7 +5,6 @@ import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import './App.css'
 import MainPage from './MainPage';
-import Other from './other';
 import { electronAPIMock, electronAPIPythonDownloadMock } from '../../testing/mockData/electronAPIMocks.ts'
 import { getTheme } from './theme';
 import { YtdlpUpdaterProvider } from './hooks/useYtdlpUpdater';
@@ -14,7 +13,7 @@ import { BulkAddProvider } from './hooks/useBulkAddQueue.tsx';
 import { ThemeModeProvider, useThemeMode } from './hooks/useThemeMode.tsx';
 
 // Forwards uncaught renderer errors to the same main.log a crashed main
-// process already writes to (see errorLog:report in main.js) -- the renderer
+// process already writes to (see errorLog:report in main.mjs) -- the renderer
 // has no filesystem access of its own under contextIsolation/sandbox, so
 // this is the only way a JS error here ends up somewhere the user can read.
 function useRendererErrorLogging() {
@@ -62,7 +61,6 @@ function AppContent() {
                   with their own element; they're just locations MainPage's
                   own tab logic reads reactively (see MainPage.tsx). */}
               <Route path="/*" element={<MainPage />}></Route>
-              <Route path="/other" element={<Other />}/>
             </Routes>
           </BulkAddProvider>
         </LibraryNotificationProvider>
@@ -74,9 +72,17 @@ function AppContent() {
 function App() {
 
   if (!window.electronAPI) {
-    window.mockingElectron = "yes";
-    window.electronAPI = electronAPIMock;
-    window.electronAPIPythonDownload = electronAPIPythonDownloadMock;
+    // Only fall back to the mock bridge in dev (e.g. previewing the Vite
+    // dev server in a plain browser, with no Electron preload attached).
+    // In a real build, a missing electronAPI means the preload failed to
+    // attach -- that should fail loudly, not silently render fake data.
+    if (import.meta.env.DEV) {
+      window.mockingElectron = "yes";
+      window.electronAPI = electronAPIMock;
+      window.electronAPIPythonDownload = electronAPIPythonDownloadMock;
+    } else {
+      throw new Error('window.electronAPI is missing -- the preload bridge failed to attach.');
+    }
   }
 
   useRendererErrorLogging();

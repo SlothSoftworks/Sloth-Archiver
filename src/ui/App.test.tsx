@@ -10,7 +10,6 @@ import { electronAPIMock, electronAPIPythonDownloadMock } from '../../testing/mo
 // own responsibilities: the electronAPI mock fallback and renderer error
 // forwarding.
 vi.mock('./MainPage', () => ({ default: () => <div>MainPage Mock</div> }));
-vi.mock('./other', () => ({ default: () => <div>Other Mock</div> }));
 
 function renderApp(initialPath = '/') {
   return render(
@@ -46,12 +45,6 @@ describe('App', () => {
     stubRealBridge();
     renderApp('/');
     expect(screen.getByText('MainPage Mock')).toBeInTheDocument();
-  });
-
-  it('renders Other at /other', () => {
-    stubRealBridge();
-    renderApp('/other');
-    expect(screen.getByText('Other Mock')).toBeInTheDocument();
   });
 
   it('falls back to the mock electronAPI when no preload bridge is present', () => {

@@ -37,6 +37,7 @@ import LibraryVideoDetail from './LibraryVideoDetail';
 import PlaylistsSection from '../components/PlaylistsSection';
 import LibrarySearchBar from '../components/LibrarySearchBar';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
+import type { LibraryVideoMetadata } from '../../types';
 
 type LibraryViewMode = 'channel' | 'video';
 // Top-level split within the Library tab -- "Videos" is everything this
@@ -45,28 +46,6 @@ type LibraryViewMode = 'channel' | 'video';
 // the channel/video LibraryViewMode above. Plain local state, not
 // URL-routed, same as the LibraryViewMode toggle below.
 type LibrarySection = 'videos' | 'playlists';
-
-// Mirrors the shape returned by window.electronAPI.getLibraryIndex() -- kept
-// local rather than imported, matching how video-metadata shapes are defined
-// per-file elsewhere in this codebase.
-type LibraryVideoMetadata = {
-  videoId: string;
-  channelId: string | null;
-  channel: string | null;
-  title: string | null;
-  fullTitle: string | null;
-  description: string | null;
-  thumbnail: string | null;
-  originalUrl: string | null;
-  durationString: string | null;
-  uploadDate: string | null;
-  addedEpoch: number;
-  resolutions?: { resolution: string; filesizeMb: string }[];
-  downloadedFilePath: string | null;
-  downloadedResolution: string | null;
-  downloadedFormat: string | null;
-  downloadedAudioFilePath: string | null;
-};
 
 type LibraryVideo = {
   videoFolderName: string;
@@ -281,7 +260,7 @@ export default function LibraryScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoIdToOpen]);
 
-  // Fire-and-forget channel-icon/video-thumbnail fetches (main.js) only get
+  // Fire-and-forget channel-icon/video-thumbnail fetches (main.mjs) only get
   // picked up on the *next* index refresh -- without this, an already-
   // mounted Library tab would never show a newly-added video's channel icon
   // until the user re-navigated or hit manual refresh. Reuses

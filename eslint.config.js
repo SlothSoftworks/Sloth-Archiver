@@ -25,4 +25,16 @@ export default tseslint.config(
       ],
     },
   },
+  // Electron main process + build scripts -- plain Node ESM, no bundler/JSX,
+  // previously outside this config's `files` scope entirely (CC-013,
+  // reports/cleanCodeAnalysis.md).
+  {
+    extends: [js.configs.recommended],
+    files: ['**/*.{js,mjs}'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: globals.node,
+    },
+  },
 )

@@ -84,7 +84,7 @@ export default function YtdlpUpdateDialog() {
               <Stack direction="row" spacing={2}>
                 <Button onClick={quit} color="error" variant="outlined">Quit</Button>
                 {/* Same file/handler Options' own "Open error log" button uses
-                    (main.js's errorLog:open, shell.openPath) -- every step of
+                    (main.mjs's errorLog:open, shell.openPath) -- every step of
                     the update this dialog just ran gets logged there now
                     (see updater.mjs's onLog threading), so this is the one
                     place a failure here is actually diagnosable without

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import useDownloadVideo from './useDownloadVideo.tsx';
+import { MAX_SIMULTANEOUS_DOWNLOADS_CEILING } from '../../utils/constants.ts';
 
 export type BulkAddStatus = 'pending' | 'fetching' | 'downloading' | 'done' | 'skipped' | 'failed' | 'cancelled';
 
@@ -54,11 +55,11 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Hooks can't be called a variable number of times, so this is a fixed-size
 // worker pool of useDownloadVideo() instances; the user's actual "max
-// simultaneous downloads" setting (1-5, Options) just decides how many of
-// these get handed an item at once. Matches main.js's
-// MAX_SIMULTANEOUS_DOWNLOADS_CEILING and OptionsScreen.tsx's
-// MAX_SIMULTANEOUS_DOWNLOADS_OPTIONS.
-const MAX_DOWNLOAD_SLOTS = 5;
+// simultaneous downloads" setting (Options) just decides how many of these
+// get handed an item at once. Shared with OptionsScreen.tsx's own ceiling
+// (utils/constants.ts); main.mjs keeps its own copy of the same number,
+// since main-process and renderer never cross-import in this codebase.
+const MAX_DOWNLOAD_SLOTS = MAX_SIMULTANEOUS_DOWNLOADS_CEILING;
 
 // Picks the closest available height to the requested ceiling, preferring
 // not to exceed it (falls back to the closest above only if nothing at or
@@ -226,7 +227,7 @@ function useBulkAddQueueState() {
     updateItem(item.id, { status: 'fetching', error: undefined });
     try {
       // getVideoInfoPython never resolves with { success: false } -- a
-      // failure always rejects the promise (main.js), caught below.
+      // failure always rejects the promise (main.mjs), caught below.
       const info = await window.electronAPI.getVideoInfoPython(item.sourceUrl);
       const videoInfo = info.data.response;
       updateItem(item.id, {

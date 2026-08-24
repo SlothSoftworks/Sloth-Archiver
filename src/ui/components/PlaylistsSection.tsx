@@ -32,64 +32,17 @@ import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, buildAppVideoUrl, formatEpochLabel } from '../../utils/utils.ts';
 import LibrarySearchBar from './LibrarySearchBar';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
+import type { PlaylistSummary, PlaylistSnapshot } from '../../types';
 
 // Mirrors library.mjs's own CURRENT_PLAYLIST_SCHEMA_VERSION (main process
 // and renderer never cross-import in this codebase).
 const CURRENT_PLAYLIST_SCHEMA_VERSION = 1;
 
-// Kept local rather than imported from electron-api.d.ts -- matches how
-// every other library data shape in this app is defined per-file.
-type PlaylistSummary = {
-  playlistId: string;
-  title: string | null;
-  uploader: string | null;
-  entryCount: number;
-  addedEpoch: number;
-  lastRefreshedEpoch: number | null;
-  hasPreviousMetadata: boolean;
-  // thumbnailUrl is the current first entry's own thumbnail (preferred,
-  // always live); thumbnailPath is a locally-cached fallback
-  // (ensurePlaylistThumbnail, main.js) for when that's unavailable.
-  thumbnailUrl: string | null;
-  thumbnailPath: string | null;
-};
-
-type PlaylistEntry = {
-  videoId: string;
-  title: string | null;
-  url: string;
-  thumbnailUrl: string | null;
-  uploadDate: string | null;
-  unavailable?: boolean;
-};
-
-type PlaylistSnapshot = {
-  schemaVersion?: number;
-  playlistId: string;
-  title: string | null;
-  uploader: string | null;
-  originalUrl: string | null;
-  addedEpoch: number;
-  lastRefreshedEpoch: number | null;
-  entries: PlaylistEntry[];
-  localFiles: Record<string, string | null>;
-  hasPreviousMetadata: boolean;
-  previousMetadataSavedEpoch: number | null;
-  thumbnailPath: string | null;
-};
-
-// Epoch timestamps are Date.now() ms values -- same formatter
-// LibraryVideoDetail.tsx's own formatEpochLabel uses, kept as a separate
-// copy since there's no other coupling between these components.
-function formatEpochLabel(epoch: number): string {
-  return new Date(epoch).toLocaleString();
-}
-
 // Prefers the live first-entry thumbnail over the locally-cached fallback
-// (ensurePlaylistThumbnail, main.js), which only matters once there's no
+// (ensurePlaylistThumbnail, main.mjs), which only matters once there's no
 // live one to show (an empty playlist, or a dead first entry).
 function playlistThumbnailSrc(thumbnailUrl: string | null | undefined, thumbnailPath: string | null | undefined): string | undefined {
   if (thumbnailUrl) return thumbnailUrl;

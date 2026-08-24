@@ -3,19 +3,22 @@ import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import LibraryVideoPlayer from './LibraryVideoPlayer';
-import type { LibraryVideoMetadata } from '../screens/LibraryVideoDetail';
+import type { LibraryVideoMetadata } from '../../types';
 
 function baseMetadata(overrides: Partial<LibraryVideoMetadata> = {}): LibraryVideoMetadata {
   return {
     videoId: 'abc123',
+    channelId: null,
     channel: 'Some Channel',
     title: 'A Video',
     fullTitle: 'A Video',
     description: null,
     thumbnail: 'https://example.com/thumb.jpg',
     originalUrl: 'https://youtube.com/watch?v=abc123',
+    duration: null,
     durationString: '2:00',
     uploadDate: '20260101',
+    addedEpoch: 0,
     downloadedFilePath: null,
     downloadedResolution: null,
     downloadedFormat: null,

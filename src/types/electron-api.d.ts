@@ -1,3 +1,5 @@
+import type { LibraryVideoMetadata, PlaylistEntry, PlaylistSummary, PlaylistSnapshot } from '../types';
+
 export {}
 
 type FolderPickerResult = {
@@ -13,27 +15,6 @@ type OpenFolderResult = {
     canceled: boolean;
 };
 
-type LibraryVideoMetadata = {
-    schemaVersion: number;
-    videoId: string;
-    channelId: string | null;
-    channel: string | null;
-    title: string | null;
-    fullTitle: string | null;
-    description: string | null;
-    thumbnail: string | null;
-    originalUrl: string | null;
-    duration: number | null;
-    durationString: string | null;
-    uploadDate: string | null;
-    addedEpoch: number;
-    resolutions: { resolution: string; filesizeMb: string }[];
-    downloadedFilePath: string | null;
-    downloadedResolution: string | null;
-    downloadedFormat: string | null;
-    downloadedAudioFilePath: string | null;
-};
-
 type LibraryIndex = {
     channels: {
         channelFolderName: string;
@@ -47,48 +28,6 @@ type LibraryIndex = {
             epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
         }[];
     }[];
-};
-
-type PlaylistEntry = {
-    videoId: string;
-    title: string | null;
-    url: string;
-    thumbnailUrl: string | null;
-    uploadDate: string | null;
-    unavailable?: boolean;
-};
-
-type PlaylistSummary = {
-    playlistId: string;
-    title: string | null;
-    uploader: string | null;
-    entryCount: number;
-    addedEpoch: number;
-    lastRefreshedEpoch: number | null;
-    hasPreviousMetadata: boolean;
-    // The current first entry's own thumbnailUrl (preferred display source)
-    // and a locally-cached fallback file path for when that's unavailable
-    // (an empty playlist, or a dead first entry) -- see ensurePlaylistThumbnail
-    // (main.js).
-    thumbnailUrl: string | null;
-    thumbnailPath: string | null;
-};
-
-type PlaylistSnapshot = {
-    schemaVersion: number;
-    playlistId: string;
-    title: string | null;
-    uploader: string | null;
-    originalUrl: string | null;
-    addedEpoch: number;
-    lastRefreshedEpoch: number | null;
-    entries: PlaylistEntry[];
-    localFiles: Record<string, string | null>;
-    hasPreviousMetadata: boolean;
-    // What Undo would revert to, and when that version was itself last
-    // current -- null when there's nothing to undo.
-    previousMetadataSavedEpoch: number | null;
-    thumbnailPath: string | null;
 };
 
 declare global {

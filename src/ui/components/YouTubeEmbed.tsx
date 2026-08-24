@@ -1,7 +1,7 @@
 import { Box, type SxProps, type Theme } from '@mui/material';
 
 // youtube-nocookie.com (not youtube.com) + an explicit referrerPolicy -- the
-// renderer loads from a real http://127.0.0.1 loopback origin (see main.js's
+// renderer loads from a real http://127.0.0.1 loopback origin (see main.mjs's
 // startRendererServer) specifically so this can carry a real Referer.
 // YouTube's embed player has required one since late 2025 and fails with
 // "Error 153: Video player configuration error" without it -- a file://

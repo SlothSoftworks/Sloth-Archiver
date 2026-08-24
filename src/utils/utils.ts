@@ -1,28 +1,22 @@
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
+// Shared with the main process (src/electron/utils/youtube.mjs) rather than
+// a separate copy here -- see that file's own comment for why it lives
+// there. Drives DownloaderScreen.tsx's choice between the full YouTube flow
+// (VideoDetailCard) and the simplified multi-platform one
+// (OtherPlatformDownloadCard); a plain hostname check, not a "supported
+// platforms" allowlist, since yt-dlp itself decides what it can extract
+// from -- this only decides which UI to show.
+import { isYouTubeUrl } from '../electron/utils/youtube.mjs';
 
 function isValidUrl(string: string) {
     try {
       new URL(string);
       return true;
-    } catch (err) {
+    } catch {
       return false;
     }
   };
-
-// Drives DownloaderScreen.tsx's choice between the full YouTube flow
-// (VideoDetailCard) and the simplified multi-platform one
-// (OtherPlatformDownloadCard). A plain hostname check, not a "supported
-// platforms" allowlist -- yt-dlp itself decides what it can extract from,
-// this only decides which UI to show.
-function isYouTubeUrl(string: string): boolean {
-  try {
-    const hostname = new URL(string).hostname.replace(/^www\./, '');
-    return hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'music.youtube.com' || hostname === 'youtu.be';
-  } catch {
-    return false;
-  }
-}
 
 // Not a complete list (yt-dlp supports 1800+ sites) -- just the platforms
 // worth a friendly name instead of a bare hostname. Falls back to a
@@ -60,8 +54,16 @@ function convertYYYYMMDDStringToDate(stringDate: string, format = 'YYYY / MMM / 
   return dayjs(stringDate, 'YYYYMMDD').format(format);
 }
 
+// Epoch folder names/timestamps are Date.now() ms values, whether read
+// straight off a folder name (string, e.g. LibraryVideoDetail.tsx's version
+// selector) or off already-parsed JSON (number, e.g. PlaylistsSection.tsx's
+// addedEpoch/lastRefreshedEpoch) -- one formatter for both shapes.
+function formatEpochLabel(epoch: string | number): string {
+  return new Date(Number(epoch)).toLocaleString();
+}
+
 // Builds a URL for a local file inside the configured library directory,
-// served via the app-video:// protocol (main.js's handleAppVideoRequest).
+// served via the app-video:// protocol (main.mjs's handleAppVideoRequest).
 // filePath must already be a trusted, server-resolved absolute path -- never
 // arbitrary/user-typed input. cacheBustKey is appended as a query param
 // (the protocol handler ignores it, only reading the pathname) purely to
@@ -71,5 +73,5 @@ function buildAppVideoUrl(filePath: string, cacheBustKey = 0): string {
   return `app-video://local/${encodeURIComponent(filePath)}?v=${cacheBustKey}`;
 }
 
-export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, buildAppVideoUrl };
+export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl };
 

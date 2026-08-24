@@ -1,4 +1,16 @@
+import { videoResponseMock } from './pythonResponseMocks.ts';
+
 export const noop = () => {};
+
+// DownloaderScreen seeds its initial videoInfo state from this in dev-mock
+// mode (App.tsx's electronAPI fallback, see there) so previewing it in a
+// plain browser shows something instead of an empty form. window.mockingElectron
+// has no global type declaration (App.tsx sets it dynamically) -- same cast
+// used in App.test.tsx.
+export function getInitialDownloaderVideoInfo() {
+  const mocking = (window as unknown as { mockingElectron?: unknown }).mockingElectron;
+  return mocking === 'yes' ? videoResponseMock.data.response : null;
+}
 
 export const electronAPIMock = {
     pickFolder: noop,

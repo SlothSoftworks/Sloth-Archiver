@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
@@ -17,6 +17,16 @@ vi.mock('./components/BulkAddSidePanel', () => ({
   default: () => <div>BulkAddSidePanel Mock</div>,
   BulkAddToggleButton: () => <button>Bulk add</button>,
 }));
+
+// MainPage itself (not a mocked-out screen) reads window.electronAPI directly
+// for the top-bar version chip -- unlike App.tsx, nothing here falls back to
+// electronAPIMock when it's missing, so this needs its own minimal stub.
+beforeEach(() => {
+  window.electronAPI = {
+    ...window.electronAPI,
+    getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
+  };
+});
 
 // The badge/reset count is only ever incremented from within DownloaderScreen
 // (mocked out above), so this stands in for "some notification arrived" to

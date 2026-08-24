@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Box, CardMedia, IconButton, Typography } from '@mui/material';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
-import type { LibraryVideoMetadata } from '../screens/LibraryVideoDetail';
+import type { LibraryVideoMetadata } from '../../types';
 import YouTubeEmbed from './YouTubeEmbed';
 import ResizableMediaContainer from './ResizableMediaContainer';
 import { buildAppVideoUrl } from '../../utils/utils.ts';
@@ -17,7 +17,7 @@ export type LibraryVideoPlayerHandle = {
 // Only mp4/webm play reliably in Chromium's <video> element -- MKV is a
 // container-parsing limitation no delivery mechanism can work around, and
 // could still land here from a download made before buildDownloadArgs
-// (main.js) started forcing --merge-output-format mp4. This component
+// (main.mjs) started forcing --merge-output-format mp4. This component
 // quietly falls back to the static thumbnail rather than attempting a
 // player known to fail; "open in default player" exists in
 // LibraryVideoDetail for exactly this case.

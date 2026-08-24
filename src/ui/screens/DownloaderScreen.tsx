@@ -29,7 +29,7 @@ import OtherPlatformDownloadCard from './OtherPlatformDownloadCard';
 
 import { useDebounce } from '../../utils/useDebounce';
 
-import { videoResponseMock } from '../../../testing/mockData/pythonResponseMocks.ts';
+import { getInitialDownloaderVideoInfo } from '../../../testing/mockData/electronAPIMocks.ts';
 import VideoDetailCardSkeleton from './VideoDetailCardSkeleton.tsx';
 import { useLibraryNotification } from '../hooks/useLibraryNotifications';
 
@@ -41,10 +41,10 @@ export default function DownloaderScreen() {
   const [loadingVideoData, setLoadingVideoData] = useState(false);
   const [isUrlError, setIsUrlError] = useState(false);
   const debouncedVideoUrl = useDebounce(videoUrl);
-  const [videoInfo, setVideoInfo] = useState(window.mockingElectron !== "yes" ? null : videoResponseMock.data.response); // TODO change this after testing
+  const [videoInfo, setVideoInfo] = useState(getInitialDownloaderVideoInfo());
   const [videoInfoError, setVideoInfoError] = useState<string | null>(null);
   const [videoInfoFromCache, setVideoInfoFromCache] = useState(false);
-  const [libraryAddStatus, setLibraryAddStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
+  const [libraryAddStatus, setLibraryAddStatus] = useState<'idle' | 'saving' | 'error'>('idle');
   const [libraryErrorMessage, setLibraryErrorMessage] = useState<string | null>(null);
   const [librarySuccessSnackbarOpen, setLibrarySuccessSnackbarOpen] = useState(false);
   // Captured alongside the snackbar open, not read from videoInfo later,
@@ -223,7 +223,6 @@ export default function DownloaderScreen() {
               !videoInfo ? 'Load a video first' :
               !isYouTube ? 'Only YouTube videos can be added to the library' :
               libraryAddStatus === 'saving' ? 'Adding...' :
-              libraryAddStatus === 'done' ? 'Added to library' :
               libraryAddStatus === 'error' ? 'Failed to add -- click to retry' :
               'Add to library'
             } placement="top">
@@ -239,9 +238,9 @@ export default function DownloaderScreen() {
                     // unconditionally (including while disabled) fought MUI's own
                     // disabled-button styling and rendered the button invisible.
                     ...(videoInfo && isYouTube && {
-                      bgcolor: libraryAddStatus === 'error' ? 'error.main' : libraryAddStatus === 'done' ? 'success.main' : 'primary.main',
+                      bgcolor: libraryAddStatus === 'error' ? 'error.main' : 'primary.main',
                       color: 'primary.contrastText',
-                      '&:hover': { bgcolor: libraryAddStatus === 'error' ? 'error.dark' : libraryAddStatus === 'done' ? 'success.dark' : 'primary.dark' },
+                      '&:hover': { bgcolor: libraryAddStatus === 'error' ? 'error.dark' : 'primary.dark' },
                     }),
                   }}
                 >

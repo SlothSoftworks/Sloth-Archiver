@@ -24,7 +24,7 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 // Everything below uses async spawn instead so the app (and the renderer's
 // live progress display) stays responsive while an update runs.
 //
-// onLog, when given, is main.js's own log() (writes to userData/main.log,
+// onLog, when given, is main.mjs's own log() (writes to userData/main.log,
 // already viewable via Options -> "Open error log") -- passed through rather
 // than imported directly so this module stays testable without an Electron
 // `app` instance. Logs the command about to run and its outcome (including
@@ -131,7 +131,7 @@ function fetchJson(url, { onLog, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
             res.on('end', () => {
                 try {
                     resolve(JSON.parse(data));
-                } catch (e) {
+                } catch {
                     reject(new Error(`Failed to parse JSON from ${url}`));
                 }
             });
@@ -342,7 +342,7 @@ async function verifyAndSwap({ builtDir, liveDir, binaryName, onLog }) {
     return verify.stdout.trim();
 }
 
-// onLog is optional (main.js passes its own log() -> userData/main.log,
+// onLog is optional (main.mjs passes its own log() -> userData/main.log,
 // already viewable via Options -> "Open error log") -- every step below logs
 // the command it's about to run and how it ended (including a timeout, see
 // run()/probe()/fetchJson()/downloadFile() above), so a stuck or failed

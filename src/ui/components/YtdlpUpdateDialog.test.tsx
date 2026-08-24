@@ -78,7 +78,7 @@ describe('YtdlpUpdateDialog', () => {
     (window.electronAPI.checkForYtdlpUpdate as ReturnType<typeof vi.fn>).mockResolvedValue({
       current: '2026.7.4', latest: '2026.7.5', updateAvailable: true,
     });
-    // Mirrors main.js's real ytdlp:startUpdate handler, which always
+    // Mirrors main.mjs's real ytdlp:startUpdate handler, which always
     // broadcasts a stage:'error' progress event immediately before
     // rejecting -- useYtdlpUpdaterState's own catch block never resets
     // `stage` itself, so the failure overlay only actually appears because

@@ -5,12 +5,22 @@ import { spawn } from 'child_process';
 import fs from "fs";
 import crypto from 'crypto';
 import http from 'node:http';
-import https from 'node:https';
 import os from 'node:os';
 
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, PLAYLISTS_DIR_NAME } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME } from './library.mjs';
+import { createSettingsStore, clampMaxSimultaneousDownloads } from './settings.mjs';
+import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS } from './cookies.mjs';
+import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
+import { createFfmpegRunner } from './ffmpegUtils.mjs';
+import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
+
+// Re-exported so main.test.mjs (and anything else importing these from
+// './main.mjs') keeps working unchanged -- these now live in cookies.mjs/
+// videoInfo.mjs, but main.mjs is still where the rest of the codebase looks
+// for them.
+export { looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, buildResolutions, reshapeVideoInfo, isDeadVideoInfo };
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -86,24 +96,6 @@ const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const videoInfoCachePath = path.join(app.getPath('userData'), 'videoInfoCache.json');
 const VIDEO_INFO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Browsers yt-dlp's own --cookies-from-browser supports reading a cookie
-// database from directly (its documented keyring list) -- kept here as the
-// single source of truth for both validating settings:setCookiesConfig and
-// populating the Options screen's dropdown.
-const SUPPORTED_COOKIE_BROWSERS = ['brave', 'chrome', 'chromium', 'edge', 'firefox', 'opera', 'safari', 'vivaldi', 'whale'];
-
-// 'browser' mode takes priority whenever a browser is actually configured --
-// switching modes in Options doesn't delete the saved cookies.txt file, so a
-// leftover file from a previous 'file'-mode setup should never silently win
-// again once the user has moved to 'browser' mode.
-export function cookiesArgs() {
-    const { cookiesMode, cookiesBrowser } = readSettings();
-    if (cookiesMode === 'browser' && SUPPORTED_COOKIE_BROWSERS.includes(cookiesBrowser)) {
-        return ['--cookies-from-browser', cookiesBrowser];
-    }
-    return fs.existsSync(cookiesPath) ? ['--cookies', cookiesPath] : [];
-}
-
 // Points yt-dlp at the bundled deno binary rather than letting it search the
 // system PATH (which the "js-runtimes" default probe does on its own, but
 // only for a runtime it happens to find -- not guaranteed on a real user's
@@ -112,17 +104,13 @@ export function jsRuntimeArgs() {
     return ['--js-runtimes', `deno:${denoBinaryPath}`];
 }
 
-function readSettings() {
-    try {
-        return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    } catch {
-        return {};
-    }
-}
-
-function writeSettings(settings) {
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-}
+const { readSettings, writeSettings } = createSettingsStore(settingsPath);
+export const cookiesArgs = makeCookiesArgs(readSettings, cookiesPath);
+const { readVideoInfoCache, writeVideoInfoCache } = createVideoInfoCache(videoInfoCachePath);
+const { ensureChannelIcon, ensureVideoThumbnail, ensurePlaylistThumbnail } = createThumbnailFetchers({
+    ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, onLog: log,
+});
+const { getMediaDurationSeconds, runFfmpegWithProgress, convertWithFallback } = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath });
 
 // Registers app-video:// as a privileged scheme so the Library tab's player
 // can point <video>/<audio> at a downloaded file without loading it into
@@ -180,10 +168,10 @@ function startRendererServer() {
 }
 
 // Handles app-video://local/<encodeURIComponent(absolutePath)> requests.
-// Guard-railed against the configured libraryDir with the same
-// path.relative check deleteLibraryEntry (library.mjs) uses -- defense in
-// depth, since the renderer only ever constructs these URLs from data it
-// already has.
+// Guard-railed against the configured libraryDir via resolveInsideLibrary
+// (library.mjs), the same check every destructive library operation uses --
+// defense in depth, since the renderer only ever constructs these URLs from
+// data it already has.
 //
 // Uses net.fetch() against a file:// URL as the byte-stream source (fixed an
 // earlier "AbortError" bug from hand-rolling a Node fs.ReadStream-to-Response
@@ -200,10 +188,8 @@ async function handleAppVideoRequest(request) {
     const filePath = decodeURIComponent(url.pathname.slice(1));
 
     const { libraryDir } = readSettings();
-    const resolvedLibraryDir = path.resolve(libraryDir || '');
-    const resolvedFilePath = path.resolve(filePath);
-    const relative = path.relative(resolvedLibraryDir, resolvedFilePath);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    const resolvedFilePath = resolveInsideLibrary(libraryDir, filePath);
+    if (!resolvedFilePath) {
         return new Response('Forbidden', { status: 403 });
     }
 
@@ -270,21 +256,6 @@ async function handleAppVideoRequest(request) {
     }
 }
 
-// Keyed by the raw input URL -- different forms for the same video (a
-// youtu.be link vs. the canonical watch?v= form) won't match each other,
-// an acceptable cache miss rather than a correctness problem.
-function readVideoInfoCache() {
-    try {
-        return JSON.parse(fs.readFileSync(videoInfoCachePath, 'utf-8'));
-    } catch {
-        return {};
-    }
-}
-
-function writeVideoInfoCache(cache) {
-    fs.writeFileSync(videoInfoCachePath, JSON.stringify(cache, null, 2), 'utf-8');
-}
-
 // Testing convenience: lets the UI evict a single cached entry without waiting
 // out the week-long TTL or clearing the whole cache file by hand.
 ipcMain.handle('videoInfoCache:deleteEntry', async (e, url) => {
@@ -349,18 +320,6 @@ ipcMain.handle('settings:setThemeMode', async (e, mode) => {
     return { success: true, themeMode: settings.themeMode };
 });
 
-// Caps how many bulk-add items the renderer's queue (useBulkAddQueue.tsx)
-// will download at once -- clamped here too, not just in the Options UI,
-// since this value round-trips through a plain JSON settings file a user
-// could hand-edit.
-const MAX_SIMULTANEOUS_DOWNLOADS_CEILING = 5;
-
-function clampMaxSimultaneousDownloads(value) {
-    const n = Number(value);
-    if (!Number.isInteger(n)) return 1;
-    return Math.min(Math.max(n, 1), MAX_SIMULTANEOUS_DOWNLOADS_CEILING);
-}
-
 ipcMain.handle('settings:getMaxSimultaneousDownloads', async () => {
     const { maxSimultaneousDownloads } = readSettings();
     return { maxSimultaneousDownloads: clampMaxSimultaneousDownloads(maxSimultaneousDownloads ?? 1) };
@@ -397,122 +356,6 @@ ipcMain.handle('library:refreshIndex', async () => {
     const { libraryDir } = readSettings();
     return refreshLibraryIndex(libraryDir);
 });
-
-// A channel's avatar isn't in a single video's own info dict -- it only
-// shows up when yt-dlp extracts the *channel page* itself, a separate call
-// per channel, not something piggybacked on the per-video fetch. --flat-
-// playlist avoids resolving every video into a full info-dict (only the
-// header is wanted), and --playlist-end 1 caps it to one entry.
-function fetchChannelAvatarUrl(channelId) {
-    return new Promise((resolve) => {
-        const channelUrl = `https://www.youtube.com/channel/${channelId}`;
-        const script = spawn(ytdlpPath, [
-            '-J', '--no-warnings', '--flat-playlist', '--playlist-end', '1',
-            '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), channelUrl,
-        ]);
-        let data = '';
-        script.on('error', () => resolve(null));
-        script.stdout.on('data', (chunk) => { data += chunk.toString(); });
-        script.stderr.on('data', () => {});
-        script.on('close', (code) => {
-            if (code !== 0) {
-                resolve(null);
-                return;
-            }
-            try {
-                const thumbnails = JSON.parse(data).thumbnails || [];
-                // 'avatar_uncropped' is yt-dlp's full-resolution synthetic
-                // entry; falls back to the raw 'avatar' id if that's missing.
-                const avatar = thumbnails.find((t) => t.id === 'avatar_uncropped') || thumbnails.find((t) => t.id === 'avatar');
-                resolve(avatar ? avatar.url : null);
-            } catch {
-                resolve(null);
-            }
-        });
-    });
-}
-
-// Plain HTTPS GET, no new dependency -- avatar URLs are already fully-formed
-// CDN links, not something yt-dlp needs to fetch for us. Follows redirects
-// manually since Node's https module doesn't.
-function downloadImageToFile(url, destDir, baseName, redirectsLeft = 5) {
-    return new Promise((resolve, reject) => {
-        https.get(url, (res) => {
-            if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectsLeft > 0) {
-                res.resume();
-                downloadImageToFile(res.headers.location, destDir, baseName, redirectsLeft - 1).then(resolve, reject);
-                return;
-            }
-            if (res.statusCode !== 200) {
-                res.resume();
-                reject(new Error(`Failed to download image: HTTP ${res.statusCode}`));
-                return;
-            }
-            const contentType = res.headers['content-type'] || '';
-            const ext = contentType.includes('png') ? '.png' : contentType.includes('webp') ? '.webp' : '.jpg';
-
-            // Clear out any previous image first -- a re-fetch could land on a
-            // different extension than last time, and this keeps exactly one
-            // <baseName>.* file around rather than accumulating stale ones.
-            for (const existing of fs.readdirSync(destDir).filter((f) => f.startsWith(`${baseName}.`))) {
-                fs.rmSync(path.join(destDir, existing), { force: true });
-            }
-
-            const destPath = path.join(destDir, `${baseName}${ext}`);
-            const fileStream = fs.createWriteStream(destPath);
-            res.pipe(fileStream);
-            fileStream.on('finish', () => resolve(destPath));
-            fileStream.on('error', reject);
-        }).on('error', reject);
-    });
-}
-
-// Best-effort, never throws -- a missing channel icon just falls back to the
-// generic folder icon, not a broken add-to-library action. force skips the
-// "already have one" check, used by the "refresh channel icon" button.
-async function ensureChannelIcon(channelDir, channelId, { force = false } = {}) {
-    if (!channelId) return;
-    try {
-        const hasIcon = !force && fs.existsSync(channelDir) && fs.readdirSync(channelDir).some((f) => f.startsWith('channel-icon.'));
-        if (hasIcon) return;
-        const avatarUrl = await fetchChannelAvatarUrl(channelId);
-        if (!avatarUrl) return;
-        await downloadImageToFile(avatarUrl, channelDir, 'channel-icon');
-    } catch (err) {
-        log('[channel-icon] fetch failed', String(err));
-    }
-}
-
-// Video-level (not per-epoch): one thumbnail lives directly in videoDir,
-// shared across every version. Unlike the channel avatar, the URL is already
-// in videoMetaData -- no extra yt-dlp call needed. Skips (rather than
-// force-refetching) once a video-thumbnail.* file exists.
-async function ensureVideoThumbnail(videoDir, thumbnailUrl) {
-    if (!thumbnailUrl) return;
-    try {
-        const hasThumbnail = fs.existsSync(videoDir) && fs.readdirSync(videoDir).some((f) => f.startsWith('video-thumbnail.'));
-        if (hasThumbnail) return;
-        await downloadImageToFile(thumbnailUrl, videoDir, 'video-thumbnail');
-    } catch (err) {
-        log('[video-thumbnail] fetch failed', String(err));
-    }
-}
-
-// Playlist-level, a sibling of the epoch folders -- unlike
-// ensureVideoThumbnail, always force-refetches rather than skipping once a
-// file exists: "the playlist's thumbnail" is whichever video is first in the
-// list *right now*, so it has to track that on every write/refresh.
-// Silently no-ops when the first entry has no thumbnailUrl (empty playlist,
-// or a dead first entry), deliberately leaving whatever was cached in place
-// as a fallback for "the playlist emptied out later."
-async function ensurePlaylistThumbnail(playlistDir, thumbnailUrl) {
-    if (!thumbnailUrl) return;
-    try {
-        await downloadImageToFile(thumbnailUrl, playlistDir, 'playlist-thumbnail');
-    } catch (err) {
-        log('[playlist-thumbnail] fetch failed', String(err));
-    }
-}
 
 // User-triggered from the Library tab's channel view -- unlike the
 // fire-and-forget calls below, this one is awaited so the button can show a
@@ -836,69 +679,6 @@ ipcMain.handle('system:pathExists', async (e, filePath) => {
     }
 });
 
-// Accepts either a real Netscape cookies.txt export (produced by browser
-// extensions like "Get cookies.txt") or a raw "name=value; name2=value2"
-// cookie-header string copied from a browser's DevTools Network tab --
-// normalizing the latter into Netscape format so yt-dlp's --cookies flag
-// can consume it either way.
-export function looksLikeNetscapeFormat(text) {
-    return /^\s*#/.test(text) || /^[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]+\t[^\t\n]*$/m.test(text);
-}
-
-export function convertHeaderCookiesToNetscape(text) {
-    const farFutureExpiry = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 5;
-    // A real cookie-header string is a single logical line. Pasting one out
-    // of a wrapped display (e.g. a chat code block) can pick up stray line
-    // breaks at the wrap points, severing a value mid-token and corrupting
-    // everything after it. Collapsing embedded newlines first prevents that.
-    const normalized = text.replace(/[\r\n]+/g, '');
-    const lines = ['# Netscape HTTP Cookie File'];
-    for (const pair of normalized.split(';')) {
-        const trimmed = pair.trim();
-        if (!trimmed) continue;
-        const eqIdx = trimmed.indexOf('=');
-        if (eqIdx === -1) continue;
-        const name = trimmed.slice(0, eqIdx).trim();
-        const value = trimmed.slice(eqIdx + 1).trim();
-        if (!name) continue;
-        // The header was captured from a request to youtube.com, but
-        // yt-dlp's YouTube extractor also makes requests to Google's shared
-        // account-auth infrastructure -- registering under both domains
-        // (cookie jars key by domain+path+name, so this can't conflict)
-        // maximizes the chance the cookie is sent where needed.
-        for (const domain of ['.youtube.com', '.google.com']) {
-            lines.push([domain, 'TRUE', '/', 'TRUE', String(farFutureExpiry), name, value].join('\t'));
-        }
-    }
-    // Validity/skip counts are derived centrally in validateNetscapeLines,
-    // so they're correct for both this converted output and a raw Netscape
-    // passthrough alike.
-    return lines.join('\n') + '\n';
-}
-
-// Verifies the final file is well-formed Netscape cookie format (every
-// non-comment, non-blank line has exactly 7 tab-separated fields) -- a raw
-// Netscape paste can suffer the same wrapped-copy corruption as the
-// header-string path. "valid" counts *distinct cookie names*, not lines --
-// a cookie may legitimately appear on more than one line (our own dual
-// .youtube.com/.google.com registration, or a real export covering both
-// youtube.com and www.youtube.com), and raw line counts would overstate how
-// many cookies were loaded.
-export function validateNetscapeLines(content) {
-    const validNames = new Set();
-    let invalid = 0;
-    for (const line of content.split('\n')) {
-        if (!line.trim() || line.startsWith('#')) continue;
-        const fields = line.split('\t');
-        if (fields.length === 7) {
-            validNames.add(fields[5]);
-        } else {
-            invalid++;
-        }
-    }
-    return { valid: validNames.size, invalid };
-}
-
 ipcMain.handle('cookies:save', async (event, cookieText) => {
     const trimmed = (cookieText || '').trim();
     if (!trimmed) {
@@ -993,253 +773,9 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options)
     });
 })
 
-// Matches runFfmpegWithProgress's own '-b:a 192k' for the MP3 extraction
-// pass -- the estimate has to agree with what really gets encoded.
-const MP3_BITRATE_KBPS = 192;
-
-export function buildResolutions(info) {
-    const seen = new Set();
-    const resolutions = [];
-
-    // Every real download is bestvideo+bestaudio merged (see
-    // buildDownloadArgs), so a video-only format's filesize understates the
-    // merged output -- add the best available audio-only track's size to
-    // every estimate below, same as yt-dlp's own "bestaudio" pick.
-    const audioFormats = (info.formats || []).filter((fmt) => fmt.vcodec === 'none' && fmt.acodec && fmt.acodec !== 'none');
-    const bestAudio = audioFormats.reduce((best, fmt) => ((fmt.abr || 0) > (best?.abr || 0) ? fmt : best), null);
-    let bestAudioSize = bestAudio ? (bestAudio.filesize || bestAudio.filesize_approx) : null;
-    if (!bestAudioSize && bestAudio?.abr && info.duration) {
-        bestAudioSize = (bestAudio.abr * 1000 * info.duration) / 8;
-    }
-
-    for (const fmt of info.formats || []) {
-        const height = fmt.height;
-        if (fmt.vcodec === 'none' || !height) continue;
-        if (seen.has(height)) continue;
-        seen.add(height);
-
-        let size = fmt.filesize || fmt.filesize_approx;
-        // tbr is decimal kbps (per-thousand), not binary -- kilobits-to-bytes
-        // is *1000/8, not *1024/8.
-        if (!size && fmt.tbr && info.duration) {
-            size = (fmt.tbr * 1000 * info.duration) / 8;
-        }
-        if (size != null && bestAudioSize) {
-            size += bestAudioSize;
-        }
-
-        resolutions.push({
-            resolution: String(height),
-            filesizeMb: size != null ? Math.round((size / (1024 * 1024)) * 100) / 100 : null,
-            ext: fmt.ext,
-        });
-    }
-
-    // A real, audio-only estimate -- not a leftover clone of the smallest
-    // video resolution's (video-track) byte count, which is what this used
-    // to be and had nothing to do with an actual MP3's size.
-    if (resolutions.length > 0) {
-        const mp3Size = info.duration ? (MP3_BITRATE_KBPS * 1000 * info.duration) / 8 : null;
-        resolutions.push({
-            resolution: 'MP3',
-            filesizeMb: mp3Size != null ? Math.round((mp3Size / (1024 * 1024)) * 100) / 100 : null,
-            ext: 'mp3',
-        });
-    }
-
-    return resolutions;
-}
-
-export function reshapeVideoInfo(info) {
-    return {
-        id: info.id,
-        title: info.title,
-        resolutions: buildResolutions(info),
-        thumbnail: info.thumbnail,
-        additionalThumbnails: info.thumbnails,
-        description: info.description,
-        channelId: info.channel_id,
-        duration: info.duration,
-        durationString: info.duration_string,
-        originalUrl: info.original_url,
-        categories: info.categories,
-        tags: info.tags,
-        releaseTimestamp: info.release_timestamp,
-        uploader: info.uploader,
-        uploaderId: info.uploader_id,
-        uploaderUrl: info.uploader_url,
-        uploadDate: info.upload_date,
-        playlist: info.playlist,
-        playlistIndex: info.playlist_index,
-        fullTitle: info.fulltitle,
-        sourceFormat: info.ext,
-        language: info.language,
-    };
-}
-
-// A video is effectively dead (unavailable/private/deleted/region-locked)
-// even when yt-dlp exits 0 with a parseable info dict --
-// --ignore-no-formats-error (below) lets that non-fatal case through rather
-// than hard-failing. The remaining signal: no channel/uploader at all, since
-// yt-dlp can't resolve who uploaded a video it can't actually load the page
-// for.
-//
-// Does NOT also treat zero height-having resolutions as dead: that's the
-// normal, valid shape of an audio-only source like SoundCloud, not a broken
-// video. The genuinely-no-formats-at-all case is caught earlier (see the
-// `info.formats.length === 0` check below), before this function even runs.
-export function isDeadVideoInfo(response) {
-    if (!response.channelId && !response.uploader) return true;
-    return false;
-}
-
-// Drives which error message the empty-formats check below shows -- kept as
-// its own local copy rather than importing the renderer's src/utils/utils.ts
-// one, matching this codebase's main-process/renderer separation elsewhere.
-function isYouTubeUrl(url) {
-    try {
-        const hostname = new URL(url).hostname.replace(/^www\./, '');
-        return hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'music.youtube.com' || hostname === 'youtu.be';
-    } catch {
-        return false;
-    }
-}
-
-// Matches yt-dlp's own real error strings for a genuinely dead video.
-// Deliberately distinct from a bot-check failure (e.g. "Sign in to confirm
-// you're not a bot"), which is a transient request-level block, not a fact
-// about the video itself.
-const DEAD_VIDEO_ERROR_PATTERNS = [
-    /private video/i,
-    /video (is |has been )?(unavailable|removed|deleted)/i,
-    /this video is no longer available/i,
-    /video does not exist/i,
-    /account associated with this video has been terminated/i,
-    /removed by the uploader/i,
-    /removed for violating/i,
-    /copyright grounds/i,
-    /content is not available/i,
-    /members-only|join this channel/i,
-];
-
-// getVideoInfoPython's main fetch always passes --ignore-no-formats-error,
-// which swallows yt-dlp's real error message entirely -- exit 0, empty
-// stderr, degraded JSON, whether the cause is a private/deleted video or a
-// bot-check block. This makes one extra, short-lived call *without* that
-// flag, purely to read yt-dlp's real error string -- only triggered on the
-// already-unusual "formats came back empty" path for a YouTube URL.
-function classifyDeadYouTubeVideo(url) {
-    return new Promise((resolve) => {
-        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url]);
-        let stderrOutput = '';
-        let settled = false;
-        // Only runs on a path that already failed once, so a real dead-video
-        // error should surface fast -- guards against this classification
-        // call hanging the whole getVideoInfoPython response.
-        const timeout = setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            script.kill();
-            resolve(false);
-        }, 20000);
-        const finish = (value) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timeout);
-            resolve(value);
-        };
-        script.on('error', () => finish(false));
-        script.stderr.on('data', (chunk) => { stderrOutput += chunk.toString(); });
-        script.on('close', (code) => {
-            if (code === 0) {
-                finish(false);
-                return;
-            }
-            finish(DEAD_VIDEO_ERROR_PATTERNS.some((pattern) => pattern.test(stderrOutput)));
-        });
-    });
-}
-
-ipcMain.handle('getVideoInfoPython', async (event, url) => {
-    const cache = readVideoInfoCache();
-    const cached = cache[url];
-    if (cached && Date.now() - cached.savedEpoch < VIDEO_INFO_CACHE_TTL_MS) {
-        // Self-healing: a dead-video response doesn't get served as valid
-        // forever -- drop it and fall through to a fresh fetch.
-        if (!isDeadVideoInfo(cached.response)) {
-            return { success: true, data: { response: cached.response, fromCache: true } };
-        }
-        delete cache[url];
-        writeVideoInfoCache(cache);
-    }
-
-    return new Promise((resolve, reject) => {
-        // --ignore-no-formats-error matters here specifically: -J alone does
-        // NOT skip format-selector resolution (only --list-formats/--simulate
-        // do that), so even a pure metadata dump aborts with "Requested
-        // format is not available" if the default selector doesn't match --
-        // e.g. an authenticated session whose format list doesn't satisfy it.
-        // Only the raw formats list is needed here, so this flag makes that
-        // failure mode non-fatal.
-        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ignore-no-formats-error', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url]);
-        let data = '';
-        let error = '';
-
-        script.on('error', (err) => {
-            reject(new Error(`Failed to start yt-dlp: ${err.message}`));
-        });
-
-        script.stdout.on('data', (output) => {
-            data += output.toString();
-        });
-        script.stderr.on('data', err => {
-            error += err.toString();
-        });
-
-        script.on('close', async (code) => {
-            if (code !== 0) {
-                reject(new Error(error || `yt-dlp exited with code ${code}`));
-            } else {
-                try {
-                    const info = JSON.parse(data);
-                    // --ignore-no-formats-error makes yt-dlp swallow real
-                    // extraction failures internally -- most commonly
-                    // YouTube's bot-check with no cookies loaded -- as a
-                    // degraded JSON blob (formats: [], but title/uploader
-                    // still present) rather than a thrown error. A
-                    // selector-mismatch (the case the flag is actually for)
-                    // always leaves formats non-empty, so this only catches
-                    // genuine extraction failures.
-                    if (!info.formats || info.formats.length === 0) {
-                        if (isYouTubeUrl(url) && await classifyDeadYouTubeVideo(url)) {
-                            reject(new Error('This video is unavailable on YouTube -- it may be private, deleted, or removed by the uploader.'));
-                            return;
-                        }
-                        const message = isYouTubeUrl(url)
-                            ? 'yt-dlp could not retrieve any downloadable formats for this video. This usually means YouTube blocked the request (e.g. "Sign in to confirm you\'re not a bot") -- load a cookie or enable "cookies from browser" in Options and try again.'
-                            : 'yt-dlp could not retrieve any downloadable formats for this URL.';
-                        reject(new Error(message));
-                        return;
-                    }
-                    const response = reshapeVideoInfo(info);
-                    // Reject before this gets cached or handed to a caller
-                    // that would create a library folder with nothing to
-                    // archive.
-                    if (isDeadVideoInfo(response)) {
-                        reject(new Error('No downloadable formats found for this video -- it may be unavailable, private, or region-locked.'));
-                        return;
-                    }
-                    const freshCache = readVideoInfoCache();
-                    freshCache[url] = { savedEpoch: Date.now(), response };
-                    writeVideoInfoCache(freshCache);
-                    resolve({ success: true, data: { response, fromCache: false } });
-                } catch (e) {
-                    reject(new Error('Failed to parse video data'));
-                }
-            }
-        });
-    });
-});
+ipcMain.handle('getVideoInfoPython', async (event, url) => fetchVideoInfo(url, {
+    ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS,
+}));
 
 export function needsDirectFfmpegPass({ format, resolution }) {
     if (resolution && resolution.toLowerCase() === 'mp3') return true;
@@ -1350,7 +886,7 @@ export function findFinalFile(outputPath) {
             })
             .sort((a, b) => b.mtimeMs - a.mtimeMs);
         return matches.length > 0 ? matches[0].full : outputPath;
-    } catch (e) {
+    } catch {
         return outputPath;
     }
 }
@@ -1363,118 +899,6 @@ export function findRawDownloadedFile(rawDir) {
         throw new Error('yt-dlp finished but no raw downloaded file was found');
     }
     return path.join(rawDir, match);
-}
-
-function getMediaDurationSeconds(filePath) {
-    return new Promise((resolve, reject) => {
-        const proc = spawn(ffprobeBinaryPath, ['-v', 'quiet', '-print_format', 'json', '-show_format', filePath]);
-        let stdout = '';
-        let stderr = '';
-        proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-        proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-        proc.on('error', reject);
-        proc.on('close', (code) => {
-            if (code !== 0) {
-                reject(new Error(stderr || `ffprobe exited with code ${code}`));
-                return;
-            }
-            try {
-                const duration = parseFloat(JSON.parse(stdout).format.duration);
-                resolve(Number.isFinite(duration) ? duration : 0);
-            } catch (e) {
-                reject(new Error('Failed to parse ffprobe output'));
-            }
-        });
-    });
-}
-
-// ffmpeg's stderr is a wall of banner/build-config/stream-metadata noise even
-// on success, with the real failure cause buried in there as plain text.
-// This strips the recognizable noise, then takes the *first* remaining line
-// that looks like an actual error -- the first is the root cause, later
-// ones tend to be consequences of it. Falls back to a generic message if
-// nothing recognizable survives.
-const FFMPEG_NOISE_LINE = /^(ffmpeg version|built with|configuration:|lib(avutil|avcodec|avformat|avdevice|avfilter|swscale|swresample|postproc)|Input #\d|Duration:|Stream #|Stream mapping:|Press \[q\]|frame=|size=|time=|bitrate=|speed=|\s*Metadata:$|\s*(major_brand|minor_version|compatible_brands|title|artist|date|encoder|description|handler_name|vendor_id|comment|composer|genre)\s*:)/i;
-const FFMPEG_ERROR_KEYWORDS = /\b(error|invalid|cannot|could not|no such|permission denied|failed|unable|aborting|not found|no space|unknown|unrecognized)\b/i;
-const FFMPEG_LINE_PREFIX = /^\[[^\]]*\]\s*/;
-
-// Translates the handful of failure causes this app's ffmpeg invocations can
-// actually hit into plain language -- the extracted root-cause line is still
-// raw ffmpeg jargon otherwise. Matched against the already-extracted single
-// line, so each pattern only needs to account for wording, not position.
-const FFMPEG_FRIENDLY_ERRORS = [
-    { pattern: /-to value smaller than -ss/i, message: 'The clip end time must be after the start time.' },
-    { pattern: /permission denied/i, message: 'Permission denied while writing the output file -- check that the destination folder is writable.' },
-    { pattern: /no space left on device/i, message: 'Not enough free disk space to finish this operation.' },
-    { pattern: /(unknown output format|unable to find a suitable output format|unknown encoder|unknown codec)/i, message: 'This output format isn\'t supported by the bundled ffmpeg build -- try a different format.' },
-    { pattern: /no such file or directory/i, message: 'A required file could not be found (it may have been moved or deleted).' },
-    { pattern: /moov atom not found|invalid data found when processing input/i, message: 'The source file appears to be corrupted or incomplete.' },
-];
-
-function summarizeFfmpegError(stderr, code) {
-    const candidateLines = (stderr || '')
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line && !FFMPEG_NOISE_LINE.test(line));
-    const rootCause = candidateLines.find((line) => FFMPEG_ERROR_KEYWORDS.test(line));
-    const message = (rootCause || candidateLines.at(-1) || '').replace(FFMPEG_LINE_PREFIX, '').trim();
-    if (!message) return `ffmpeg failed to process this file (exit code ${code}).`;
-    const friendly = FFMPEG_FRIENDLY_ERRORS.find(({ pattern }) => pattern.test(message));
-    if (friendly) return friendly.message;
-    return message.length > 300 ? `${message.slice(0, 300)}...` : message;
-}
-
-// Bypasses yt-dlp's own postprocessing entirely (TD-004): its postprocessing
-// subprocess only reads output after the process exits, so it can never
-// report real progress; spawning ffmpeg ourselves with -progress pipe:1
-// gives a genuine, continuous percentage.
-function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress, extraInputArgs = [] }) {
-    return new Promise((resolve, reject) => {
-        const args = ['-i', inputPath, ...extraInputArgs, ...codecArgs, '-progress', 'pipe:1', '-y', outputPath];
-        const proc = spawn(ffmpegBinaryPath, args);
-        let stderr = '';
-        let buffer = '';
-
-        proc.stdout.on('data', (chunk) => {
-            buffer += chunk.toString();
-            const lines = buffer.split('\n');
-            buffer = lines.pop();
-            for (const line of lines) {
-                const match = line.match(/^out_time_us=(\d+)/);
-                if (match && totalDurationSeconds > 0) {
-                    const percent = Math.min(100, (Number(match[1]) / (totalDurationSeconds * 1_000_000)) * 100);
-                    onProgress?.(percent);
-                }
-            }
-        });
-        proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-        proc.on('error', reject);
-        proc.on('close', (code) => {
-            if (code !== 0) {
-                reject(new Error(summarizeFfmpegError(stderr, code)));
-            } else {
-                resolve();
-            }
-        });
-    });
-}
-
-// Try a fast remux first (no quality loss, just a container swap); fall back
-// to a full re-encode if the source codec isn't compatible with the target
-// container. Shared by the download-time format recode below and the
-// Library view's standalone "Convert to" utility.
-async function convertWithFallback({ inputPath, outputPath, format, totalDurationSeconds, onProgress }) {
-    try {
-        await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: ['-c', 'copy'], totalDurationSeconds, onProgress });
-    } catch {
-        // WebM is spec'd to only hold VP8/VP9/AV1 video + Vorbis/Opus audio --
-        // falling back to libx264/aac universally would produce a file labeled
-        // .webm that isn't actually valid WebM.
-        const reencodeCodecArgs = (format || '').toLowerCase() === 'webm'
-            ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus']
-            : ['-c:v', 'libx264', '-c:a', 'aac'];
-        await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: reencodeCodecArgs, totalDurationSeconds, onProgress });
-    }
 }
 
 // Tracked so the updater can refuse to swap the live yt-dlp binary out from

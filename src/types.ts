@@ -1,6 +1,79 @@
-interface Resolution {
+export interface Resolution {
     resolution: string;
     filesizeMb: string;
+}
+
+// Mirrors the shape returned by window.electronAPI.getLibraryIndex() et al.
+// (see library.mjs's buildEpochMetadata) -- the one canonical declaration,
+// imported by both src/types/electron-api.d.ts's ambient Window type and
+// every renderer file that reads library metadata, rather than each
+// redeclaring its own (that drifted once already: schemaVersion was
+// required in one copy and optional in another).
+export type LibraryVideoMetadata = {
+    // Only absent on entries written before schemaVersion existed.
+    schemaVersion?: number;
+    videoId: string;
+    channelId: string | null;
+    channel: string | null;
+    title: string | null;
+    fullTitle: string | null;
+    description: string | null;
+    thumbnail: string | null;
+    originalUrl: string | null;
+    duration: number | null;
+    durationString: string | null;
+    uploadDate: string | null;
+    addedEpoch: number;
+    // Captured at add-time -- entries written before this field existed
+    // won't have it (library.mjs's buildEpochMetadata).
+    resolutions?: Resolution[];
+    downloadedFilePath: string | null;
+    downloadedResolution: string | null;
+    downloadedFormat: string | null;
+    downloadedAudioFilePath: string | null;
+}
+
+export type PlaylistEntry = {
+    videoId: string;
+    title: string | null;
+    url: string;
+    thumbnailUrl: string | null;
+    uploadDate: string | null;
+    unavailable?: boolean;
+}
+
+export type PlaylistSummary = {
+    playlistId: string;
+    title: string | null;
+    uploader: string | null;
+    entryCount: number;
+    addedEpoch: number;
+    lastRefreshedEpoch: number | null;
+    hasPreviousMetadata: boolean;
+    // The current first entry's own thumbnailUrl (preferred display source)
+    // and a locally-cached fallback file path for when that's unavailable
+    // (an empty playlist, or a dead first entry) -- see ensurePlaylistThumbnail
+    // (main.mjs).
+    thumbnailUrl: string | null;
+    thumbnailPath: string | null;
+}
+
+export type PlaylistSnapshot = {
+    // Only absent on entries written before schemaVersion existed.
+    schemaVersion?: number;
+    playlistId: string;
+    title: string | null;
+    uploader: string | null;
+    originalUrl: string | null;
+    addedEpoch: number;
+    lastRefreshedEpoch: number | null;
+    entries: PlaylistEntry[];
+    localFiles: Record<string, string | null>;
+    hasPreviousMetadata: boolean;
+    // What Undo would revert to, and when that version was itself last
+    // current -- null when there's nothing to undo.
+    previousMetadataSavedEpoch: number | null;
+    thumbnailPath: string | null;
 }
 
 export type VideoDataProps = {

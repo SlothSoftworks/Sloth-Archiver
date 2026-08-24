@@ -30,7 +30,7 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 | `reports/` | Standing project logs — technical debt and a security review — not app code. |
 | `docs/` | This file and the broader architecture overview. |
 
-Test files live directly beside the file they test (`main.js` / `main.test.js`,
+Test files live directly beside the file they test (`main.mjs` / `main.test.mjs`,
 `LibraryScreen.tsx` / `LibraryScreen.test.tsx`, etc.), run with Vitest.
 
 ## The renderer (`src/ui`)
@@ -54,7 +54,7 @@ subprocess access at all — its only way to do anything real is through
 
 This is where essentially all of the app's actual logic lives. Five files:
 
-### `main.js`
+### `main.mjs`
 
 The largest file, and the app's entry point — it creates the application window,
 registers every IPC handler the renderer can call, and directly drives the
@@ -94,9 +94,9 @@ The bridge between the renderer and everything above. It runs in a special,
 privileged-but-limited context and does exactly one thing: expose two fixed
 objects — `window.electronAPI` and `window.electronAPIPythonDownload` — onto the
 renderer's `window`, where every property is a thin function that forwards to a
-named IPC channel in `main.js`. Nothing else is exposed. If you're adding a new
+named IPC channel in `main.mjs`. Nothing else is exposed. If you're adding a new
 capability the UI needs, this is the second file you touch (after adding the
-handler in `main.js`) — and `src/types/electron-api.d.ts` is the third, since
+handler in `main.mjs`) — and `src/types/electron-api.d.ts` is the third, since
 that's the TypeScript type declaration for this exact same surface that the
 renderer code actually gets checked against.
 
@@ -113,11 +113,11 @@ in-memory structure the UI actually renders from, and a small cache of that scan
 so repeated reads don't re-walk the filesystem every time.
 
 Nothing in this file talks to `yt-dlp`/`ffmpeg` or does any IPC itself — it's
-pure filesystem logic, called *by* `main.js`'s handlers.
+pure filesystem logic, called *by* `main.mjs`'s handlers.
 
 ### `updater.mjs`
 
-The self-updater for the bundled `yt-dlp` binary, kept separate from `main.js`
+The self-updater for the bundled `yt-dlp` binary, kept separate from `main.mjs`
 because it's a genuinely distinct pipeline: checking the latest available
 `yt-dlp` version, fetching a portable Python runtime if one isn't already staged,
 installing PyInstaller into it, re-freezing `yt-dlp` from source with that
@@ -128,7 +128,7 @@ are intentionally kept in sync.
 
 ### `utils/constants.mjs`
 
-A couple of small, static values shared by a few handlers in `main.js` (the
+A couple of small, static values shared by a few handlers in `main.mjs` (the
 supported recode formats and the Save-dialog file-type filters built from them).
 Small enough that it doesn't need its own section beyond this mention.
 
@@ -141,7 +141,7 @@ through the same narrow path — there's no direct route:
 sequenceDiagram
     participant UI as Renderer (React)
     participant Bridge as preload.mjs
-    participant Main as main.js (IPC handler)
+    participant Main as main.mjs (IPC handler)
     participant Lib as library.mjs
     participant Tool as yt-dlp / ffmpeg (child process)
     participant FS as Filesystem
@@ -164,9 +164,9 @@ sequenceDiagram
 A few things worth internalizing from this:
 
 - **The renderer never calls `library.mjs` or a subprocess directly** — it always
-  goes through a named IPC channel, handled in `main.js`.
-- **`main.js` is the only file that spawns `yt-dlp`/`ffmpeg`.** `library.mjs`
-  never does; it's pure filesystem logic that `main.js`'s handlers call into.
+  goes through a named IPC channel, handled in `main.mjs`.
+- **`main.mjs` is the only file that spawns `yt-dlp`/`ffmpeg`.** `library.mjs`
+  never does; it's pure filesystem logic that `main.mjs`'s handlers call into.
 - **Long-running work (downloads, ffmpeg passes, the updater) reports progress
   over its own separate channel**, not as part of the original request/response —
   the initial call just kicks the work off.
@@ -198,7 +198,7 @@ and `dist/deno/` folders into the installed app as extra, read-only resources �
 alongside a copy of the Python entrypoint script and requirements file (used
 later, entirely on the user's own machine, if they ever trigger a self-update).
 
-At runtime, `main.js` resolves the real path to each of these differently
+At runtime, `main.mjs` resolves the real path to each of these differently
 depending on whether it's running from a local dev checkout or an installed,
 packaged app, since the packaged layout is different from the source tree. The
 `yt-dlp` binary specifically gets copied once more, out of that read-only
@@ -211,11 +211,11 @@ elevated permissions.
 
 | If you're... | Start in |
 |---|---|
-| Changing what a download button does, or adding a resolution/format option | `main.js` (the video-info/download handlers) |
+| Changing what a download button does, or adding a resolution/format option | `main.mjs` (the video-info/download handlers) |
 | Changing how a video/version/playlist is stored or read back | `library.mjs` |
-| Adding a brand-new capability the UI needs from the main process | `main.js` (add the handler) → `preload.mjs` (expose it) → `src/types/electron-api.d.ts` (type it) |
+| Adding a brand-new capability the UI needs from the main process | `main.mjs` (add the handler) → `preload.mjs` (expose it) → `src/types/electron-api.d.ts` (type it) |
 | Changing a screen or adding a new one | `src/ui/screens/` |
 | Changing shared, stateful UI logic (the bulk queue, download progress, search) | `src/ui/hooks/` |
 | Touching the self-update flow | `updater.mjs` |
 | Changing how `yt-dlp`/`ffmpeg`/`deno` get bundled at build time | the relevant `scripts/*.mjs` file |
-| Adjusting persisted settings (a new Options-tab toggle, etc.) | the settings handlers in `main.js`, plus wherever it's read in `src/ui/screens/OptionsScreen.tsx` |
+| Adjusting persisted settings (a new Options-tab toggle, etc.) | the settings handlers in `main.mjs`, plus wherever it's read in `src/ui/screens/OptionsScreen.tsx` |

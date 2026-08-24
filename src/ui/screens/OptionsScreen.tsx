@@ -25,9 +25,10 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { useYtdlpUpdater, type YtdlpUpdateStage } from '../hooks/useYtdlpUpdater';
 import { useThemeMode } from '../hooks/useThemeMode.tsx';
 import { POPULAR_CONVERT_FORMATS, SUGGESTED_EXTRA_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
+import { MAX_SIMULTANEOUS_DOWNLOADS_CEILING } from '../../utils/constants.ts';
 
 // Display labels for yt-dlp's --cookies-from-browser browser keys -- kept
-// here rather than main.js's SUPPORTED_COOKIE_BROWSERS (the source of truth
+// here rather than main.mjs's SUPPORTED_COOKIE_BROWSERS (the source of truth
 // for the actual list), which is plain lowercase keyring names, not fit for
 // a dropdown.
 const COOKIE_BROWSER_LABELS: Record<string, string> = {
@@ -42,10 +43,10 @@ const COOKIE_BROWSER_LABELS: Record<string, string> = {
   whale: 'Whale',
 };
 
-// Matches main.js's MAX_SIMULTANEOUS_DOWNLOADS_CEILING, kept in sync by
-// hand. useBulkAddQueue.tsx's fixed download-hook pool is sized to this
-// same ceiling.
-const MAX_SIMULTANEOUS_DOWNLOADS_OPTIONS = [1, 2, 3, 4, 5];
+// Shared with useBulkAddQueue.tsx's own fixed download-hook pool size
+// (utils/constants.ts); main.mjs keeps its own copy of the same number,
+// since main-process and renderer never cross-import in this codebase.
+const MAX_SIMULTANEOUS_DOWNLOADS_OPTIONS = Array.from({ length: MAX_SIMULTANEOUS_DOWNLOADS_CEILING }, (_, i) => i + 1);
 
 const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
   'checking',
@@ -105,6 +106,9 @@ export default function OptionsScreen() {
   const [cookieText, setCookieText] = useState('');
   const [error, setError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
+  // Suffixed ...State on several setters below (not a React requirement) to keep
+  // the raw useState setter distinct from the same-named window.electronAPI.setX
+  // IPC bridge method (e.g. setDownloadDirState vs. electronAPI.setDownloadDir).
   const [cookiesMode, setCookiesModeState] = useState<'file' | 'browser'>('file');
   const [cookiesBrowser, setCookiesBrowserState] = useState('');
   const [supportedBrowsers, setSupportedBrowsers] = useState<string[]>([]);

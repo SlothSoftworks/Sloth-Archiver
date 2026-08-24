@@ -15,7 +15,6 @@ import {
   Tooltip,
   IconButton,
   Collapse,
-  LinearProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -24,14 +23,12 @@ import {
   TextareaAutosize,
   Link
 } from '@mui/material';
-import type { DownloadVideoParams } from '../../types';
+import type { DownloadVideoParams, Resolution } from '../../types';
 
 import InfoOutlineIcon from '@mui/icons-material/InfoOutline';
 import FileOpenIcon from '@mui/icons-material/FileOpen';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-
-import type { LinearProgressProps } from '@mui/material/LinearProgress';
 
 import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
 import { formatComment } from '../components/componentUtils';
@@ -39,38 +36,12 @@ import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import YouTubeEmbed from '../components/YouTubeEmbed';
 import ResizableMediaContainer from '../components/ResizableMediaContainer';
+import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
 
 
 
 async function handleOpenFileLocation(filePath: string) {
   await window.electronAPI.openFileInDirectory(filePath);
-}
-
-// value = postprocessing progress, valueBuffer = download progress. Postprocessing
-// only starts once the download is fully buffered, so this reads left-to-right as
-// "how much has loaded" (the lighter buffer fill) vs. "how much is truly finished"
-// (the solid value fill) -- the same visual metaphor as a video player's seek bar.
-function LinearProgressWithLabel(props: LinearProgressProps & { value: number; valueBuffer: number }) {
-  const { value, valueBuffer } = props;
-  const displayValue = value > 0 ? value : valueBuffer;
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center' }}>
-      <Box sx={{ width: '100%', mr: 1 }}>
-        <LinearProgress variant="buffer" {...props} />
-      </Box>
-      <Box sx={{ minWidth: 35 }}>
-        <Typography
-          variant="body2"
-          sx={{ color: 'text.secondary' }}
-        >{`${Math.round(displayValue)}%`}</Typography>
-      </Box>
-    </Box>
-  );
-}
-
-interface Resolution {
-    resolution: string;
-    filesizeMb: string;
 }
 
 interface VideoDataProps {
