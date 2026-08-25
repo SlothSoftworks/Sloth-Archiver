@@ -21,8 +21,10 @@ import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx
 // any specific video's own available resolutions (those aren't known until
 // each entry's info is actually fetched, one at a time, once the queue is
 // already running). Per-video matching against whichever of these is picked
-// happens in useBulkAddQueue's pickClosestResolution.
-const QUALITY_TIERS = ['2160', '1440', '1080', '720', '480', '360', '240', '144', 'MP3'];
+// happens in useBulkAddQueue's pickClosestResolution. Exported for
+// BulkDownloadQualityDialog.tsx (Library tab's bulk-select download), which
+// reuses the same tier list rather than duplicating it.
+export const QUALITY_TIERS = ['2160', '1440', '1080', '720', '480', '360', '240', '144', 'MP3'];
 
 function isPlaylistUrl(url: string): boolean {
   try {

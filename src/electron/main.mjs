@@ -672,6 +672,24 @@ ipcMain.handle('library:deleteEntry', async (e, { videoDir, epoch }) => {
     return { success: true, videoDeleted };
 });
 
+// Batched counterpart to library:deleteEntry -- deletes N whole videos (no
+// per-entry epoch targeting) and refreshes the library index once at the
+// end instead of once per item. Used by the Library tab's bulk-select
+// "Delete selected" action.
+ipcMain.handle('library:deleteEntries', async (e, { videoDirs }) => {
+    const { libraryDir } = readSettings();
+    const results = videoDirs.map((videoDir) => {
+        try {
+            deleteLibraryEntry({ libraryDir, videoDir });
+            return { videoDir, success: true };
+        } catch (err) {
+            return { videoDir, success: false, error: err instanceof Error ? err.message : String(err) };
+        }
+    });
+    await refreshLibraryIndex(libraryDir);
+    return { success: results.every((r) => r.success), results };
+});
+
 // Kick off the initial scan in the background at startup -- deliberately not
 // awaited, since this could be scanning an arbitrarily large library.
 // getLibraryIndex reuses this same in-flight scan when the Library tab asks.

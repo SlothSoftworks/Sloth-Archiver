@@ -99,6 +99,26 @@ describe('useBulkAddQueue: start()', () => {
     expect(result.current.items).toHaveLength(1);
     expect(result.current.items[0].status).toBe('fetching'); // synchronously reached before the first await
   });
+
+  it('seeds an entry with videoDir/epoch/resolution straight into downloading, skipping fetch/dedup entirely', async () => {
+    // Used by the Library tab's bulk-select "Download selected" action: the
+    // video is already in the library, so start() should carry these
+    // through onto the new item and let getRetryStage's existing
+    // resume-at-download fast path take it straight to beginDownload.
+    const { result } = renderQueue();
+
+    act(() => result.current.start(
+      [{ id: 'e1', title: 't', url: 'https://youtu.be/v1', videoId: 'v1', videoDir: '/lib/c/v1', epoch: '1', resolution: '1080', kind: 'video' }],
+      { download: true, targetResolution: '1080' },
+    ));
+    await flushMicrotasks();
+
+    expect(result.current.items[0].status).toBe('downloading');
+    expect(result.current.items[0].videoDir).toBe('/lib/c/v1');
+    expect(window.electronAPI.getVideoInfoPython).not.toHaveBeenCalled();
+    expect(window.electronAPI.findLibraryVideo).not.toHaveBeenCalled();
+    expect(window.electronAPI.addLibraryEntry).not.toHaveBeenCalled();
+  });
 });
 
 describe('useBulkAddQueue: processItem happy paths', () => {

@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     recordLibraryDownload: (payload) => ipcRenderer.invoke('library:recordDownload', payload),
     swapLibraryDownload: (payload) => ipcRenderer.invoke('library:swapDownload', payload),
     deleteLibraryEntry: (videoDir, epoch) => ipcRenderer.invoke('library:deleteEntry', { videoDir, epoch }),
+    deleteLibraryEntries: (videoDirs) => ipcRenderer.invoke('library:deleteEntries', { videoDirs }),
     onLibraryBackgroundUpdate: (callback) => ipcRenderer.on('library:backgroundUpdate', () => callback()),
     removeLibraryBackgroundUpdateListener: () => ipcRenderer.removeAllListeners('library:backgroundUpdate'),
     saveExportedFile: (payload) => ipcRenderer.invoke('dialog:saveExportedFile', payload),

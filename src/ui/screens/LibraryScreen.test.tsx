@@ -5,12 +5,16 @@ import { render as rtlRender, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import LibraryScreen from './LibraryScreen';
+import { BulkAddProvider } from '../hooks/useBulkAddQueue.tsx';
 
 // LibraryScreen reads/matches deep-link routes (useMatch/useNavigate, for
 // /library/video/:videoId) -- needs a real Router context, same reason
-// App.test.tsx already wraps with one.
+// App.test.tsx already wraps with one. BulkAddProvider is needed too, now
+// that the bulk-select "Download selected" action calls useBulkAddQueue()
+// directly -- without it every render throws ("must be used within a
+// BulkAddProvider").
 function render(ui: ReactElement) {
-  return rtlRender(<MemoryRouter>{ui}</MemoryRouter>);
+  return rtlRender(<MemoryRouter><BulkAddProvider>{ui}</BulkAddProvider></MemoryRouter>);
 }
 
 // LibraryVideoDetail is the biggest, most complex file in the app (its own
@@ -79,7 +83,22 @@ beforeEach(() => {
     openDirectory: vi.fn(),
     onLibraryBackgroundUpdate: vi.fn(),
     removeLibraryBackgroundUpdateListener: vi.fn(),
+    deleteLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
+    // useBulkAddQueue's start() (fired by "Download selected") unconditionally
+    // calls this -- stubbed so bulk-select's download tests don't hit an
+    // unmocked IPC call, even though they don't assert on its result.
+    getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
   };
+  // BulkAddProvider (now wrapping every render() call, see the helper above)
+  // mounts one useDownloadVideo() instance per download slot, each of which
+  // registers an onProgressUpdate listener in a useEffect on mount --
+  // without this, every test in this file would throw on render, not just
+  // the bulk-select ones.
+  window.electronAPIPythonDownload = {
+    startDownloadPython: vi.fn(),
+    onProgressUpdate: vi.fn(),
+    removeProgressListener: vi.fn(),
+  } as unknown as typeof window.electronAPIPythonDownload;
 });
 
 describe('LibraryScreen', () => {
@@ -231,5 +250,153 @@ describe('LibraryScreen', () => {
     await user.keyboard('{ArrowRight}');
 
     expect(window.electronAPI.setThumbnailSize).toHaveBeenCalled();
+  });
+
+  describe('bulk select', () => {
+    it('selecting a checkbox does not navigate into the video detail view', async () => {
+      const user = userEvent.setup();
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('Channel A'));
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+
+      expect(screen.queryByText('Detail: vidA')).not.toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: 'Select Alpha Video' })).toBeChecked();
+    });
+
+    it('shows a live "N items selected" label with correct pluralization', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      expect(screen.getByText('1 item selected')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Beta Video' }));
+      expect(screen.getByText('2 items selected')).toBeInTheDocument();
+    });
+
+    it('gates "Download selected" on whether every selected video is undownloaded', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [
+          {
+            channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+            videos: [
+              makeVideo(),
+              makeVideo({
+                videoFolderName: 'vidC', videoDir: '/lib/Channel A/vidC',
+                metadata: { ...makeVideo().metadata, videoId: 'vidC', title: 'Gamma Video' },
+                // getBestDownloadedQuality reads each epoch's own metadata,
+                // not the video's top-level metadata -- that's what actually
+                // drives the "Not downloaded" chip/bulk-download gating.
+                epochs: [{
+                  epoch: '1',
+                  metadata: { downloadedFilePath: '/lib/Channel A/vidC/1/video.mp4', downloadedResolution: '1080' },
+                }],
+              }),
+            ],
+          },
+        ],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      // All selected are undownloaded -- both buttons show.
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      expect(screen.getByRole('button', { name: /Download selected/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Delete selected/ })).toBeInTheDocument();
+
+      // Adding an already-downloaded video to the selection hides Download,
+      // keeps Delete.
+      await user.click(screen.getByRole('checkbox', { name: 'Select Gamma Video' }));
+      expect(screen.queryByRole('button', { name: /Download selected/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Delete selected/ })).toBeInTheDocument();
+    });
+
+    it('deletes the selection via the confirm dialog and clears it on success', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{ channelFolderName: 'Channel B', displayName: 'Channel B', channelIconPath: null, videos: [makeVideo({ videoFolderName: 'vidB', videoDir: '/lib/Channel B/vidB', metadata: { ...makeVideo().metadata, videoId: 'vidB', channel: 'Channel B', title: 'Beta Video' } })] }],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('button', { name: /Delete selected/ }));
+
+      expect(await screen.findByText('Delete 1 video?')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+      await waitFor(() => expect(window.electronAPI.deleteLibraryEntries).toHaveBeenCalledWith(['/lib/Channel A/vidA']));
+      expect(screen.queryByText('Delete 1 video?')).not.toBeInTheDocument();
+      expect(await screen.findByText('Beta Video')).toBeInTheDocument();
+      expect(screen.queryByText('Alpha Video')).not.toBeInTheDocument();
+    });
+
+    it('a partial bulk-delete failure keeps only the failed items selected', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.deleteLibraryEntries as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: false,
+        results: [
+          { videoDir: '/lib/Channel A/vidA', success: true },
+          { videoDir: '/lib/Channel B/vidB', success: false, error: 'boom' },
+        ],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Beta Video' }));
+      await user.click(screen.getByRole('button', { name: /Delete selected/ }));
+      await user.click(await screen.findByRole('button', { name: 'Delete' }));
+
+      // Dialog stays open on failure (MUI marks the rest of the page
+      // aria-hidden while it's open, so the count label -- read from inside
+      // the still-mounted tree -- is the reliable way to confirm only the
+      // failed item stayed selected, rather than querying a checkbox behind
+      // the modal).
+      expect(await screen.findByText(/couldn't be deleted/)).toBeInTheDocument();
+      expect(screen.getByText('1 item selected')).toBeInTheDocument();
+    });
+
+    it('opens the quality-picker dialog and clears the selection on confirm', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({ metadata: { ...makeVideo().metadata, originalUrl: 'https://youtube.com/watch?v=vidA' } })],
+        }],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('button', { name: /Download selected/ }));
+
+      expect(await screen.findByText('Download 1 selected video')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Queue Download' }));
+
+      expect(screen.queryByText('Download 1 selected video')).not.toBeInTheDocument();
+      expect(screen.queryByText('1 item selected')).not.toBeInTheDocument();
+    });
+
+    it('resets the selection when navigating back to the channel list', async () => {
+      const user = userEvent.setup();
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('Channel A'));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      expect(screen.getByText('1 item selected')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Back to channels' }));
+      await user.click(await screen.findByText('Channel A'));
+
+      expect(screen.queryByText(/item.*selected/)).not.toBeInTheDocument();
+    });
   });
 });

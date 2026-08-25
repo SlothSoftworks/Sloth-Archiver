@@ -1,6 +1,8 @@
-import { Box, Paper, Slider, Stack } from '@mui/material';
+import { Box, Button, Paper, Slider, Stack, Typography } from '@mui/material';
 import PhotoSizeSelectSmallIcon from '@mui/icons-material/PhotoSizeSelectSmall';
 import PhotoSizeSelectLargeIcon from '@mui/icons-material/PhotoSizeSelectLarge';
+import DownloadIcon from '@mui/icons-material/Download';
+import DeleteIcon from '@mui/icons-material/Delete';
 
 export const THUMBNAIL_SIZE_MIN = 160;
 export const THUMBNAIL_SIZE_MAX = 360;
@@ -8,14 +10,21 @@ export const THUMBNAIL_SIZE_STEP = 10;
 
 // Persistent bottom bar for the Library tab's video grids -- a container for
 // display/customization controls, not a single-purpose slider widget. Ships
-// with only thumbnail size today; the left region is reserved so future
-// controls have an obvious home without restructuring this component. Purely
-// presentational/controlled, same pattern as LibraryViewModeToggle --
+// with thumbnail size and bulk-select actions; the left region was reserved
+// for exactly this kind of addition without restructuring the component.
+// Purely presentational/controlled, same pattern as LibraryViewModeToggle --
 // LibraryScreen owns the state and the settings IPC round-trip.
-export default function LibraryBottomBar({ thumbnailSize, onThumbnailSizeChange, onThumbnailSizeCommit }: {
+export default function LibraryBottomBar({
+  thumbnailSize, onThumbnailSizeChange, onThumbnailSizeCommit,
+  selectedCount, canBulkDownload, onDownloadSelected, onDeleteSelected,
+}: {
   thumbnailSize: number;
   onThumbnailSizeChange: (size: number) => void;
   onThumbnailSizeCommit: (size: number) => void;
+  selectedCount: number;
+  canBulkDownload: boolean;
+  onDownloadSelected: () => void;
+  onDeleteSelected: () => void;
 }) {
   return (
     // A flex sibling of LibraryScreen's own scrollable content region (see
@@ -31,7 +40,19 @@ export default function LibraryBottomBar({ thumbnailSize, onThumbnailSizeChange,
         px: 2, py: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2,
       }}
     >
-      <Box /> {/* reserved for future display/customization controls */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minHeight: 32 }}>
+        {selectedCount > 0 &&
+          <>
+            <Typography variant="body2">{selectedCount} item{selectedCount === 1 ? '' : 's'} selected</Typography>
+            {canBulkDownload &&
+              <Button size="small" variant="outlined" startIcon={<DownloadIcon fontSize="small" />} onClick={onDownloadSelected}>
+                Download selected
+              </Button>}
+            <Button size="small" variant="outlined" color="error" startIcon={<DeleteIcon fontSize="small" />} onClick={onDeleteSelected}>
+              Delete selected
+            </Button>
+          </>}
+      </Box>
       <Stack direction="row" spacing={1.5} alignItems="center" sx={{ width: 220 }}>
         <PhotoSizeSelectSmallIcon fontSize="small" color="action" />
         <Slider

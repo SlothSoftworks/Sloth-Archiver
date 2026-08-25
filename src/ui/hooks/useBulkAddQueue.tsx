@@ -7,7 +7,16 @@ export type BulkAddStatus = 'pending' | 'fetching' | 'downloading' | 'done' | 's
 // videoId is only known upfront for playlist-sourced entries (the flat
 // listing already has real ids); undefined for the comma/newline-list case
 // until that entry's own info gets fetched.
-export type BulkAddEntry = { id: string; title: string | null; url: string; videoId?: string };
+export type BulkAddEntry = {
+  id: string; title: string | null; url: string; videoId?: string;
+  // Already-known library location -- when all four are present, start()
+  // seeds the new item with them directly so processItem's existing
+  // getRetryStage fast path (below) resumes straight at download instead of
+  // re-fetching/re-adding an entry that's already in the library. Used by
+  // the Library tab's bulk-select "Download selected" action; the
+  // URL/playlist-paste flow (BulkAddDialog) never sets these.
+  videoDir?: string; epoch?: string; resolution?: string; kind?: 'video' | 'audio';
+};
 
 export type BulkAddItem = {
   id: string;
@@ -360,6 +369,10 @@ function useBulkAddQueueState() {
       title: entry.title,
       status: 'pending',
       videoId: entry.videoId,
+      videoDir: entry.videoDir,
+      epoch: entry.epoch,
+      resolution: entry.resolution,
+      kind: entry.kind,
       // YouTube's thumbnail CDN URL is a stable, public, unauthenticated
       // pattern keyed on videoId -- free to construct for playlist-sourced
       // entries with no extra fetch; list-sourced entries pick this up once

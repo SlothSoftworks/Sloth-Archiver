@@ -7,6 +7,7 @@ import {
   Card,
   CardActionArea,
   CardMedia,
+  Checkbox,
   Chip,
   CircularProgress,
   FormControl,
@@ -37,7 +38,10 @@ import LibraryVideoDetail from './LibraryVideoDetail';
 import PlaylistsSection from '../components/PlaylistsSection';
 import LibrarySearchBar from '../components/LibrarySearchBar';
 import LibraryBottomBar from '../components/LibraryBottomBar';
+import BulkDownloadQualityDialog from '../components/BulkDownloadQualityDialog';
+import BulkDeleteConfirmDialog from '../components/BulkDeleteConfirmDialog';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
+import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
 import type { LibraryVideoMetadata } from '../../types';
 
 type LibraryViewMode = 'channel' | 'video';
@@ -151,8 +155,14 @@ export default function LibraryScreen() {
   const [librarySection, setLibrarySection] = useState<LibrarySection>('videos');
   const [thumbnailSize, setThumbnailSize] = useState(220); // overwritten by load()
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
+  const [selectedVideoDirs, setSelectedVideoDirs] = useState<Set<string>>(new Set());
+  const [bulkDownloadDialogOpen, setBulkDownloadDialogOpen] = useState(false);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
   const deepLinkMatch = useMatch('/library/video/:videoId');
   const navigate = useNavigate();
+  const { start } = useBulkAddQueue();
 
   const load = async () => {
     setLoading(true);
@@ -179,6 +189,7 @@ export default function LibraryScreen() {
   const handleViewModeChange = (mode: LibraryViewMode) => {
     setViewMode(mode);
     window.electronAPI.setLibraryViewMode(mode);
+    clearSelection();
   };
 
   // Local state updates continuously as the slider drags (smooth grid
@@ -190,6 +201,85 @@ export default function LibraryScreen() {
 
   const handleThumbnailSizeCommit = (size: number) => {
     window.electronAPI.setThumbnailSize(size);
+  };
+
+  const toggleVideoSelected = (videoDir: string) => {
+    setSelectedVideoDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(videoDir)) {
+        next.delete(videoDir);
+      } else {
+        next.add(videoDir);
+      }
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedVideoDirs(new Set());
+
+  // Flat videoDir -> LibraryVideo lookup over whichever set of videos is
+  // currently in view (every channel's videos, so this covers both the flat
+  // list and any single channel's grid) -- selection is keyed by videoDir,
+  // this is what turns that Set back into the LibraryVideo objects the bulk
+  // action handlers/gating need.
+  const videoByDir = useMemo(() => {
+    const map = new Map<string, LibraryVideo>();
+    for (const channel of channels) {
+      for (const video of channel.videos) {
+        map.set(video.videoDir, video);
+      }
+    }
+    return map;
+  }, [channels]);
+  const selectedVideos = useMemo(
+    () => [...selectedVideoDirs].map((dir) => videoByDir.get(dir)).filter((v): v is LibraryVideo => !!v),
+    [selectedVideoDirs, videoByDir],
+  );
+  // Mixed/all-downloaded selections simply don't offer a download action --
+  // no partial/redownload option, per the confirmed bulk-select design.
+  const canBulkDownload = selectedVideos.length > 0 && selectedVideos.every((v) => getBestDownloadedQuality(v.epochs) === null);
+
+  const handleConfirmBulkDownload = (targetResolution: string) => {
+    const isMp3 = targetResolution.toLowerCase() === 'mp3';
+    const entries: BulkAddEntry[] = selectedVideos
+      .filter((v) => v.metadata.originalUrl && v.latestEpoch)
+      .map((v) => ({
+        id: v.videoDir,
+        title: v.metadata.title,
+        url: v.metadata.originalUrl!,
+        videoId: v.metadata.videoId,
+        videoDir: v.videoDir,
+        epoch: v.latestEpoch!,
+        resolution: isMp3 ? 'mp3' : targetResolution,
+        kind: isMp3 ? 'audio' : 'video',
+      }));
+    start(entries, { download: true, targetResolution });
+    setBulkDownloadDialogOpen(false);
+    clearSelection();
+  };
+
+  const handleConfirmBulkDelete = async () => {
+    setBulkDeleting(true);
+    setBulkDeleteError(null);
+    try {
+      const { success, results } = await window.electronAPI.deleteLibraryEntries([...selectedVideoDirs]);
+      if (!success) {
+        const failed = results.filter((r) => !r.success);
+        setBulkDeleteError(`${failed.length} of ${results.length} video(s) couldn't be deleted. Try again, or delete them individually.`);
+        // Only the failed ones stay selected, so the user can immediately
+        // retry just those via the same bottom-bar button.
+        setSelectedVideoDirs(new Set(failed.map((r) => r.videoDir)));
+      } else {
+        setBulkDeleteDialogOpen(false);
+        clearSelection();
+      }
+      // The index already refreshed server-side inside the IPC handler --
+      // this just pulls the updated channels list, same pattern as
+      // refreshChannelsSilently.
+      const index = await window.electronAPI.refreshLibraryIndex();
+      handleChannelsUpdated(index.channels);
+    } finally {
+      setBulkDeleting(false);
+    }
   };
 
   const handleRefresh = async () => {
@@ -323,7 +413,9 @@ export default function LibraryScreen() {
     <VideoGrid
       channel={selectedChannel}
       thumbnailSize={thumbnailSize}
-      onBack={() => setSelectedChannel(null)}
+      selectedVideoDirs={selectedVideoDirs}
+      onToggleSelect={toggleVideoSelected}
+      onBack={() => { setSelectedChannel(null); clearSelection(); }}
       onSelectVideo={setSelectedVideo}
       onChannelsUpdated={handleChannelsUpdated}
     />
@@ -333,6 +425,8 @@ export default function LibraryScreen() {
       libraryDir={libraryDir}
       viewMode={viewMode}
       thumbnailSize={thumbnailSize}
+      selectedVideoDirs={selectedVideoDirs}
+      onToggleSelect={toggleVideoSelected}
       onViewModeChange={handleViewModeChange}
       onSelectVideo={setSelectedVideo}
       onRefresh={handleRefresh}
@@ -343,7 +437,7 @@ export default function LibraryScreen() {
       libraryDir={libraryDir}
       viewMode={viewMode}
       onViewModeChange={handleViewModeChange}
-      onSelectChannel={setSelectedChannel}
+      onSelectChannel={(channel) => { setSelectedChannel(channel); clearSelection(); }}
       onRefresh={handleRefresh}
     />
   );
@@ -366,7 +460,7 @@ export default function LibraryScreen() {
             value={librarySection}
             exclusive
             size="small"
-            onChange={(_e, value: LibrarySection | null) => value && setLibrarySection(value)}
+            onChange={(_e, value: LibrarySection | null) => { if (value) setLibrarySection(value); clearSelection(); }}
             sx={{ mb: 2 }}
           >
             <ToggleButton value="videos">
@@ -385,7 +479,25 @@ export default function LibraryScreen() {
           thumbnailSize={thumbnailSize}
           onThumbnailSizeChange={handleThumbnailSizeChange}
           onThumbnailSizeCommit={handleThumbnailSizeCommit}
+          selectedCount={selectedVideoDirs.size}
+          canBulkDownload={canBulkDownload}
+          onDownloadSelected={() => setBulkDownloadDialogOpen(true)}
+          onDeleteSelected={() => setBulkDeleteDialogOpen(true)}
         />}
+      <BulkDownloadQualityDialog
+        open={bulkDownloadDialogOpen}
+        onClose={() => setBulkDownloadDialogOpen(false)}
+        videos={selectedVideos.filter((v) => getBestDownloadedQuality(v.epochs) === null)}
+        onConfirm={handleConfirmBulkDownload}
+      />
+      <BulkDeleteConfirmDialog
+        open={bulkDeleteDialogOpen}
+        count={selectedVideoDirs.size}
+        deleting={bulkDeleting}
+        error={bulkDeleteError}
+        onCancel={() => { setBulkDeleteDialogOpen(false); setBulkDeleteError(null); }}
+        onConfirm={handleConfirmBulkDelete}
+      />
       <Snackbar
         open={!!deepLinkError}
         autoHideDuration={4000}
@@ -434,14 +546,49 @@ function LibraryViewModeToggle({ viewMode, onViewModeChange }: {
 // VideoGrid instead of duplicating it. `channelLabel` is only passed by
 // FlatVideoList -- VideoGrid's cards already sit under one channel's own
 // heading, so repeating the name there would be redundant.
-function VideoCard({ video, onSelect, channelLabel }: {
+function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, onToggleSelect }: {
   video: LibraryVideo;
   onSelect: (video: LibraryVideo) => void;
   channelLabel?: string;
+  selected: boolean;
+  selectionActive: boolean;
+  onToggleSelect: (videoDir: string) => void;
 }) {
   const bestQuality = getBestDownloadedQuality(video.epochs);
   return (
-    <Card variant="outlined">
+    <Card
+      variant="outlined"
+      sx={{
+        position: 'relative',
+        // Real MUI theme token (same one MenuItem/ListItemButton selected
+        // states use), not a new palette entry.
+        backgroundColor: selected ? 'action.selected' : undefined,
+        '&:hover .video-card-checkbox': { opacity: 1 },
+      }}
+    >
+      {/* Sibling of CardActionArea below, not nested inside it -- MUI
+          disallows an interactive control inside CardActionArea's own click
+          target. Hidden by default, hover-reveals on this one card, and
+          forced-visible on every card once any selection exists
+          (selectionActive), so extending a selection never requires
+          re-hovering each item. */}
+      <Box
+        className="video-card-checkbox"
+        onClick={(e) => e.stopPropagation()}
+        sx={{
+          position: 'absolute', top: 4, right: 4, zIndex: 1,
+          opacity: selectionActive || selected ? 1 : 0,
+          transition: 'opacity 0.1s',
+          backgroundColor: 'background.paper', borderRadius: '50%',
+        }}
+      >
+        <Checkbox
+          size="small"
+          checked={selected}
+          onChange={() => onToggleSelect(video.videoDir)}
+          inputProps={{ 'aria-label': `Select ${video.metadata.title || video.videoFolderName}` }}
+        />
+      </Box>
       <CardActionArea onClick={() => onSelect(video)}>
         <CardMedia
           component="div"
@@ -476,15 +623,18 @@ function VideoCard({ video, onSelect, channelLabel }: {
   );
 }
 
-function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, onViewModeChange, onSelectVideo, onRefresh }: {
+function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selectedVideoDirs, onToggleSelect, onViewModeChange, onSelectVideo, onRefresh }: {
   channels: LibraryChannel[];
   libraryDir: string;
   viewMode: LibraryViewMode;
   thumbnailSize: number;
+  selectedVideoDirs: Set<string>;
+  onToggleSelect: (videoDir: string) => void;
   onViewModeChange: (mode: LibraryViewMode) => void;
   onSelectVideo: (video: LibraryVideo) => void;
   onRefresh: () => void;
 }) {
+  const selectionActive = selectedVideoDirs.size > 0;
   const [sortField, setSortField] = useState<SortField>('title');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
@@ -557,7 +707,15 @@ function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, onViewMo
       )}
       <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${thumbnailSize}px, 1fr))`, gap: 2 }}>
         {filtered.map(({ video, channelName }) => (
-          <VideoCard key={video.videoDir} video={video} onSelect={onSelectVideo} channelLabel={channelName} />
+          <VideoCard
+            key={video.videoDir}
+            video={video}
+            onSelect={onSelectVideo}
+            channelLabel={channelName}
+            selected={selectedVideoDirs.has(video.videoDir)}
+            selectionActive={selectionActive}
+            onToggleSelect={onToggleSelect}
+          />
         ))}
       </Box>
     </Box>
@@ -627,13 +785,16 @@ function ChannelList({ channels, libraryDir, viewMode, onViewModeChange, onSelec
   );
 }
 
-function VideoGrid({ channel, thumbnailSize, onBack, onSelectVideo, onChannelsUpdated }: {
+function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, onBack, onSelectVideo, onChannelsUpdated }: {
   channel: LibraryChannel;
   thumbnailSize: number;
+  selectedVideoDirs: Set<string>;
+  onToggleSelect: (videoDir: string) => void;
   onBack: () => void;
   onSelectVideo: (video: LibraryVideo) => void;
   onChannelsUpdated: (channels: LibraryChannel[]) => void;
 }) {
+  const selectionActive = selectedVideoDirs.size > 0;
   const [refreshingIcon, setRefreshingIcon] = useState(false);
   const { query, setQuery, isSearching, filtered, clear } = useLibrarySearch(
     channel.videos,
@@ -680,7 +841,14 @@ function VideoGrid({ channel, thumbnailSize, onBack, onSelectVideo, onChannelsUp
         <Typography variant="body2" color="text.secondary">No videos match "{query}".</Typography>}
       <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${thumbnailSize}px, 1fr))`, gap: 2 }}>
         {filtered.map((video) => (
-          <VideoCard key={video.videoFolderName} video={video} onSelect={onSelectVideo} />
+          <VideoCard
+            key={video.videoDir}
+            video={video}
+            onSelect={onSelectVideo}
+            selected={selectedVideoDirs.has(video.videoDir)}
+            selectionActive={selectionActive}
+            onToggleSelect={onToggleSelect}
+          />
         ))}
       </Box>
     </Box>
