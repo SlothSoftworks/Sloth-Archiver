@@ -271,6 +271,55 @@ export function deleteLibraryEntry({ libraryDir, videoDir, epoch }) {
     return { videoDeleted: false };
 }
 
+// Removes just the downloaded media (video and/or separately-downloaded
+// audio) across EVERY epoch of a video, leaving the library entry and its
+// per-epoch metadata.json in place -- unlike deleteLibraryEntry, this is not
+// destructive to the tracked entry itself, only to the files it points at.
+// Used by the Library tab's bulk-select "Delete local files" action, which
+// deliberately has no per-version targeting (that's what a video's own
+// detail view is for) -- every version's file goes in one call.
+export function deleteLocalFiles({ libraryDir, videoDir }) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
+        throw new Error('Refusing to delete files outside the configured library folder.');
+    }
+    if (!fs.existsSync(resolvedVideoDir)) {
+        return { filesDeleted: 0 };
+    }
+
+    let filesDeleted = 0;
+    for (const entry of fs.readdirSync(resolvedVideoDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const metadataPath = path.join(resolvedVideoDir, entry.name, 'metadata.json');
+        if (!fs.existsSync(metadataPath)) continue;
+
+        const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+        let changed = false;
+        if (metadata.downloadedFilePath && fs.existsSync(metadata.downloadedFilePath)) {
+            fs.rmSync(metadata.downloadedFilePath, { force: true });
+            filesDeleted++;
+        }
+        if (metadata.downloadedFilePath) {
+            metadata.downloadedFilePath = null;
+            metadata.downloadedResolution = null;
+            metadata.downloadedFormat = null;
+            changed = true;
+        }
+        if (metadata.downloadedAudioFilePath && fs.existsSync(metadata.downloadedAudioFilePath)) {
+            fs.rmSync(metadata.downloadedAudioFilePath, { force: true });
+            filesDeleted++;
+        }
+        if (metadata.downloadedAudioFilePath) {
+            metadata.downloadedAudioFilePath = null;
+            changed = true;
+        }
+        if (changed) {
+            fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+        }
+    }
+    return { filesDeleted };
+}
+
 // "Override" means replace the tracked entry, not add another version.
 // Deletes existingVideoDir exactly as given (from an earlier
 // findVideoInIndex lookup) rather than re-deriving it from videoMetaData --

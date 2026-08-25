@@ -9,7 +9,7 @@ import os from 'node:os';
 
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -681,6 +681,25 @@ ipcMain.handle('library:deleteEntries', async (e, { videoDirs }) => {
     const results = videoDirs.map((videoDir) => {
         try {
             deleteLibraryEntry({ libraryDir, videoDir });
+            return { videoDir, success: true };
+        } catch (err) {
+            return { videoDir, success: false, error: err instanceof Error ? err.message : String(err) };
+        }
+    });
+    await refreshLibraryIndex(libraryDir);
+    return { success: results.every((r) => r.success), results };
+});
+
+// Batched "Delete local files" -- removes downloaded media across every
+// epoch of each video without touching the tracked library entries
+// themselves (see deleteLocalFiles, library.mjs). Same result shape as
+// library:deleteEntries for the same reason: the renderer needs to know
+// exactly which ones failed to report back accurately.
+ipcMain.handle('library:deleteLocalFiles', async (e, { videoDirs }) => {
+    const { libraryDir } = readSettings();
+    const results = videoDirs.map((videoDir) => {
+        try {
+            deleteLocalFiles({ libraryDir, videoDir });
             return { videoDir, success: true };
         } catch (err) {
             return { videoDir, success: false, error: err instanceof Error ? err.message : String(err) };

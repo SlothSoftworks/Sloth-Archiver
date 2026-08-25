@@ -11,6 +11,7 @@ import {
   recordLibraryDownload,
   swapLibraryDownload,
   deleteLibraryEntry,
+  deleteLocalFiles,
   overrideLibraryEntry,
   scanLibrary,
   getLibraryIndex,
@@ -255,6 +256,53 @@ describe('deleteLibraryEntry', () => {
     expect(result.videoDeleted).toBe(true);
     expect(fs.existsSync(epochDir)).toBe(false);
     expect(fs.existsSync(videoDir)).toBe(false);
+  });
+});
+
+describe('deleteLocalFiles', () => {
+  it('refuses to delete files outside the configured library folder', () => {
+    expect(() => deleteLocalFiles({ libraryDir, videoDir: '/etc' })).toThrow(/outside the configured library folder/);
+  });
+
+  it('deletes the downloaded video and audio files across every epoch, keeping the entries', () => {
+    const first = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const firstEpoch = String(first.metadata.addedEpoch);
+    const second = addLibraryVersion({ libraryDir, videoDir: first.videoDir, videoMetaData: baseVideoMetaData() });
+    const secondEpoch = second.epoch;
+
+    const firstVideoFile = path.join(first.epochDir, 'video.mp4');
+    const firstAudioFile = path.join(first.epochDir, 'audio.mp3');
+    const secondVideoFile = path.join(second.epochDir, 'video.mp4');
+    fs.writeFileSync(firstVideoFile, 'fake video bytes');
+    fs.writeFileSync(firstAudioFile, 'fake audio bytes');
+    fs.writeFileSync(secondVideoFile, 'fake video bytes');
+    recordLibraryDownload({ videoDir: first.videoDir, epoch: firstEpoch, filePath: firstVideoFile, resolution: '1080', format: 'mp4' });
+    recordLibraryDownload({ videoDir: first.videoDir, epoch: firstEpoch, filePath: firstAudioFile, kind: 'audio' });
+    recordLibraryDownload({ videoDir: first.videoDir, epoch: secondEpoch, filePath: secondVideoFile, resolution: '720', format: 'mp4' });
+
+    const result = deleteLocalFiles({ libraryDir, videoDir: first.videoDir });
+
+    expect(result.filesDeleted).toBe(3);
+    expect(fs.existsSync(firstVideoFile)).toBe(false);
+    expect(fs.existsSync(firstAudioFile)).toBe(false);
+    expect(fs.existsSync(secondVideoFile)).toBe(false);
+    // Entries themselves (metadata.json, epoch folders) stay -- only the
+    // media files and their metadata pointers are gone.
+    expect(fs.existsSync(first.epochDir)).toBe(true);
+    expect(fs.existsSync(second.epochDir)).toBe(true);
+    const firstMeta = readMetadata(first.videoDir, firstEpoch);
+    expect(firstMeta.downloadedFilePath).toBeNull();
+    expect(firstMeta.downloadedResolution).toBeNull();
+    expect(firstMeta.downloadedFormat).toBeNull();
+    expect(firstMeta.downloadedAudioFilePath).toBeNull();
+    const secondMeta = readMetadata(first.videoDir, secondEpoch);
+    expect(secondMeta.downloadedFilePath).toBeNull();
+  });
+
+  it('is a no-op for a video with nothing downloaded', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const result = deleteLocalFiles({ libraryDir, videoDir });
+    expect(result.filesDeleted).toBe(0);
   });
 });
 

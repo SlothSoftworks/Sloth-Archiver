@@ -47,6 +47,7 @@ beforeEach(() => {
     getPlaylist: vi.fn().mockResolvedValue({ playlist: makePlaylist() }),
     getLibraryIndex: vi.fn().mockResolvedValue({ channels: [{ channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null, videos: [makeLibraryVideo()] }] }),
     deleteLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
+    deleteLocalFiles: vi.fn().mockResolvedValue({ success: true, results: [] }),
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
   };
   window.electronAPIPythonDownload = {
@@ -139,8 +140,8 @@ describe('PlaylistsSection bulk select', () => {
     await user.click(await screen.findByRole('checkbox', { name: 'Select Alpha Video' }));
     await user.click(screen.getByRole('checkbox', { name: 'Select Gamma Video' }));
 
-    const lastBar = onBulkBarUpdate.mock.calls.at(-1)?.[0];
-    lastBar.onDeleteSelected();
+    const lastBar = onBulkBarUpdate.mock.calls[onBulkBarUpdate.mock.calls.length - 1][0];
+    lastBar.onDeleteFromLibrary();
     expect(await screen.findByText('Delete 1 video?')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
@@ -162,13 +163,52 @@ describe('PlaylistsSection bulk select', () => {
     await user.click(await screen.findByRole('checkbox', { name: 'Select Alpha Video' }));
     await user.click(screen.getByRole('checkbox', { name: 'Select Gamma Video' }));
 
-    const lastBar = onBulkBarUpdate.mock.calls.at(-1)?.[0];
+    const lastBar = onBulkBarUpdate.mock.calls[onBulkBarUpdate.mock.calls.length - 1][0];
     lastBar.onDownloadSelected();
     expect(await screen.findByText('Download 2 selected videos')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Queue Download' }));
 
     // Dialog closes and selection clears once queued.
     expect(screen.queryByText('Download 2 selected videos')).not.toBeInTheDocument();
+  });
+
+  it('gates "Delete local files" on every selected video being downloaded, and calls deleteLocalFiles on confirm', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
+      }),
+    });
+    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+      channels: [{
+        channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+        videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080' } }] })],
+      }],
+    });
+    const onBulkBarUpdate = vi.fn();
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={onBulkBarUpdate} />);
+    await user.click(await screen.findByText('My Playlist'));
+
+    // Only the downloaded one selected -- "Delete local files" applies.
+    await user.click(await screen.findByRole('checkbox', { name: 'Select Alpha Video' }));
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canDeleteLocalFiles: true }),
+    ));
+
+    // Adding the not-yet-downloaded one hides it (all-or-nothing).
+    await user.click(screen.getByRole('checkbox', { name: 'Select Gamma Video' }));
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canDeleteLocalFiles: false }),
+    ));
+    await user.click(screen.getByRole('checkbox', { name: 'Select Gamma Video' })); // deselect it again
+
+    const lastBar = onBulkBarUpdate.mock.calls[onBulkBarUpdate.mock.calls.length - 1][0];
+    lastBar.onDeleteLocalFiles();
+    expect(await screen.findByText('Delete local files for 1 video?')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(window.electronAPI.deleteLocalFiles).toHaveBeenCalledWith(['/lib/Channel A/vidA']));
   });
 
   it('clears the bulk bar when navigating back to the playlist list', async () => {

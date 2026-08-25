@@ -45,7 +45,9 @@ export type PlaylistBulkBar = {
   selectedCount: number;
   canBulkDownload: boolean;
   onDownloadSelected: () => void;
-  onDeleteSelected: () => void;
+  canDeleteLocalFiles: boolean;
+  onDeleteLocalFiles: () => void;
+  onDeleteFromLibrary: () => void;
 };
 
 // Mirrors library.mjs's own CURRENT_PLAYLIST_SCHEMA_VERSION (main process
@@ -95,6 +97,9 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
+  const [bulkDeleteLocalFilesDialogOpen, setBulkDeleteLocalFilesDialogOpen] = useState(false);
+  const [bulkDeletingLocalFiles, setBulkDeletingLocalFiles] = useState(false);
+  const [bulkDeleteLocalFilesError, setBulkDeleteLocalFilesError] = useState<string | null>(null);
   const { start } = useBulkAddQueue();
   const { query, setQuery, isSearching, filtered: filteredPlaylists, clear } = useLibrarySearch(
     playlists,
@@ -128,6 +133,8 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
   };
   const isEntryDownloaded = (videoId: string) => getEntryQuality(videoId) !== null;
   const canBulkDownload = selectedEntries.length > 0 && selectedEntries.every((e) => !isEntryDownloaded(e.videoId));
+  // Mirror image of canBulkDownload -- all-or-nothing, same gating style.
+  const canDeleteLocalFiles = selectedEntries.length > 0 && selectedEntries.every((e) => isEntryDownloaded(e.videoId));
 
   const handleConfirmBulkDownload = (targetResolution: string) => {
     const isMp3 = targetResolution.toLowerCase() === 'mp3';
@@ -190,6 +197,32 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
     }
   };
 
+  const handleConfirmBulkDeleteLocalFiles = async () => {
+    setBulkDeletingLocalFiles(true);
+    setBulkDeleteLocalFilesError(null);
+    try {
+      const { success, results } = await window.electronAPI.deleteLocalFiles(deletableSelectedVideoDirs);
+      if (!success) {
+        const failedDirs = new Set(results.filter((r) => !r.success).map((r) => r.videoDir));
+        setBulkDeleteLocalFilesError(`${failedDirs.size} of ${deletableSelectedVideoDirs.length} video(s) couldn't be updated. Try again, or delete them individually.`);
+        setSelectedVideoIds((prev) => {
+          const next = new Set<string>();
+          for (const entry of selectableEntries) {
+            const dir = selectedPlaylist?.localFiles[entry.videoId];
+            if (prev.has(entry.videoId) && dir && failedDirs.has(dir)) next.add(entry.videoId);
+          }
+          return next;
+        });
+      } else {
+        setBulkDeleteLocalFilesDialogOpen(false);
+        clearSelection();
+      }
+      if (selectedPlaylistId) await loadDetail(selectedPlaylistId);
+    } finally {
+      setBulkDeletingLocalFiles(false);
+    }
+  };
+
   useEffect(() => {
     if (!selectedPlaylistId || detailLoading) {
       onBulkBarUpdate(null);
@@ -199,10 +232,12 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
       selectedCount: selectedVideoIds.size,
       canBulkDownload,
       onDownloadSelected: () => setBulkDownloadDialogOpen(true),
-      onDeleteSelected: () => setBulkDeleteDialogOpen(true),
+      canDeleteLocalFiles,
+      onDeleteLocalFiles: () => setBulkDeleteLocalFilesDialogOpen(true),
+      onDeleteFromLibrary: () => setBulkDeleteDialogOpen(true),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPlaylistId, detailLoading, selectedVideoIds, canBulkDownload]);
+  }, [selectedPlaylistId, detailLoading, selectedVideoIds, canBulkDownload, canDeleteLocalFiles]);
 
   // Reported bar has to be torn down on unmount too -- otherwise LibraryScreen
   // keeps rendering a bottom bar for a PlaylistsSection that's no longer there
@@ -503,11 +538,21 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
         />
         <BulkDeleteConfirmDialog
           open={bulkDeleteDialogOpen}
-          count={deletableSelectedVideoDirs.length}
+          title={`Delete ${deletableSelectedVideoDirs.length} video${deletableSelectedVideoDirs.length === 1 ? '' : 's'}?`}
+          description="This deletes the tracked entries, their metadata, and any downloaded files from your library folder. This can't be undone."
           deleting={bulkDeleting}
           error={bulkDeleteError}
           onCancel={() => { setBulkDeleteDialogOpen(false); setBulkDeleteError(null); }}
           onConfirm={handleConfirmBulkDelete}
+        />
+        <BulkDeleteConfirmDialog
+          open={bulkDeleteLocalFilesDialogOpen}
+          title={`Delete local files for ${deletableSelectedVideoDirs.length} video${deletableSelectedVideoDirs.length === 1 ? '' : 's'}?`}
+          description="This deletes the downloaded video/audio files for these videos -- across every saved version, not just the latest one. The library entries and their metadata stay, so you can re-download later. To remove just one version's file, open that video's own detail view instead. This can't be undone."
+          deleting={bulkDeletingLocalFiles}
+          error={bulkDeleteLocalFilesError}
+          onCancel={() => { setBulkDeleteLocalFilesDialogOpen(false); setBulkDeleteLocalFilesError(null); }}
+          onConfirm={handleConfirmBulkDeleteLocalFiles}
         />
       </Box>
     );

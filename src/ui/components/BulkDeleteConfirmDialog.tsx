@@ -10,10 +10,14 @@ import {
 } from '@mui/material';
 
 // Bulk counterpart to LibraryVideoDetail.tsx's single-delete confirmation
-// dialog -- same shape/tone, just count-aware.
-export default function BulkDeleteConfirmDialog({ open, count, deleting, error, onCancel, onConfirm }: {
+// dialog -- same shape/tone. Generic on title/description rather than a
+// hardcoded count-based body, since it's shared by two different bulk
+// actions with different copy: "Delete from library" (whole entries) and
+// "Delete local files" (just the downloaded media, entry stays).
+export default function BulkDeleteConfirmDialog({ open, title, description, deleting, error, onCancel, onConfirm }: {
   open: boolean;
-  count: number;
+  title: string;
+  description: string;
   deleting: boolean;
   error: string | null;
   onCancel: () => void;
@@ -21,12 +25,9 @@ export default function BulkDeleteConfirmDialog({ open, count, deleting, error, 
 }) {
   return (
     <Dialog open={open} onClose={() => !deleting && onCancel()}>
-      <DialogTitle>Delete {count} video{count === 1 ? '' : 's'}?</DialogTitle>
+      <DialogTitle>{title}</DialogTitle>
       <DialogContent>
-        <DialogContentText>
-          This deletes the tracked entries, their metadata, and any downloaded files from your library folder.
-          This can't be undone.
-        </DialogContentText>
+        <DialogContentText>{description}</DialogContentText>
         {error && <Typography color="error" variant="body2" sx={{ mt: 1 }}>{error}</Typography>}
       </DialogContent>
       <DialogActions>

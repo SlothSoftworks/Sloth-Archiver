@@ -84,6 +84,7 @@ beforeEach(() => {
     onLibraryBackgroundUpdate: vi.fn(),
     removeLibraryBackgroundUpdateListener: vi.fn(),
     deleteLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
+    deleteLocalFiles: vi.fn().mockResolvedValue({ success: true, results: [] }),
     // useBulkAddQueue's start() (fired by "Download selected") unconditionally
     // calls this -- stubbed so bulk-select's download tests don't hit an
     // unmocked IPC call, even though they don't assert on its result.
@@ -307,13 +308,63 @@ describe('LibraryScreen', () => {
       // All selected are undownloaded -- both buttons show.
       await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
       expect(screen.getByRole('button', { name: /Download selected/ })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /Delete selected/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Delete from library/ })).toBeInTheDocument();
 
       // Adding an already-downloaded video to the selection hides Download,
       // keeps Delete.
       await user.click(screen.getByRole('checkbox', { name: 'Select Gamma Video' }));
       expect(screen.queryByRole('button', { name: /Download selected/ })).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /Delete selected/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Delete from library/ })).toBeInTheDocument();
+    });
+
+    it('gates "Delete local files" on whether every selected video is downloaded, mirroring Download selected', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [
+          {
+            channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+            videos: [
+              makeVideo({
+                epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080' } }],
+              }),
+              makeVideo({ videoFolderName: 'vidC', videoDir: '/lib/Channel A/vidC', metadata: { ...makeVideo().metadata, videoId: 'vidC', title: 'Gamma Video' } }),
+            ],
+          },
+        ],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      // Only the downloaded video selected -- "Delete local files" shows.
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      expect(screen.getByRole('button', { name: /Delete local files/ })).toBeInTheDocument();
+
+      // Adding the undownloaded one hides it (all-or-nothing).
+      await user.click(screen.getByRole('checkbox', { name: 'Select Gamma Video' }));
+      expect(screen.queryByRole('button', { name: /Delete local files/ })).not.toBeInTheDocument();
+    });
+
+    it('deletes local files via the confirm dialog, keeping the library entry', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080' } }] })],
+        }],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('button', { name: /Delete local files/ }));
+
+      expect(await screen.findByText('Delete local files for 1 video?')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+      await waitFor(() => expect(window.electronAPI.deleteLocalFiles).toHaveBeenCalledWith(['/lib/Channel A/vidA']));
+      expect(screen.queryByText('Delete local files for 1 video?')).not.toBeInTheDocument();
     });
 
     it('deletes the selection via the confirm dialog and clears it on success', async () => {
@@ -326,7 +377,7 @@ describe('LibraryScreen', () => {
       await screen.findByText('Alpha Video');
 
       await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
-      await user.click(screen.getByRole('button', { name: /Delete selected/ }));
+      await user.click(screen.getByRole('button', { name: /Delete from library/ }));
 
       expect(await screen.findByText('Delete 1 video?')).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Delete' }));
@@ -352,7 +403,7 @@ describe('LibraryScreen', () => {
 
       await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
       await user.click(screen.getByRole('checkbox', { name: 'Select Beta Video' }));
-      await user.click(screen.getByRole('button', { name: /Delete selected/ }));
+      await user.click(screen.getByRole('button', { name: /Delete from library/ }));
       await user.click(await screen.findByRole('button', { name: 'Delete' }));
 
       // Dialog stays open on failure (MUI marks the rest of the page

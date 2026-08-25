@@ -2,7 +2,8 @@ import { Box, Button, Paper, Slider, Stack, Typography } from '@mui/material';
 import PhotoSizeSelectSmallIcon from '@mui/icons-material/PhotoSizeSelectSmall';
 import PhotoSizeSelectLargeIcon from '@mui/icons-material/PhotoSizeSelectLarge';
 import DownloadIcon from '@mui/icons-material/Download';
-import DeleteIcon from '@mui/icons-material/Delete';
+import FolderDeleteIcon from '@mui/icons-material/FolderDelete';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 
 export const THUMBNAIL_SIZE_MIN = 160;
 export const THUMBNAIL_SIZE_MAX = 360;
@@ -19,7 +20,8 @@ export const THUMBNAIL_SIZE_STEP = 10;
 // that section entirely rather than showing an irrelevant control.
 export default function LibraryBottomBar({
   thumbnailSize, onThumbnailSizeChange, onThumbnailSizeCommit,
-  selectedCount, canBulkDownload, onDownloadSelected, onDeleteSelected,
+  selectedCount, canBulkDownload, onDownloadSelected,
+  canDeleteLocalFiles, onDeleteLocalFiles, onDeleteFromLibrary,
 }: {
   thumbnailSize?: number;
   onThumbnailSizeChange?: (size: number) => void;
@@ -27,7 +29,9 @@ export default function LibraryBottomBar({
   selectedCount: number;
   canBulkDownload: boolean;
   onDownloadSelected: () => void;
-  onDeleteSelected: () => void;
+  canDeleteLocalFiles: boolean;
+  onDeleteLocalFiles: () => void;
+  onDeleteFromLibrary: () => void;
 }) {
   return (
     // A flex sibling of LibraryScreen's own scrollable content region (see
@@ -51,8 +55,12 @@ export default function LibraryBottomBar({
               <Button size="small" variant="outlined" startIcon={<DownloadIcon fontSize="small" />} onClick={onDownloadSelected}>
                 Download selected
               </Button>}
-            <Button size="small" variant="outlined" color="error" startIcon={<DeleteIcon fontSize="small" />} onClick={onDeleteSelected}>
-              Delete selected
+            {canDeleteLocalFiles &&
+              <Button size="small" variant="outlined" color="error" startIcon={<FolderDeleteIcon fontSize="small" />} onClick={onDeleteLocalFiles}>
+                Delete local files
+              </Button>}
+            <Button size="small" variant="outlined" color="error" startIcon={<DeleteForeverIcon fontSize="small" />} onClick={onDeleteFromLibrary}>
+              Delete from library
             </Button>
           </>}
       </Box>
