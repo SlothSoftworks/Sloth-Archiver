@@ -39,8 +39,14 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   metadata: LibraryVideoMetadata;
   thumbnailPath?: string | null;
   cacheBustKey?: number;
-}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0 }, ref) {
-  const { downloadedFilePath, thumbnail, videoId } = metadata;
+  // Clip Collection's own player points at a clip's file directly, bypassing
+  // metadata.downloadedFilePath entirely -- takes priority when present, and
+  // (unlike the normal video path) never falls back to a YouTube embed, since
+  // a clip has no meaningful remote-video identity to embed.
+  overrideFilePath?: string;
+}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath }, ref) {
+  const { thumbnail, videoId } = metadata;
+  const filePath = overrideFilePath ?? metadata.downloadedFilePath;
   // Extension alone says Chromium's demuxer can attempt this container, not
   // that this exact file will decode -- an unusual codec or a truncated file
   // can still fail at runtime. Catches that via the <video> element's error
@@ -56,7 +62,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   useEffect(() => {
     setPlaybackFailed(false);
     setHasStartedPlayback(false);
-  }, [downloadedFilePath, cacheBustKey]);
+  }, [filePath, cacheBustKey]);
 
   useImperativeHandle(ref, () => ({
     getCurrentTime: () => (videoRef.current ? videoRef.current.currentTime : null),
@@ -67,7 +73,12 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // feature existed, or while the background fetch hasn't landed yet.
   const posterSrc = thumbnailPath ? buildAppVideoUrl(thumbnailPath) : (thumbnail || undefined);
 
-  if (!downloadedFilePath) {
+  if (!filePath) {
+    if (overrideFilePath !== undefined) {
+      // Clip context: never fall back to a YouTube embed for a derived clip
+      // file -- if there's genuinely nothing to play, there's nothing to show.
+      return null;
+    }
     return (
       <ResizableMediaContainer sx={containerSx}>
         <YouTubeEmbed videoId={videoId} sx={fillSx} />
@@ -75,7 +86,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     );
   }
 
-  const ext = getExtension(downloadedFilePath);
+  const ext = getExtension(filePath);
   const isKnownUnplayable = !PLAYABLE_VIDEO_EXTENSIONS.has(ext);
 
   if (!isKnownUnplayable && !playbackFailed) {
@@ -91,7 +102,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             // already on disk with its own "Open" controls nearby.
             controlsList="nodownload"
             poster={posterSrc}
-            src={buildAppVideoUrl(downloadedFilePath, cacheBustKey)}
+            src={buildAppVideoUrl(filePath, cacheBustKey)}
             onError={() => setPlaybackFailed(true)}
             onPlay={() => setHasStartedPlayback(true)}
             sx={{ ...fillSx, backgroundColor: 'black', objectFit: 'contain' }}

@@ -1,4 +1,4 @@
-import type { LibraryVideoMetadata, PlaylistEntry, PlaylistSummary, PlaylistSnapshot } from '../types';
+import type { LibraryVideoMetadata, PlaylistEntry, PlaylistSummary, PlaylistSnapshot, LibraryClip } from '../types';
 
 export {}
 
@@ -26,6 +26,7 @@ type LibraryIndex = {
             latestEpoch: string | null;
             metadata: LibraryVideoMetadata;
             epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
+            clipCount: number;
         }[];
     }[];
 };
@@ -92,6 +93,9 @@ declare global {
             extractMp3FromFile: (payload: { inputPath: string; outputPath: string }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
             convertFileFormat: (payload: { inputPath: string; outputPath: string; format: string }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
             extractClipFromFile: (payload: { inputPath: string; outputPath: string; start: string; end: string }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
+            createClip: (payload: { videoDir: string; inputPath: string; start: string; end: string; format: string; clipName: string }) => Promise<{ success: boolean; clip?: LibraryClip; message?: string }>
+            getClips: (payload: { videoDir: string }) => Promise<{ success: boolean; clips: LibraryClip[]; message?: string }>
+            deleteClip: (payload: { videoDir: string; clipId: string }) => Promise<{ success: boolean; message?: string }>
             embedFileMetadata: (payload: { inputPath: string; metadataTags: Record<string, string | null | undefined>; thumbnailPath?: string | null; kind: 'video' | 'audio' }) => Promise<{ success: boolean; message?: string }>
             onFfmpegUtilityProgress: (callback: (data: { type: string; percent?: number }) => void) => void
             removeFfmpegUtilityProgressListener: () => void

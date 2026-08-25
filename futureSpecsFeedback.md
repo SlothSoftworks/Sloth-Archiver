@@ -51,7 +51,7 @@ these are detailed in the dated log under [Archived](#archived).
   - [~~Playlist refresh/versioning~~ — shipped](#playlist-refresh)
 - [Big features](#big-features)
   - [Export/Import library JSON](#export-import-json)
-  - [Bulk select + download/delete](#bulk-select)
+  - [~~Bulk select + download/delete~~ — shipped](#bulk-select)
   - [Player customization (pick timestamp) — partially shipped](#player-customization)
   - [More resilient embedded player / MKV support](#resilient-player)
   - [Clip collection](#clip-collection)
@@ -114,6 +114,7 @@ flowchart LR
         d21["Dailymotion support (curl_cffi) + quality picker"]
         d22["yt-dlp self-update: timeout + logging + Open error log button"]
         d23["Customizable thumbnail sizes (continuous slider + bottom options bar)"]
+        d24["Bulk select + download/delete-from-library/delete-local-files (video grids + Playlist view)"]
     end
 
     subgraph PARTIAL["Partially done"]
@@ -127,7 +128,6 @@ flowchart LR
         t6["Language support"]
         t7["Video diff/comparator"]
         t9["Export/Import library JSON"]
-        t10["Bulk select + download/delete in video grid"]
         t11["Player: click-to-select start/end on scrub bar"]
         t12["Player: MKV/more-codec support"]
         t13["Clip collection (saved clips + Clips tab)"]
@@ -136,7 +136,7 @@ flowchart LR
 
     DONE ~~~ PARTIAL ~~~ TODO
 
-    class d1,d1b,p3,t9,t10,t13 library
+    class d1,d1b,d24,p3,t9,t13 library
     class d2,d22 updater
     class d3,d8,d9,d10,d11,d12,d17,d19,d21,t14 playlist
     class d4,d7,d15,d16,d18,d23,t1 smallfeat
@@ -198,10 +198,10 @@ from `futureSpecs.md` directly 2026-08-15.
 <a id="big-features"></a>
 ## Big features
 
-Export/Import JSON and Bulk select are unchanged. Player customization's
-"pick timestamp" half shipped 2026-08-14 — see below for what's still open there.
-Resilient player/MKV support is unchanged. Two brand new items this pass — Clip
-collection and Playlist mode — assessed below.
+Export/Import JSON is unchanged. Player customization's "pick timestamp" half
+shipped 2026-08-14 — see below for what's still open there. Resilient
+player/MKV support is unchanged. Clip collection and Playlist mode remain
+assessed-but-not-built. Bulk select shipped 2026-08-25 — see below.
 
 <a id="export-import-json"></a>
 ### Export/Import library JSON
@@ -221,22 +221,18 @@ raises real, unresolved design questions. **Unchanged this pass.**
 **Recommendation:** nail down the two open decisions first (local-path handling, collision policy — the playlist-refresh precedent above is a reasonable default to point to for the second one) before writing any code. Once decided, land export alone first (it's genuinely low-risk and useful on its own as a backup/audit tool even before import exists), then import as a separate pass.
 
 <a id="bulk-select"></a>
-### Select bulk controllers and download/download all
+### ~~Select bulk controllers and download/download all~~ — SHIPPED
 
-**Overall: Medium** — most of the hard infrastructure this needs was built (bulk
-queue concurrency, per-item progress, retry/skip semantics) for an unrelated reason;
-what's actually net-new is smaller than the spec text suggests. **Unchanged this
-pass**, though the bulk queue itself is now more battle-tested (two real bugs fixed
-in it since — see [Archived](#archived)), which lowers integration risk slightly.
-
-| Piece | Difficulty | Why |
-|---|---|---|
-| Multi-select UI in the video grid | Medium | New state (a selection set keyed by `videoDir`), checkbox overlays on video cards, a "select mode" toggle, and a contextual action bar for the selection-specific buttons. Standard, well-understood pattern (file managers, email clients), just not built here yet. |
-| "Download selected" → feeding the bulk queue | Low-Medium | The spec calls out needing "an identifier between a download job in the side panel and an add-to-library job that doesn't require a download" — this is already solved, not new: `useBulkAddQueue`'s `download: boolean` batch option already models exactly that distinction, and `getRetryStage`'s "resume straight at download" branch is already the precedent for seeding a queue item with a known `videoDir`/`epoch`/`resolution` and skipping the fetch/add phase entirely (since these videos are already in the library). Selected-but-undownloaded videos map onto that existing path almost directly. |
-| "Download selected" visibility rule | Low | A derived boolean over the selection set (`every video in selection has no downloadedFilePath`) — plain composition, no new data needed. |
-| "Delete all selected" | Low | Loops the existing single-video `deleteLibraryEntry` (already used by the per-video delete flow) over the selected `videoDir`s, behind a confirm dialog generalized from the existing single-delete one. |
-
-**Recommendation:** build the multi-select UI first (it's the only genuinely new piece), then wire "download selected" through the bulk queue's existing `download: boolean` + resume-at-download path rather than inventing a second queue-feeding mechanism.
+Landed 2026-08-25, broader than originally scoped — the assessment above correctly
+predicted the shape (multi-select UI + `download: boolean`/resume-at-download reuse +
+a generalized delete-confirm dialog), and the actual build followed exactly that
+plan, but grew twice along the way: the Playlist view got the same three actions
+(not in the original spec's scope, added as a same-pass follow-up), and a fourth
+action — **Delete local files** — was added beyond the original two ("download
+selected"/"delete all selected"), letting a selection of already-downloaded videos
+have just their media files removed (every version, via a new `deleteLocalFiles`
+library.mjs primitive) while keeping the tracked library entries. See
+[Archived](#archived) for the full writeup. Removed from `futureSpecs.md` directly.
 
 <a id="player-customization"></a>
 ### Player customization (pick-timestamp for the clip tool) — PARTIALLY SHIPPED
@@ -575,8 +571,65 @@ Removed from `futureSpecs.md` directly 2026-08-15.
 | Dailymotion added as a supported download platform (bundled `curl_cffi` browser-impersonation) + a per-resolution quality picker for it | 2026-08-15 |
 | yt-dlp self-update reliability: bounded timeout on every step (was previously unbounded, could hang forever) + logging threaded through the whole flow to `main.log` + an "Open error log" button on the update-failed screen | 2026-08-20 |
 | Customizable thumbnail sizes: continuous slider resizing video-grid thumbnails (video thumbnails only, not channel icons), in a new Library-tab-only bottom options bar built as an extensible container for future display controls, persisted setting | 2026-08-24 |
+| Bulk select: checkbox multi-select in the flat video list, a channel's video grid, and the Playlist view, with "Download selected" (quality-picker dialog, resume-at-download queuing), "Delete local files" (media only, every version, entry stays), and "Delete from library" (whole entry) actions in the bottom options bar | 2026-08-25 |
 
 ### Recently shipped, dated log
+
+**2026-08-25:**
+- **Bulk select**, built directly on top of the thumbnail-size bottom bar shipped the
+  day before, and following this section's own prior assessment closely for the
+  video-grid half: checkbox multi-select (hidden by default, hover-reveals, forced
+  visible on every card once any selection exists, selected cards get the theme's
+  `action.selected` tint) added to `VideoCard`'s two grid call sites
+  (`FlatVideoList`, `VideoGrid`) via a `Set<videoDir>` lifted into `LibraryScreen`.
+  "Download selected" opens a small quality-picker dialog (one resolution for the
+  whole batch, reusing `BulkAddDialog`'s `QUALITY_TIERS`) rather than silently
+  picking "best available," then queues through `useBulkAddQueue.start()` — required
+  one small, additive change there: `BulkAddEntry` gained optional
+  `videoDir`/`epoch`/`resolution`/`kind` fields so a freshly-built entry can carry
+  them straight in, letting the queue's existing (previously retry-only)
+  `getRetryStage` "resume straight at download" fast path fire on the very first
+  attempt — no new branching logic in the queue itself. Gating is symmetric and
+  all-or-nothing: "Download selected" shows only when every selected video is
+  undownloaded, and (see below) "Delete local files" only when every selected video
+  is downloaded — a mixed selection just hides both, no partial option.
+- **Extended to the Playlist view same-day**, per direct request: every playlist
+  entry not marked "Not on YouTube" got a checkbox (including entries never added to
+  the library, not just archived ones) at the right of the row, before the existing
+  "Go to library" button. Selection state and its confirm dialogs stay owned by
+  `PlaylistsSection` itself (which already has its own data-loading lifecycle); only
+  a small summary + the three trigger closures are reported upward to `LibraryScreen`
+  via a new `onBulkBarUpdate` callback prop, since the bottom bar itself has to live
+  outside this component's own scrollable region to stay pinned (same structural
+  split the thumbnail-size bar already established). A not-yet-added entry queues
+  through the plain fetch/add/download path (exactly like pasting the playlist fresh)
+  while an in-library one uses the same resume-at-download path as the grid views —
+  both kinds can be queued in one mixed batch. Also added a quality-status chip
+  (`"1080p"`/`"MP3"`/`"Not downloaded"`) to each playlist row as a same-day follow-up
+  gap fix, reusing the exact `getBestDownloadedQuality` logic the video grids already
+  render — this function was promoted from a `LibraryScreen.tsx`-local helper into
+  `src/utils/utils.ts` so both places share one implementation.
+- **Delete local files**, a fourth action added beyond the original two-action scope,
+  per direct request: removes just the downloaded video/audio files for a selection
+  of already-downloaded videos — across every saved version of each, not only the
+  latest — while leaving the tracked library entries and their metadata untouched
+  (re-downloadable afterward). New `deleteLocalFiles({ libraryDir, videoDir })`
+  primitive in `library.mjs` (walks every epoch, deletes `downloadedFilePath`/
+  `downloadedAudioFilePath` wherever present, nulls the corresponding metadata
+  fields) plus a batched `library:deleteLocalFiles` IPC mirroring the existing
+  `deleteEntries` shape (one index refresh, per-item success/failure so a partial
+  failure can be retried without redoing the whole batch). `BulkDeleteConfirmDialog`
+  was generalized to take `title`/`description` props instead of a hardcoded
+  count-based body, since it's now shared by two meaningfully different warnings —
+  the local-files one explicitly states the deletion spans every version and that a
+  single version can only be targeted from that video's own detail view. Icons
+  differentiate the two delete actions (`FolderDeleteIcon` for local files,
+  `DeleteForeverIcon` for the whole entry), with "Delete from library" placed
+  rightmost in the button group as the more destructive of the two.
+- Verified with `tsc -b` (zero new errors beyond a pre-existing, unrelated baseline),
+  `eslint` (clean), and the full `npm test` suite (320 passing, including new
+  coverage in `library.test.mjs`, `LibraryScreen.test.tsx`, and a from-scratch
+  `PlaylistsSection.test.tsx` — that file had no tests at all before this pass).
 
 **2026-08-24:**
 - **Customizable thumbnail sizes**, landed in a different shape than originally

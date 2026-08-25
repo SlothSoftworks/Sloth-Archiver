@@ -59,6 +59,7 @@ type LibraryVideo = {
   metadata: LibraryVideoMetadata;
   epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
   thumbnailPath: string | null;
+  clipCount: number;
 };
 
 type LibraryChannel = {
@@ -643,8 +644,12 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
             <Typography variant="body2" color="text.secondary">
               {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
             </Typography>
-            {video.epochs.length > 1 &&
-              <Typography variant="caption" color="text.secondary">{video.epochs.length} versions</Typography>}
+            <Stack direction="row" spacing={1}>
+              {video.epochs.length > 1 &&
+                <Typography variant="caption" color="text.secondary">{video.epochs.length} versions</Typography>}
+              {video.clipCount > 0 &&
+                <Typography variant="caption" color="text.secondary">{video.clipCount} clip{video.clipCount === 1 ? '' : 's'}</Typography>}
+            </Stack>
           </Stack>
         </Box>
       </CardActionArea>

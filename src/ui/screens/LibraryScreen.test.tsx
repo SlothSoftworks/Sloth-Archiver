@@ -49,6 +49,7 @@ function makeVideo(overrides: Record<string, unknown> = {}) {
     },
     epochs: [{ epoch: '1', metadata: {} }],
     thumbnailPath: null,
+    clipCount: 0,
     ...overrides,
   };
 }
@@ -115,6 +116,19 @@ describe('LibraryScreen', () => {
     expect(await screen.findByText('Channel A')).toBeInTheDocument();
     expect(screen.getByText('Channel B')).toBeInTheDocument();
     expect(screen.getAllByText('1 video')).toHaveLength(2);
+  });
+
+  it('shows a "N clips" badge on a video card only when it has saved clips', async () => {
+    const user = userEvent.setup();
+    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+      channels: [{
+        channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+        videos: [makeVideo({ clipCount: 3 })],
+      }],
+    });
+    render(<LibraryScreen />);
+    await user.click(await screen.findByText('Channel A'));
+    expect(screen.getByText('3 clips')).toBeInTheDocument();
   });
 
   it('drills into a channel, shows its videos, and back returns to the channel list', async () => {

@@ -33,6 +33,18 @@ export type LibraryVideoMetadata = {
     downloadedAudioFilePath: string | null;
 }
 
+// Video-level (not epoch-level) -- a clip is derived from whichever version
+// was selected at creation time, but lives independently afterward.
+// fileName/title/durationSeconds/createdAt mirror clips.json (library.mjs),
+// which is the single source of truth for these on disk.
+export type LibraryClip = {
+    id: string;
+    fileName: string;
+    title: string;
+    createdAt: number;
+    durationSeconds: number;
+}
+
 export type PlaylistEntry = {
     videoId: string;
     title: string | null;

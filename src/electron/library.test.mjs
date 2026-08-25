@@ -20,6 +20,11 @@ import {
   writePlaylistSnapshot,
   enrichPlaylistEntry,
   PLAYLISTS_DIR_NAME,
+  CLIPS_DIR_NAME,
+  buildClipFilePath,
+  recordClip,
+  listClips,
+  deleteClip,
 } from './library.mjs';
 
 let libraryDir;
@@ -306,6 +311,138 @@ describe('deleteLocalFiles', () => {
   });
 });
 
+describe('clips (recordClip / listClips / deleteClip)', () => {
+  it('refuses to record/list/delete outside the configured library folder', () => {
+    expect(() => recordClip({ libraryDir, videoDir: '/etc', fileName: 'a.mp4', title: 'a', durationSeconds: 1 })).toThrow(/outside the configured library folder/);
+    expect(() => listClips({ libraryDir, videoDir: '/etc' })).toThrow(/outside the configured library folder/);
+    expect(() => deleteClip({ libraryDir, videoDir: '/etc', clipId: 'x' })).toThrow(/outside the configured library folder/);
+  });
+
+  it('records a clip into clips.json and returns it with an id/createdAt', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clipPath = buildClipFilePath(videoDir, 'My Clip', 'mp4');
+    fs.mkdirSync(path.dirname(clipPath), { recursive: true });
+    fs.writeFileSync(clipPath, 'fake clip bytes');
+
+    const clip = recordClip({ libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 12 });
+
+    expect(clip.id).toBeTruthy();
+    expect(clip.createdAt).toBeTypeOf('number');
+    expect(clip.fileName).toBe('My Clip.mp4');
+    expect(clip.durationSeconds).toBe(12);
+    expect(listClips({ libraryDir, videoDir })).toEqual([clip]);
+  });
+
+  it('throws on a duplicate fileName rather than overwriting', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    recordClip({ libraryDir, videoDir, fileName: 'a.mp4', title: 'a', durationSeconds: 1 });
+    expect(() => recordClip({ libraryDir, videoDir, fileName: 'a.mp4', title: 'a again', durationSeconds: 2 }))
+      .toThrow(/already exists/);
+  });
+
+  it('listClips returns [] for a video with no clips folder', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    expect(listClips({ libraryDir, videoDir })).toEqual([]);
+  });
+
+  it('listClips drops a manifest entry whose file no longer exists on disk', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    recordClip({ libraryDir, videoDir, fileName: 'ghost.mp4', title: 'Ghost', durationSeconds: 1 }); // never actually written to disk
+    expect(listClips({ libraryDir, videoDir })).toEqual([]);
+  });
+
+  it('deleteClip removes the file and the manifest entry', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clipPath = buildClipFilePath(videoDir, 'My Clip', 'mp4');
+    fs.mkdirSync(path.dirname(clipPath), { recursive: true });
+    fs.writeFileSync(clipPath, 'fake clip bytes');
+    const clip = recordClip({ libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 1 });
+
+    const result = deleteClip({ libraryDir, videoDir, clipId: clip.id });
+
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(clipPath)).toBe(false);
+    expect(listClips({ libraryDir, videoDir })).toEqual([]);
+  });
+
+  it('deleteClip removes the whole clips/ folder (and manifest) when it was the last clip', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clipPath = buildClipFilePath(videoDir, 'My Clip', 'mp4');
+    fs.mkdirSync(path.dirname(clipPath), { recursive: true });
+    fs.writeFileSync(clipPath, 'fake clip bytes');
+    const clip = recordClip({ libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 1 });
+
+    deleteClip({ libraryDir, videoDir, clipId: clip.id });
+
+    expect(fs.existsSync(path.join(videoDir, CLIPS_DIR_NAME))).toBe(false);
+  });
+
+  it('deleteClip keeps the clips/ folder and manifest when other clips remain', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clipPathA = buildClipFilePath(videoDir, 'Clip A', 'mp4');
+    const clipPathB = buildClipFilePath(videoDir, 'Clip B', 'mp4');
+    fs.mkdirSync(path.dirname(clipPathA), { recursive: true });
+    fs.writeFileSync(clipPathA, 'fake clip bytes');
+    fs.writeFileSync(clipPathB, 'fake clip bytes');
+    const clipA = recordClip({ libraryDir, videoDir, fileName: path.basename(clipPathA), title: 'Clip A', durationSeconds: 1 });
+    recordClip({ libraryDir, videoDir, fileName: path.basename(clipPathB), title: 'Clip B', durationSeconds: 1 });
+
+    deleteClip({ libraryDir, videoDir, clipId: clipA.id });
+
+    expect(fs.existsSync(path.join(videoDir, CLIPS_DIR_NAME))).toBe(true);
+    expect(listClips({ libraryDir, videoDir }).map((c) => c.title)).toEqual(['Clip B']);
+  });
+
+  it('deleteClip returns { success: false } for an unknown clipId', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    expect(deleteClip({ libraryDir, videoDir, clipId: 'nope' })).toEqual({ success: false });
+  });
+});
+
+describe('clip lifecycle vs. video lifecycle', () => {
+  it('whole-video delete also removes its clips folder', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clipPath = buildClipFilePath(videoDir, 'My Clip', 'mp4');
+    fs.mkdirSync(path.dirname(clipPath), { recursive: true });
+    fs.writeFileSync(clipPath, 'fake clip bytes');
+    recordClip({ libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 1 });
+
+    deleteLibraryEntry({ libraryDir, videoDir });
+
+    expect(fs.existsSync(videoDir)).toBe(false);
+  });
+
+  it('single-epoch delete (other epochs remain) leaves clips untouched', () => {
+    const first = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    addLibraryVersion({ libraryDir, videoDir: first.videoDir, videoMetaData: baseVideoMetaData() });
+    const clipPath = buildClipFilePath(first.videoDir, 'My Clip', 'mp4');
+    fs.mkdirSync(path.dirname(clipPath), { recursive: true });
+    fs.writeFileSync(clipPath, 'fake clip bytes');
+    recordClip({ libraryDir, videoDir: first.videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 1 });
+
+    deleteLibraryEntry({ libraryDir, videoDir: first.videoDir, epoch: String(first.metadata.addedEpoch) });
+
+    expect(fs.existsSync(clipPath)).toBe(true);
+    expect(listClips({ libraryDir, videoDir: first.videoDir })).toHaveLength(1);
+  });
+
+  it('bulk "delete local files" leaves clips untouched', () => {
+    const { videoDir, epochDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const videoFile = path.join(epochDir, 'video.mp4');
+    fs.writeFileSync(videoFile, 'fake video bytes');
+    recordLibraryDownload({ videoDir, epoch: String(metadata.addedEpoch), filePath: videoFile, resolution: '1080', format: 'mp4' });
+    const clipPath = buildClipFilePath(videoDir, 'My Clip', 'mp4');
+    fs.mkdirSync(path.dirname(clipPath), { recursive: true });
+    fs.writeFileSync(clipPath, 'fake clip bytes');
+    recordClip({ libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 1 });
+
+    deleteLocalFiles({ libraryDir, videoDir });
+
+    expect(fs.existsSync(clipPath)).toBe(true);
+    expect(listClips({ libraryDir, videoDir })).toHaveLength(1);
+  });
+});
+
 describe('overrideLibraryEntry', () => {
   it('removes the existing video dir before writing the new entry', () => {
     const original = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
@@ -364,6 +501,30 @@ describe('scanLibrary', () => {
 
     const index = await scanLibrary(libraryDir);
     expect(index.channels[0].videos[0].thumbnailPath).toBe(thumbPath);
+  });
+
+  it('never mistakes the reserved clips folder for an epoch, with or without a stray metadata.json inside it', async () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clipsDir = path.join(videoDir, CLIPS_DIR_NAME);
+    fs.mkdirSync(clipsDir, { recursive: true });
+    // A stray metadata.json inside clips/ (as if some other process wrote
+    // one) must still not be picked up as a real epoch.
+    fs.writeFileSync(path.join(clipsDir, 'metadata.json'), JSON.stringify({ videoId: 'not-a-real-epoch' }));
+
+    const index = await scanLibrary(libraryDir);
+
+    expect(index.channels[0].videos[0].epochs).toHaveLength(1);
+    expect(index.channels[0].videos[0].metadata.videoId).not.toBe('not-a-real-epoch');
+  });
+
+  it('reports clipCount from clips.json', async () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    recordClip({ libraryDir, videoDir, fileName: 'a.mp4', title: 'a', durationSeconds: 1 });
+    recordClip({ libraryDir, videoDir, fileName: 'b.mp4', title: 'b', durationSeconds: 1 });
+
+    const index = await scanLibrary(libraryDir);
+
+    expect(index.channels[0].videos[0].clipCount).toBe(2);
   });
 });
 

@@ -36,7 +36,9 @@ export function formatClipTimestampInput(raw: string): string {
   return `${digits.slice(0, len - 4)}:${digits.slice(len - 4, len - 2)}:${digits.slice(len - 2)}`;
 }
 
-function parseClipTimestampSeconds(value: string): number {
+// Exported so SaveClipDialog.tsx can reuse the exact same "end >= start + 1s"
+// validation rule, rather than re-implementing it.
+export function parseClipTimestampSeconds(value: string): number {
   const parts = value.split(':').map((p) => parseInt(p, 10) || 0);
   while (parts.length < 3) parts.unshift(0);
   const [h, m, s] = parts.slice(-3);
@@ -84,7 +86,7 @@ export default function FfmpegUtilitiesPanel({
   onExtractClip,
   onEmbedMetadata,
 }: {
-  ffmpegAction: 'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | null;
+  ffmpegAction: 'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | 'extractClipMp3' | null;
   ffmpegProgress: number;
   ffmpegError: string | null;
   isVideoDownloaded: boolean;

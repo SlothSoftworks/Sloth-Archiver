@@ -9,7 +9,7 @@ import os from 'node:os';
 
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -110,7 +110,7 @@ const { readVideoInfoCache, writeVideoInfoCache } = createVideoInfoCache(videoIn
 const { ensureChannelIcon, ensureVideoThumbnail, ensurePlaylistThumbnail } = createThumbnailFetchers({
     ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, onLog: log,
 });
-const { getMediaDurationSeconds, runFfmpegWithProgress, convertWithFallback } = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath });
+const { getMediaDurationSeconds, runFfmpegWithProgress, convertWithFallback, clipAndConvert } = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath });
 
 // Registers app-video:// as a privileged scheme so the Library tab's player
 // can point <video>/<audio> at a downloaded file without loading it into
@@ -1179,6 +1179,80 @@ ipcMain.handle('library:extractClip', async (e, { inputPath, outputPath, start, 
             onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
         });
         return { success: true, outputPath };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// HH:MM:SS -> seconds. Mirrors FfmpegUtilitiesPanel.tsx's own (renderer-side,
+// module-private) copy -- can't be imported across the process boundary, so
+// duplicated here, same as this codebase's other small cross-process helpers.
+function parseClipTimestampSeconds(value) {
+    const parts = (value || '').split(':').map(Number);
+    while (parts.length < 3) parts.unshift(0);
+    const [hours, minutes, seconds] = parts;
+    return hours * 3600 + minutes * 60 + seconds;
+}
+
+// Clip Collection feature: trims + optionally converts in one ffmpeg pass
+// and writes straight into <videoDir>/clips/, unlike library:extractClip
+// above (which takes a pre-picked outputPath from a save dialog and never
+// touches clips.json). videoDir is the video's own folder, not an epoch --
+// clips are video-level, independent of which version they were cut from.
+ipcMain.handle('library:createClip', async (e, { videoDir, inputPath, start, end, format, clipName }) => {
+    const { libraryDir } = readSettings();
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
+        return { success: false, message: 'Refusing to write outside the configured library folder.' };
+    }
+    try {
+        const targetFormat = format === 'source' ? null : format;
+        const ext = targetFormat || path.extname(inputPath).slice(1) || 'mp4';
+        const outputPath = buildClipFilePath(resolvedVideoDir, clipName, ext);
+        if (fs.existsSync(outputPath)) {
+            return { success: false, message: 'A clip with this name already exists for this video.' };
+        }
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+        const startSeconds = parseClipTimestampSeconds(start);
+        const endSeconds = parseClipTimestampSeconds(end);
+        await clipAndConvert({
+            inputPath,
+            outputPath,
+            start,
+            end,
+            format: targetFormat,
+            totalDurationSeconds: Math.max(0, endSeconds - startSeconds),
+            onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
+        });
+
+        const durationSeconds = await getMediaDurationSeconds(outputPath);
+        const clip = recordClip({
+            libraryDir,
+            videoDir: resolvedVideoDir,
+            fileName: path.basename(outputPath),
+            title: clipName,
+            durationSeconds,
+        });
+        return { success: true, clip };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+ipcMain.handle('library:getClips', async (e, { videoDir }) => {
+    const { libraryDir } = readSettings();
+    try {
+        return { success: true, clips: listClips({ libraryDir, videoDir }) };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err), clips: [] };
+    }
+});
+
+ipcMain.handle('library:deleteClip', async (e, { videoDir, clipId }) => {
+    const { libraryDir } = readSettings();
+    try {
+        return deleteClip({ libraryDir, videoDir, clipId });
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }

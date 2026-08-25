@@ -156,7 +156,7 @@ export default function VideoQualityDownload({
   onOpenAudioExternally: () => void;
   isVideoActionActive: boolean;
   isVideoDownloaded: boolean;
-  ffmpegAction: 'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | null;
+  ffmpegAction: 'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | 'extractClipMp3' | null;
   ffmpegProgress: number;
   onExtractAudioToLibrary: () => void;
 }) {

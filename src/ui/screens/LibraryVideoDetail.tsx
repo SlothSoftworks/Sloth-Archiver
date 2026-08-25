@@ -14,6 +14,8 @@ import {
   IconButton,
   Snackbar,
   Stack,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -31,7 +33,9 @@ import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import LibraryVideoPlayer, { type LibraryVideoPlayerHandle } from '../components/LibraryVideoPlayer';
 import VideoQualityDownload from './VideoQualityDownload';
 import FfmpegUtilitiesPanel, { OTHER_FORMAT_VALUE, formatSecondsAsClipTimestamp } from './FfmpegUtilitiesPanel';
-import type { LibraryVideoMetadata } from '../../types';
+import ClipCollectionView from '../components/ClipCollectionView';
+import SaveClipDialog from '../components/SaveClipDialog';
+import type { LibraryVideoMetadata, LibraryClip } from '../../types';
 
 type LibraryVideo = {
   videoFolderName: string;
@@ -40,14 +44,8 @@ type LibraryVideo = {
   metadata: LibraryVideoMetadata;
   epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
   thumbnailPath: string | null;
+  clipCount: number;
 };
-
-// Same small extension-extraction as LibraryVideoPlayer.tsx's own copy, not
-// shared -- this file has no other coupling to that component.
-function getExtension(filePath: string): string {
-  const lastDot = filePath.lastIndexOf('.');
-  return lastDot === -1 ? '' : filePath.slice(lastDot + 1).toLowerCase();
-}
 
 // Mirrors library.mjs's own CURRENT_VIDEO_SCHEMA_VERSION (main process and
 // renderer never cross-import here). An entry whose stored schemaVersion is
@@ -115,7 +113,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // the same way downloadTarget gates video-vs-audio above, but on an
   // entirely separate hook/channel: these run against an already-downloaded
   // file, not a fresh yt-dlp download (see main.mjs's ffmpegUtilityProgress).
-  const [ffmpegAction, setFfmpegAction] = useState<'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | null>(null);
+  const [ffmpegAction, setFfmpegAction] = useState<'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | 'extractClipMp3' | null>(null);
   const [ffmpegProgress, setFfmpegProgress] = useState(0);
   const [ffmpegError, setFfmpegError] = useState<string | null>(null);
   // Separate from ffmpegError -- embedding is fast enough that a plain
@@ -123,6 +121,27 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // toast confirms it explicitly.
   const [embedSuccessSnackbarOpen, setEmbedSuccessSnackbarOpen] = useState(false);
   const [linkCopiedSnackbarOpen, setLinkCopiedSnackbarOpen] = useState(false);
+
+  // Clip Collection -- video-level, independent of selectedEpoch. 'video' is
+  // the normal player+instrument-panel layout; 'clips' swaps the whole thing
+  // out for ClipCollectionView. clips starts empty and is fetched lazily the
+  // first time the tab is opened (see the activeView effect below), not
+  // eagerly on mount, since most videos will never have any.
+  const [activeView, setActiveView] = useState<'video' | 'clips'>('video');
+  const [clips, setClips] = useState<LibraryClip[]>([]);
+  const [clipsLoaded, setClipsLoaded] = useState(false);
+  const [saveClipDialogOpen, setSaveClipDialogOpen] = useState(false);
+  const [savingClip, setSavingClip] = useState(false);
+  const [saveClipError, setSaveClipError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activeView === 'clips' && !clipsLoaded) {
+      window.electronAPI.getClips({ videoDir: video.videoDir }).then((res) => {
+        if (res.success) setClips(res.clips);
+        setClipsLoaded(true);
+      });
+    }
+  }, [activeView, clipsLoaded, video.videoDir]);
   useEffect(() => {
     window.electronAPI.onFfmpegUtilityProgress(({ percent }) => {
       if (typeof percent === 'number') setFfmpegProgress(percent);
@@ -352,6 +371,29 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     }
   };
 
+  // Clip Collection's own file-level utilities -- distinct from the ones
+  // above since they operate on a clip's file in <videoDir>/clips, not the
+  // video's own downloadedFilePath.
+  const handleOpenClipFileLocation = () => {
+    window.electronAPI.openDirectory(`${video.videoDir}/clips`);
+  };
+
+  const handleExtractClipMp3 = async (clip: LibraryClip) => {
+    const inputPath = `${video.videoDir}/clips/${clip.fileName}`;
+    const result = await window.electronAPI.saveExportedFile({
+      defaultName: `${clip.title}.mp3`,
+      extensions: ['mp3'],
+      inputPath,
+    });
+    if (result.canceled || !result.filePath) return;
+    setFfmpegAction('extractClipMp3');
+    setFfmpegError(null);
+    setFfmpegProgress(0);
+    const res = await window.electronAPI.extractMp3FromFile({ inputPath, outputPath: result.filePath });
+    if (!res.success) setFfmpegError(res.message || 'Failed to extract MP3.');
+    setFfmpegAction(null);
+  };
+
   const handleExtractMp3 = async () => {
     if (!metadata.downloadedFilePath) return;
     const result = await window.electronAPI.saveExportedFile({
@@ -403,29 +445,38 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setClipEnd(formatSecondsAsClipTimestamp(Math.floor(time)));
   };
 
-  const handleExtractClip = async () => {
-    // The clip-range-invalid case is already caught by FfmpegUtilitiesPanel
-    // disabling its Extract Clip button (see its own clipRangeInvalid) --
-    // this handler is only ever reachable through that button.
+  // The clip-range-invalid case is already caught by FfmpegUtilitiesPanel
+  // disabling its Extract Clip button (see its own clipRangeInvalid) -- this
+  // handler is only ever reachable through that button. Opens SaveClipDialog
+  // instead of the old save-file dialog -- clips are saved permanently into
+  // the library's clips/ folder, not exported to an arbitrary location.
+  const handleOpenSaveClipDialog = () => {
     if (!metadata.downloadedFilePath || !clipStart.trim() || !clipEnd.trim()) return;
-    const ext = getExtension(metadata.downloadedFilePath) || 'mp4';
-    const result = await window.electronAPI.saveExportedFile({
-      defaultName: `${metadata.title || video.videoFolderName} (clip).${ext}`,
-      extensions: [ext],
-      inputPath: metadata.downloadedFilePath,
-    });
-    if (result.canceled || !result.filePath) return;
-    setFfmpegAction('clip');
-    setFfmpegError(null);
+    setSaveClipError(null);
+    setSaveClipDialogOpen(true);
+  };
+
+  const handleSubmitSaveClip = async ({ clipName, start, end, format }: { clipName: string; start: string; end: string; format: string }) => {
+    if (!metadata.downloadedFilePath) return;
+    setSavingClip(true);
+    setSaveClipError(null);
     setFfmpegProgress(0);
-    const res = await window.electronAPI.extractClipFromFile({
+    const res = await window.electronAPI.createClip({
+      videoDir: video.videoDir,
       inputPath: metadata.downloadedFilePath,
-      outputPath: result.filePath,
-      start: clipStart.trim(),
-      end: clipEnd.trim(),
+      start,
+      end,
+      format,
+      clipName,
     });
-    if (!res.success) setFfmpegError(res.message || 'Failed to extract clip.');
-    setFfmpegAction(null);
+    setSavingClip(false);
+    if (!res.success || !res.clip) {
+      setSaveClipError(res.message || 'Failed to save clip.');
+      return;
+    }
+    setClips((prev) => [...prev, res.clip!]);
+    setSaveClipDialogOpen(false);
+    await onVersionsChanged(); // refreshes the parent's index so the grid's clipCount updates
   };
 
   // Local ffmpeg extraction from the already-downloaded video file, landing
@@ -573,7 +624,18 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
               />
             </Tooltip>}
         </Stack>
-        <Stack direction="row" spacing={0.5}>
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          {(clips.length > 0 || (!clipsLoaded && video.clipCount > 0)) &&
+            <ToggleButtonGroup
+              size="small"
+              value={activeView}
+              exclusive
+              onChange={(_e, v: 'video' | 'clips' | null) => v && setActiveView(v)}
+              sx={{ mr: 0.5 }}
+            >
+              <ToggleButton value="video">Video</ToggleButton>
+              <ToggleButton value="clips">Clip Collection</ToggleButton>
+            </ToggleButtonGroup>}
           <Tooltip title="Refresh this version from YouTube (updates its data in place)">
             <span>
               <IconButton
@@ -620,11 +682,25 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
       {refreshMetadataError &&
         <Typography color="error" variant="body2" sx={{ mb: 2 }}>{refreshMetadataError}</Typography>}
 
-      {/* Keyed on the selected version so switching versions forces a full
+      {activeView === 'clips' ? (
+        <ClipCollectionView
+          videoDir={video.videoDir}
+          clips={clips}
+          onClipsChanged={setClips}
+          onEmptied={() => setActiveView('video')}
+          onOpenFileLocation={handleOpenClipFileLocation}
+          onExtractMp3={handleExtractClipMp3}
+          extractingMp3={ffmpegAction === 'extractClipMp3'}
+          extractMp3Disabled={ffmpegAction !== null}
+          extractMp3Progress={ffmpegProgress}
+          extractMp3Error={ffmpegError}
+        />
+      ) : (
+      /* Keyed on the selected version so switching versions forces a full
           remount of the player + download panel, rather than relying on
           every branch inside them to react correctly to a props change --
           a plain data refresh wasn't reliable enough to swap the player
-          between local-file and YouTube-embed branches on version switch. */}
+          between local-file and YouTube-embed branches on version switch. */
       <Stack key={selectedEpoch || 'no-epoch'} direction={{ xs: 'column', md: 'row' }} spacing={2}>
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '70%' } }}>
           <LibraryVideoPlayer ref={playerRef} metadata={metadata} thumbnailPath={video.thumbnailPath} cacheBustKey={cacheBustKey} />
@@ -697,13 +773,27 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 onSetClipEndFromPlayer={handleSetClipEndFromPlayer}
                 onExtractMp3={handleExtractMp3}
                 onConvertFormat={handleConvertFormat}
-                onExtractClip={handleExtractClip}
+                onExtractClip={handleOpenSaveClipDialog}
                 onEmbedMetadata={handleEmbedMetadata}
               />
             </Stack>
           </Card>
         </Stack>
       </Stack>
+      )}
+
+      <SaveClipDialog
+        open={saveClipDialogOpen}
+        onClose={() => setSaveClipDialogOpen(false)}
+        defaultClipStart={clipStart}
+        defaultClipEnd={clipEnd}
+        convertFormatOptions={convertFormatOptions}
+        existingClipTitles={clips.map((c) => c.title)}
+        submitting={savingClip}
+        progress={ffmpegProgress}
+        error={saveClipError}
+        onSubmit={handleSubmitSaveClip}
+      />
 
       <Dialog open={deleteDialogOpen} onClose={() => !deleting && setDeleteDialogOpen(false)}>
         <DialogTitle>Delete this video?</DialogTitle>

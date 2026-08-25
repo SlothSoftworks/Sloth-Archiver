@@ -43,6 +43,7 @@ function makeVideo(metadataOverrides: Record<string, unknown> = {}, videoOverrid
     metadata,
     epochs: [{ epoch: '100', metadata }],
     thumbnailPath: null,
+    clipCount: 0,
     ...videoOverrides,
   };
 }
@@ -79,6 +80,9 @@ beforeEach(() => {
     extractClipFromFile: vi.fn().mockResolvedValue({ success: true }),
     embedFileMetadata: vi.fn().mockResolvedValue({ success: true }),
     deleteLibraryEntry: vi.fn(),
+    getClips: vi.fn().mockResolvedValue({ success: true, clips: [] }),
+    createClip: vi.fn().mockResolvedValue({ success: true, clip: { id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 5 } }),
+    deleteClip: vi.fn().mockResolvedValue({ success: true }),
   };
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),
@@ -316,7 +320,7 @@ describe('LibraryVideoDetail', () => {
     }));
   });
 
-  it('extracts a clip using the entered start/end times', async () => {
+  it('opens the save-clip dialog (not the save-file dialog) from the entered start/end times', async () => {
     const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720', downloadedFormat: 'dflt' });
     renderDetail(video);
     const user = userEvent.setup();
@@ -325,9 +329,57 @@ describe('LibraryVideoDetail', () => {
     await user.type(screen.getByLabelText('Clip end (HH:MM:SS)'), '000020');
     await user.click(screen.getByRole('button', { name: 'Extract clip' }));
 
-    await waitFor(() => expect(window.electronAPI.extractClipFromFile).toHaveBeenCalledWith({
-      inputPath: '/v/video.mp4', outputPath: '/exported/out', start: '00:00:10', end: '00:00:20',
+    expect(await screen.findByRole('heading', { name: 'Save clip' })).toBeInTheDocument();
+    expect(window.electronAPI.saveExportedFile).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText('Clip name'), 'My Clip');
+    await user.click(screen.getByRole('button', { name: 'Save clip' }));
+
+    await waitFor(() => expect(window.electronAPI.createClip).toHaveBeenCalledWith({
+      videoDir: video.videoDir, inputPath: '/v/video.mp4', start: '00:00:10', end: '00:00:20', format: 'source', clipName: 'My Clip',
     }));
+    // Dialog closes and the parent's index refresh fires so clipCount updates.
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Save clip' })).not.toBeInTheDocument());
+  });
+
+  it('shows the Clip Collection tab only once the video has a clip', async () => {
+    const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720', downloadedFormat: 'dflt' });
+    renderDetail(video);
+    expect(screen.queryByRole('button', { name: 'Clip Collection' })).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Clip start (HH:MM:SS)'), '000010');
+    await user.type(screen.getByLabelText('Clip end (HH:MM:SS)'), '000020');
+    await user.click(screen.getByRole('button', { name: 'Extract clip' }));
+    await user.type(screen.getByLabelText('Clip name'), 'My Clip');
+    await user.click(screen.getByRole('button', { name: 'Save clip' }));
+
+    expect(await screen.findByRole('button', { name: 'Clip Collection' })).toBeInTheDocument();
+  });
+
+  it('hides the Clip Collection tab again once its last clip is deleted', async () => {
+    const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720', downloadedFormat: 'dflt' });
+    renderDetail(video);
+    const user = userEvent.setup();
+    // The tab click below triggers a lazy getClips() fetch since this is the
+    // first time it's opened -- mock it to agree with the clip createClip
+    // already returned, or the fetch would silently overwrite it with [].
+    window.electronAPI.getClips = vi.fn().mockResolvedValue({
+      success: true,
+      clips: [{ id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 5 }],
+    });
+
+    await user.type(screen.getByLabelText('Clip start (HH:MM:SS)'), '000010');
+    await user.type(screen.getByLabelText('Clip end (HH:MM:SS)'), '000020');
+    await user.click(screen.getByRole('button', { name: 'Extract clip' }));
+    await user.type(screen.getByLabelText('Clip name'), 'My Clip');
+    await user.click(screen.getByRole('button', { name: 'Save clip' }));
+    await user.click(await screen.findByRole('button', { name: 'Clip Collection' }));
+
+    await user.click(await screen.findByRole('button', { name: 'Delete My Clip' }));
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Clip Collection' })).not.toBeInTheDocument());
   });
 
   it('embeds metadata into every downloaded file (video and audio) and shows a success toast', async () => {

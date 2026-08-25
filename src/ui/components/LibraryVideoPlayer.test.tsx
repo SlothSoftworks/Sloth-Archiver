@@ -74,4 +74,23 @@ describe('LibraryVideoPlayer', () => {
 
     expect(screen.getByText(/This \.mp4 file couldn't be played here/)).toBeInTheDocument();
   });
+
+  it('prioritizes overrideFilePath over metadata.downloadedFilePath', () => {
+    const { container } = render(
+      <LibraryVideoPlayer
+        metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+        overrideFilePath="/lib/c/v1/clips/My Clip.mp4"
+      />,
+    );
+    const video = container.querySelector('video');
+    expect(video).toHaveAttribute('src', 'app-video://local/%2Flib%2Fc%2Fv1%2Fclips%2FMy%20Clip.mp4?v=0');
+  });
+
+  it('never falls back to a YouTube embed when overrideFilePath is set but empty', () => {
+    const { container } = render(
+      <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: null })} overrideFilePath="" />,
+    );
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(container.querySelector('video')).toBeNull();
+  });
 });

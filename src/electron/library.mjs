@@ -1,6 +1,7 @@
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
+import crypto from 'crypto';
 
 // Windows reserves these as device names -- CON, PRN.txt, con, etc. all refer
 // to the device, not an ordinary file/folder, regardless of case or extension.
@@ -16,6 +17,13 @@ const WINDOWS_RESERVED_NAMES = new Set([
 // channel folders in libraryDir, not one itself. scanLibrary() skips it so
 // it's never mistaken for a channel.
 export const PLAYLISTS_DIR_NAME = 'playlists';
+
+// Video-level reserved folder name (sibling of epoch folders, e.g.
+// <videoDir>/clips/<clipfile>) for trimmed/converted clips derived from a
+// video's downloaded file -- same "reserved name scanLibrary must skip"
+// pattern as PLAYLISTS_DIR_NAME, just one level down (video, not library
+// root).
+export const CLIPS_DIR_NAME = 'clips';
 
 // Bumped whenever buildEpochMetadata's/writePlaylistSnapshot's own written
 // shape gains a field a stale entry won't have. Exported so the renderer can
@@ -74,6 +82,95 @@ export function channelFolderName(channel) {
 // channel-folder length and libraryDir depth remain unbounded.
 export function videoFolderName(videoId) {
     return sanitizeForFilesystem(videoId);
+}
+
+// <videoDir>/clips/clips.json -- one JSON array of clip records per video.
+// Kept minimal: title/extension are derivable from the clip's own filename;
+// this only holds what scanLibrary/ClipCollectionView need cheaply without
+// re-invoking ffprobe on every scan.
+// Record shape: { id, fileName, title, createdAt, durationSeconds }
+function clipsManifestPath(videoDir) {
+    return path.join(videoDir, CLIPS_DIR_NAME, 'clips.json');
+}
+
+function readClipsManifest(videoDir) {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(clipsManifestPath(videoDir), 'utf-8'));
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function writeClipsManifest(videoDir, clips) {
+    fs.mkdirSync(path.join(videoDir, CLIPS_DIR_NAME), { recursive: true });
+    fs.writeFileSync(clipsManifestPath(videoDir), JSON.stringify(clips, null, 2), 'utf-8');
+}
+
+// Deterministic on-disk path for a given clip name + extension -- shared by
+// the createClip IPC handler (main.mjs) and anything else that needs to
+// agree on what "the same name" resolves to.
+export function buildClipFilePath(videoDir, clipName, extension) {
+    return path.join(videoDir, CLIPS_DIR_NAME, `${sanitizeForFilesystem(clipName)}.${extension}`);
+}
+
+// Full per-clip list, for the Clip Collection view -- fetched on demand
+// (library:getClips), not part of the main library index (see scanLibrary's
+// own cheap clipCount instead). Drops manifest entries whose file no longer
+// exists on disk rather than surfacing them as broken.
+export function listClips({ libraryDir, videoDir }) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
+        throw new Error('Refusing to read clips outside the configured library folder.');
+    }
+    const clipsDir = path.join(resolvedVideoDir, CLIPS_DIR_NAME);
+    return readClipsManifest(resolvedVideoDir).filter((c) => fs.existsSync(path.join(clipsDir, c.fileName)));
+}
+
+// Records a clip already written to disk (by ffmpegUtils.mjs's
+// clipAndConvert) into clips.json -- mirrors recordLibraryDownload's
+// "ffmpeg already wrote the bytes, this just updates the JSON side" split.
+// Throws on a duplicate fileName rather than silently overwriting or
+// auto-renaming (product decision); the IPC handler turns this into an
+// inline dialog error for the renderer.
+export function recordClip({ libraryDir, videoDir, fileName, title, durationSeconds }) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
+        throw new Error('Refusing to record a clip outside the configured library folder.');
+    }
+    const manifest = readClipsManifest(resolvedVideoDir);
+    if (manifest.some((c) => c.fileName === fileName)) {
+        throw new Error('A clip with this name already exists for this video.');
+    }
+    const clip = { id: crypto.randomUUID(), fileName, title, createdAt: Date.now(), durationSeconds };
+    writeClipsManifest(resolvedVideoDir, [...manifest, clip]);
+    return clip;
+}
+
+// Mirrors deleteLibraryEntry's containment + rmSync pattern, scoped to one
+// clip file plus its manifest entry. Clips are identified by generated id,
+// not fileName, so callers never need to escape a user-entered filename.
+export function deleteClip({ libraryDir, videoDir, clipId }) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
+        throw new Error('Refusing to delete a clip outside the configured library folder.');
+    }
+    const clipsDir = path.join(resolvedVideoDir, CLIPS_DIR_NAME);
+    const manifest = readClipsManifest(resolvedVideoDir);
+    const clip = manifest.find((c) => c.id === clipId);
+    if (!clip) {
+        return { success: false };
+    }
+    fs.rmSync(path.join(clipsDir, clip.fileName), { force: true });
+    const remaining = manifest.filter((c) => c.id !== clipId);
+    if (remaining.length === 0) {
+        // No clips left -- remove the whole clips/ folder (manifest included)
+        // rather than leaving an empty directory + an empty clips.json behind.
+        fs.rmSync(clipsDir, { recursive: true, force: true });
+    } else {
+        writeClipsManifest(resolvedVideoDir, remaining);
+    }
+    return { success: true };
 }
 
 // Shared by writeLibraryEntry (new video) and addLibraryVersion (new version
@@ -377,9 +474,14 @@ export async function scanLibrary(libraryDir) {
             }
 
             // Epoch folder names are Date.now() timestamps -- numeric descending
-            // sort puts the most recent attempt first.
+            // sort puts the most recent attempt first. clips/ is a reserved
+            // sibling directory (CLIPS_DIR_NAME), explicitly excluded here the
+            // same way PLAYLISTS_DIR_NAME is excluded one level up -- without
+            // this it would fall into this filter, sort unpredictably
+            // (Number('clips') is NaN), and only be skipped by the
+            // metadata.json read below happening to fail.
             const epochNames = epochEntries
-                .filter((e) => e.isDirectory())
+                .filter((e) => e.isDirectory() && e.name !== CLIPS_DIR_NAME)
                 .map((e) => e.name)
                 .sort((a, b) => Number(b) - Number(a));
 
@@ -407,6 +509,10 @@ export async function scanLibrary(libraryDir) {
             // a sibling of the epoch folders, same pattern as channel-icon.*
             // one level up.
             const thumbnailEntry = epochEntries.find((e) => e.isFile() && e.name.startsWith('video-thumbnail.'));
+            // Cheap (one JSON parse) -- only the count rides along in the main
+            // index; the full per-clip list is fetched lazily via
+            // library:getClips when the Clip Collection view actually opens.
+            const clipCount = readClipsManifest(videoPath).length;
 
             videos.push({
                 videoFolderName: videoEntry.name,
@@ -415,6 +521,7 @@ export async function scanLibrary(libraryDir) {
                 metadata,
                 epochs,
                 thumbnailPath: thumbnailEntry ? path.join(videoPath, thumbnailEntry.name) : null,
+                clipCount,
             });
         }
 

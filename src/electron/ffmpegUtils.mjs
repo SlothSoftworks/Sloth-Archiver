@@ -72,9 +72,9 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
     // postprocessing subprocess only reads output after the process exits,
     // so it can never report real progress; spawning ffmpeg ourselves with
     // -progress pipe:1 gives a genuine, continuous percentage.
-    function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress, extraInputArgs = [] }) {
+    function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress, extraInputArgs = [], preInputArgs = [] }) {
         return new Promise((resolve, reject) => {
-            const args = ['-i', inputPath, ...extraInputArgs, ...codecArgs, '-progress', 'pipe:1', '-y', outputPath];
+            const args = [...preInputArgs, '-i', inputPath, ...extraInputArgs, ...codecArgs, '-progress', 'pipe:1', '-y', outputPath];
             const proc = spawn(ffmpegBinaryPath, args);
             let stderr = '';
             let buffer = '';
@@ -121,5 +121,47 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
         }
     }
 
-    return { getMediaDurationSeconds, runFfmpegWithProgress, convertWithFallback };
+    // Clip [start,end] and, optionally, convert format in one pass -- not a
+    // trim then a separate convert (two ffmpeg invocations, two temp files).
+    // 'source' (or falsy) keeps the source container: fast lossless -c copy
+    // trim only, same as the plain "export a clip" flow. Any other format
+    // mirrors convertWithFallback's remux-then-reencode-fallback shape, with
+    // the same seek/trim args on both attempts, since a trimmed remux and a
+    // trimmed re-encode are both still "trim to this range."
+    //
+    // -ss is placed BEFORE -i (an input-side seek), not after (output-side)
+    // -- this is the fix for a well-documented ffmpeg quirk: an output-side
+    // -ss combined with -c copy can't decode/re-cut the video stream, so the
+    // copied video track can only start at the next keyframe *after* the
+    // requested point, while the audio track (no such restriction) starts
+    // exactly on time. The result is a frozen last video frame playing
+    // alongside audio until the next keyframe arrives -- exactly the "first
+    // few seconds have no video" symptom. Seeking on the input side instead
+    // makes the demuxer jump to the keyframe *at or before* the requested
+    // point, so video and audio both start together at that same boundary --
+    // zero re-encoding, zero quality/frame loss, just a clip that may start
+    // up to one GOP length earlier than the exact requested timestamp (the
+    // standard, universally-recommended tradeoff for lossless trimming).
+    // -to (an absolute output timestamp) is replaced with -t (a duration):
+    // once the input has been seeked, -to's "absolute timestamp" meaning is
+    // no longer relative to the original file, but -t's plain duration is
+    // unambiguous regardless of where the seek landed.
+    async function clipAndConvert({ inputPath, outputPath, start, format, totalDurationSeconds, onProgress }) {
+        const preInputArgs = ['-ss', start];
+        const durationArgs = ['-t', String(totalDurationSeconds)];
+        if (!format || format === 'source') {
+            await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, '-c', 'copy'], totalDurationSeconds, onProgress, preInputArgs });
+            return;
+        }
+        try {
+            await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, '-c', 'copy'], totalDurationSeconds, onProgress, preInputArgs });
+        } catch {
+            const reencodeCodecArgs = format.toLowerCase() === 'webm'
+                ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus']
+                : ['-c:v', 'libx264', '-c:a', 'aac'];
+            await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, ...reencodeCodecArgs], totalDurationSeconds, onProgress, preInputArgs });
+        }
+    }
+
+    return { getMediaDurationSeconds, runFfmpegWithProgress, convertWithFallback, clipAndConvert };
 }
