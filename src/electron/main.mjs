@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME } from './library.mjs';
-import { createSettingsStore, clampMaxSimultaneousDownloads } from './settings.mjs';
+import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
@@ -330,6 +330,18 @@ ipcMain.handle('settings:setMaxSimultaneousDownloads', async (e, value) => {
     settings.maxSimultaneousDownloads = clampMaxSimultaneousDownloads(value);
     writeSettings(settings);
     return { success: true, maxSimultaneousDownloads: settings.maxSimultaneousDownloads };
+});
+
+ipcMain.handle('settings:getThumbnailSize', async () => {
+    const { thumbnailSize } = readSettings();
+    return { thumbnailSize: clampThumbnailSize(thumbnailSize ?? THUMBNAIL_SIZE_DEFAULT) };
+});
+
+ipcMain.handle('settings:setThumbnailSize', async (e, value) => {
+    const settings = readSettings();
+    settings.thumbnailSize = clampThumbnailSize(value);
+    writeSettings(settings);
+    return { success: true, thumbnailSize: settings.thumbnailSize };
 });
 
 // User-added muxers for the Library view's "convert to" ffmpeg utility,

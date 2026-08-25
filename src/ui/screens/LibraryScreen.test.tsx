@@ -72,6 +72,8 @@ beforeEach(() => {
     getLibraryIndex: vi.fn().mockResolvedValue({ channels: makeChannels() }),
     getLibraryViewMode: vi.fn().mockResolvedValue({ libraryViewMode: 'channel' }),
     setLibraryViewMode: vi.fn().mockResolvedValue({ success: true, libraryViewMode: 'video' }),
+    getThumbnailSize: vi.fn().mockResolvedValue({ thumbnailSize: 220 }),
+    setThumbnailSize: vi.fn().mockResolvedValue({ success: true, thumbnailSize: 220 }),
     refreshLibraryIndex: vi.fn().mockResolvedValue({ channels: makeChannels() }),
     refreshChannelIcon: vi.fn(),
     openDirectory: vi.fn(),
@@ -85,6 +87,7 @@ describe('LibraryScreen', () => {
     (window.electronAPI.getLibraryDir as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDir: '' });
     render(<LibraryScreen />);
     expect(await screen.findByText('No library folder set')).toBeInTheDocument();
+    expect(screen.queryByRole('slider', { name: 'Thumbnail size' })).not.toBeInTheDocument();
   });
 
   it('shows the channel list by default, with a video count per channel', async () => {
@@ -188,5 +191,45 @@ describe('LibraryScreen', () => {
 
     await user.click(screen.getByRole('button', { name: 'Refresh channel icon' }));
     await waitFor(() => expect(window.electronAPI.refreshChannelIcon).toHaveBeenCalledWith({ channelFolderName: 'Channel A', channelId: 'UC1' }));
+  });
+
+  it('shows the thumbnail-size bar only while a video-thumbnail grid is on screen', async () => {
+    const user = userEvent.setup();
+    render(<LibraryScreen />);
+
+    // Root channel list -- out of scope for the slider, bar hidden.
+    await screen.findByText('Channel A');
+    expect(screen.queryByRole('slider', { name: 'Thumbnail size' })).not.toBeInTheDocument();
+
+    // Drilled into a channel's video grid -- bar shown.
+    await user.click(screen.getByText('Channel A'));
+    expect(screen.getByRole('slider', { name: 'Thumbnail size' })).toBeInTheDocument();
+
+    // Video detail view -- bar hidden.
+    await user.click(screen.getByText('Alpha Video'));
+    expect(screen.queryByRole('slider', { name: 'Thumbnail size' })).not.toBeInTheDocument();
+
+    // Back to the channel's video grid -- bar shown again.
+    await user.click(screen.getByRole('button', { name: 'mock-back' }));
+    expect(screen.getByRole('slider', { name: 'Thumbnail size' })).toBeInTheDocument();
+  });
+
+  it('shows the thumbnail-size bar in the flat by-video list', async () => {
+    (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+    render(<LibraryScreen />);
+    await screen.findByText('Alpha Video');
+    expect(screen.getByRole('slider', { name: 'Thumbnail size' })).toBeInTheDocument();
+  });
+
+  it('committing a thumbnail-size change persists it via setThumbnailSize', async () => {
+    const user = userEvent.setup();
+    render(<LibraryScreen />);
+    await user.click(await screen.findByText('Channel A'));
+
+    const slider = screen.getByRole('slider', { name: 'Thumbnail size' });
+    slider.focus();
+    await user.keyboard('{ArrowRight}');
+
+    expect(window.electronAPI.setThumbnailSize).toHaveBeenCalled();
   });
 });

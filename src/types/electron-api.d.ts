@@ -64,6 +64,8 @@ declare global {
             setCustomConvertFormats: (formats: string[]) => Promise<{ success: boolean; customConvertFormats: string[] }>
             getMaxSimultaneousDownloads: () => Promise<{ maxSimultaneousDownloads: number }>
             setMaxSimultaneousDownloads: (value: number) => Promise<{ success: boolean; maxSimultaneousDownloads: number }>
+            getThumbnailSize: () => Promise<{ thumbnailSize: number }>
+            setThumbnailSize: (value: number) => Promise<{ success: boolean; thumbnailSize: number }>
             getLibraryIndex: () => Promise<LibraryIndex>
             refreshLibraryIndex: () => Promise<LibraryIndex>
             refreshChannelIcon: (payload: { channelFolderName: string; channelId: string | null }) => Promise<LibraryIndex>

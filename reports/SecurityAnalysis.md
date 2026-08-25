@@ -15,15 +15,32 @@ Confidence is stated per finding and means exactly this:
   environment. Each of these carries a concrete one-step check. **Do not act on a
   needs-verification finding's severity without running its check first.**
 
+> **2026-08-24 update:** `reports/cleanCodeAnalysis.md`'s recommendations have since been applied
+> in full (that report is now closed and removed). That was a readability/structure pass, not a
+> security fix pass, and **no finding below changed severity or was resolved as a result** — but
+> two things did change and are reflected inline throughout this document:
+> 1. `src/electron/main.js` was renamed to `main.mjs` and split into `settings.mjs`, `cookies.mjs`,
+>    `thumbnails.mjs`, `ffmpegUtils.mjs`, and `videoInfo.mjs`. Every `main.js:NNN` citation below
+>    has been updated to its new file and line.
+> 2. The path-containment check duplicated six times (the subject of the old report's CC-004) is
+>    now one function, `resolveInsideLibrary()` (`library.mjs:57`), exported and reused. This is
+>    the extraction **SEC-003** and **SEC-010** both already called for as their first step — but
+>    it was applied only within `library.mjs` itself and to the `app-video://` handler. SEC-003's
+>    four ffmpeg handlers still don't call it (still open), and the two bugs SEC-010 describes
+>    still live inside `resolveInsideLibrary()` itself (still open) — the practical effect is that
+>    both fixes are now a one-function edit instead of a six-site hunt. See each finding for
+>    specifics.
+
 ---
 
 ## 1. Scope, method, and threat model
 
 ### Reviewed
 
-Whole repository at `21ec03d`. Read in full: `src/electron/main.js` (1947 lines),
-`src/electron/library.mjs`, `src/electron/updater.mjs`, `src/electron/preload.mjs`,
-`src/electron/utils/constants.mjs`, `src/python/ytdlp_entrypoint.py`, all four `scripts/*.mjs`,
+Whole repository at `21ec03d`. Read in full: `src/electron/main.js` (1947 lines, since split into
+`main.mjs` + `settings.mjs`/`cookies.mjs`/`thumbnails.mjs`/`ffmpegUtils.mjs`/`videoInfo.mjs` — see
+the 2026-08-24 update note above), `src/electron/library.mjs`, `src/electron/updater.mjs`,
+`src/electron/preload.mjs`, `src/electron/utils/constants.mjs`, `src/python/ytdlp_entrypoint.py`, all four `scripts/*.mjs`,
 `package.json` build config, `vite.config.ts`. Renderer code read selectively along the paths
 where remote data becomes markup, a filesystem path, or a subprocess argument:
 `componentUtils.tsx`, `LibraryVideoPlayer.tsx`, `YouTubeEmbed.tsx`, `LibraryVideoDetail.tsx`,
@@ -104,21 +121,22 @@ here are SEC-004 through SEC-007; this is the narrative that connects them.
    browser name. The pasted text is held in component state for the life of the dialog and
    cleared on close; it is never written to `localStorage`/`sessionStorage` (neither is used
    anywhere in this codebase) and never leaves the app.
-2. **IPC.** `cookies:save` (`main.js:934`). Input is a single string.
-3. **Normalization.** `looksLikeNetscapeFormat` (`main.js:869`) decides whether the paste is
+2. **IPC.** `cookies:save` (`main.mjs:682`). Input is a single string.
+3. **Normalization.** `looksLikeNetscapeFormat` (`cookies.mjs:31`) decides whether the paste is
    already a Netscape `cookies.txt` export or a raw `name=value; …` request header. Header input
-   goes through `convertHeaderCookiesToNetscape` (`main.js:873`).
-4. **Validation.** `validateNetscapeLines` (`main.js:919`) requires 7 tab-separated fields per
+   goes through `convertHeaderCookiesToNetscape` (`cookies.mjs:35`).
+4. **Validation.** `validateNetscapeLines` (`cookies.mjs:74`) requires 7 tab-separated fields per
    non-comment line and counts *distinct cookie names*. Zero valid cookies → the write is
    refused.
-5. **At rest.** `fs.writeFileSync(cookiesPath, content, 'utf-8')` (`main.js:947`) →
-   `<userData>/cookies.txt`.
-6. **Into yt-dlp.** `cookiesArgs()` (`main.js:103`) returns `['--cookies', cookiesPath]` (file
-   mode) or `['--cookies-from-browser', <browser>]` (browser mode), spliced into **every**
-   `spawn(ytdlpPath, …)` call site: `main.js:431` (channel avatar), `640` (playlist listing),
-   `1174` (dead-video classification), `1234` (video info), and `buildDownloadArgs` (`1352-1353`,
-   used at `1598`).
-7. **Read-back.** `cookies:status` (`main.js:958`) returns `{loaded, cookieCount}` — a count,
+5. **At rest.** `fs.writeFileSync(cookiesPath, content, 'utf-8')` (`main.mjs`, in the
+   `cookies:save` handler) → `<userData>/cookies.txt`.
+6. **Into yt-dlp.** `cookiesArgs()` (`cookies.mjs:17`, via `makeCookiesArgs`) returns
+   `['--cookies', cookiesPath]` (file mode) or `['--cookies-from-browser', <browser>]` (browser
+   mode), spliced into **every** `spawn(ytdlpPath, …)` call site: `thumbnails.mjs:51` (channel
+   avatar), `main.mjs:456` (playlist listing), `videoInfo.mjs:129` (dead-video classification),
+   `videoInfo.mjs:131`/`208` (video info), and `buildDownloadArgs` (`main.mjs:815`, `videoUrl`
+   pushed at `main.mjs:869`, spawned at `main.mjs:945`).
+7. **Read-back.** `cookies:status` (`main.mjs:706`) returns `{loaded, cookieCount}` — a count,
    never content.
 
 ### 3.2 What this path already gets right
@@ -133,11 +151,11 @@ correctly:
   supplied by the renderer. There is no "load cookies from this path" IPC, so no way to point
   yt-dlp at an arbitrary file or to have the app read one.
 - **Browser mode is allowlist-validated on both sides.** `SUPPORTED_COOKIE_BROWSERS`
-  (`main.js:97`) is checked in `cookies:setConfig` at write time (`main.js:976`, throws on an
-  unsupported value) *and* again in `cookiesArgs()` at read time (`main.js:105`) — so a
+  (`cookies.mjs:7`) is checked in `cookies:setConfig` at write time (`main.mjs:723`, throws on an
+  unsupported value) *and* again in `cookiesArgs()` at read time (`cookies.mjs:19`) — so a
   hand-edited `settings.json` can't inject an arbitrary `--cookies-from-browser` value either.
   This is exactly the right double-check, and it's the pattern SEC-001 is missing elsewhere.
-- **Cookie values never reach logs or the renderer.** `log()` (`main.js:16`) is called with
+- **Cookie values never reach logs or the renderer.** `log()` (`main.mjs:26`) is called with
   error strings and stack traces only; yt-dlp is never run with `--verbose`, and no code path
   reads `cookies.txt` into a message.
 - **Argument construction is safe.** `--cookies` and its path are separate argv elements passed
@@ -168,9 +186,11 @@ about *scope, lifetime, permissions, and concurrent access* to that file.
 
 ### SEC-001 — 2026-08-10 — No `--` end-of-options separator before URLs passed to yt-dlp
 
-**Where:** every `spawn(ytdlpPath, …)` call site — `main.js:431`, `main.js:640`, `main.js:1174`,
-`main.js:1234`, and `buildDownloadArgs()`'s `args.push(videoUrl)` at `main.js:1399` (spawned at
-`main.js:1598`).
+**Where:** every `spawn(ytdlpPath, …)` call site — `thumbnails.mjs:51` (channel avatar),
+`main.mjs:456` (playlist listing), `videoInfo.mjs:129` (dead-video classification),
+`videoInfo.mjs:131`/`208` (video info), and `buildDownloadArgs()`'s `args.push(videoUrl)` at
+`main.mjs:869` (spawned at `main.mjs:945`). Still unfixed as of the 2026-08-24 refactor — these
+are the same five call sites, just relocated by the `main.js` → `main.mjs` split.
 
 **What happens today:** the URL is appended as the final argv element with no `--` separator
 before it. yt-dlp therefore parses any value beginning with `-` as an option rather than a URL.
@@ -194,8 +214,10 @@ caveat above is stated precisely).
 
 **Recommended fix:** insert `'--'` immediately before the URL at all five sites. Additionally,
 validate in the main process rather than trusting the renderer: parse the incoming URL with
-`new URL()` inside `getVideoInfoPython`, `library:fetchPlaylistEntries`, and
-`downloadVideoWithProgressUpdates`, and reject anything whose protocol isn't `http:`/`https:`
+`new URL()` inside `getVideoInfoPython` (`main.mjs:776`, delegating to `fetchVideoInfo` in
+`videoInfo.mjs`), `library:fetchPlaylistEntries` (`main.mjs:499`), and
+`downloadVideoWithProgressUpdates` (`main.mjs:908`), and reject anything whose protocol isn't
+`http:`/`https:`
 (this also closes `file:`/`data:` URLs reaching yt-dlp's generic extractor). The
 double-validation pattern in `cookiesArgs()` (§3.2) is the model to copy.
 
@@ -203,15 +225,16 @@ double-validation pattern in `cookiesArgs()` (§3.2) is the model to copy.
 
 ### SEC-002 — 2026-08-10 — No window-open or navigation guards; child windows may inherit the preload
 
-**Where:** `main.js:992-1003` (the only `BrowserWindow` construction) —
+**Where:** `main.mjs:743-756` (the only `BrowserWindow` construction) —
 no `setWindowOpenHandler`, no `will-navigate` / `will-redirect` handler, no
-`web-contents-created` hook, `sandbox: false` (`main.js:999`), and no Content-Security-Policy
+`web-contents-created` hook, `sandbox: false` (`main.mjs:750`), and no Content-Security-Policy
 anywhere in the app (`index.html`, `src/ui/index.html`, and no `onHeadersReceived` injection).
+Unchanged as of the 2026-08-24 refactor.
 
 **What happens today:** video descriptions are third-party text. `formatComment()`
 (`componentUtils.tsx:3`) linkifies any `https?://…` run in them into
 `<a href={chunk} target="_blank" rel="noopener noreferrer">`, rendered at
-`VideoDetailCard.tsx:191` and `LibraryVideoDetail.tsx:791`. A `target="_blank"` click is a
+`VideoDetailCard.tsx:162` and `LibraryVideoDetail.tsx:636`. A `target="_blank"` click is a
 window-open request. With no handler registered, Electron creates the child window itself, and by
 default a child window is created with the opener's `webPreferences` — including
 `preload: preload.mjs`, which exposes `electronAPI` and `electronAPIPythonDownload` on
@@ -248,39 +271,45 @@ outcome:
 3. `sandbox: true` on the `BrowserWindow` (verify the preload still functions — it uses only
    `contextBridge`/`ipcRenderer`, both sandbox-compatible).
 4. A restrictive CSP for the renderer — served as a header from `startRendererServer`
-   (`main.js:184`) rather than a `<meta>` tag, allowing `self`, `app-video:`, the YouTube embed
+   (`main.mjs:145`) rather than a `<meta>` tag, allowing `self`, `app-video:`, the YouTube embed
    frame, and image sources, with `script-src 'self'`.
 
 ---
 
 ### SEC-003 — 2026-08-10 — ffmpeg utility IPC handlers accept arbitrary read/write paths
 
-**Where:** `main.js:1741` (`library:extractMp3`), `main.js:1757` (`library:convertFormat`),
-`main.js:1783` (`library:extractClip`), `main.js:1816` (`library:embedMetadata`).
+**Where:** `main.mjs:1083` (`library:extractMp3`), `main.mjs:1099` (`library:convertFormat`),
+`main.mjs:1123` (`library:extractClip`), `main.mjs:1150` (`library:embedMetadata`).
 
 **What happens today:** all four take `inputPath` and `outputPath` (or, for `embedMetadata`, an
 `inputPath` plus a derived temp path) straight from the IPC payload and hand them to ffmpeg with
 no containment check. `embedMetadata` is the most destructive: it writes `<input>.new.<ext>`,
-then `fs.rmSync(inputPath, { force: true })` and `fs.renameSync(tempPath, inputPath)`
-(`main.js:1869-1870`) — an unconditional delete-and-replace of whatever path it was given.
-`library:extractClip` additionally passes `start` and `end` directly into ffmpeg's `-ss`/`-to`
-argv slots (`main.js:1788`); the UI constrains these to digits via `formatClipTimestampInput`
-(`LibraryVideoDetail.tsx:99`), but the handler does not.
+then deletes the original and renames the temp file into place — an unconditional delete-and-
+replace of whatever path it was given. `library:extractClip` additionally passes `start` and `end`
+directly into ffmpeg's `-ss`/`-to` argv slots (`main.mjs:1128`); the UI constrains these to digits
+via `formatClipTimestampInput` (now `FfmpegUtilitiesPanel.tsx:31`, moved there by the CC-003
+component split — was `LibraryVideoDetail.tsx:99`), but the handler does not.
 
 **Why it's a risk:** arbitrary file read (any file ffmpeg can demux becomes an output the caller
 chooses the location of), arbitrary file creation/overwrite anywhere the user can write, and — via
 `embedMetadata` — destruction of an arbitrary file. This is notable precisely because the correct
-pattern already exists in this codebase: `library.mjs` guards `deleteLibraryEntry` (`:264`),
-`swapLibraryDownload` (`:210`), `addLibraryVersion` (`:127`) and `refreshLibraryEntryMetadata`
-(`:156`) with a `path.resolve` + `path.relative` containment check, and `handleAppVideoRequest`
-(`main.js:218`) uses the same one. These four handlers simply don't.
+pattern already exists in this codebase: `library.mjs` guards `addLibraryVersion` (`:140`),
+`refreshLibraryEntryMetadata` (`:163`), `swapLibraryDownload` (`:208`), `deleteLibraryEntry`
+(`:254`), and `deletePlaylistSnapshot` (`:777`) all via one shared helper,
+`resolveInsideLibrary()` (`library.mjs:57`, exported) — and `handleAppVideoRequest`
+(`main.mjs:186-191`) uses that same helper too. **Update (2026-08-24):** this shared helper is
+exactly the extraction this finding's own recommended fix asked for — it now exists, is exported,
+and is a one-line import away. These four handlers still don't call it, though; the extraction
+happened as part of an unrelated readability pass (`reports/cleanCodeAnalysis.md`'s CC-004) that
+stopped at `library.mjs`'s own call sites and never reached these four. Still open.
 
 **Confidence:** Confirmed.
 
 **Severity:** High under the untrusted-renderer model; not reachable through the UI on its own.
 
-**Recommended fix:** extract the existing containment check from `library.mjs` into a shared
-helper and apply it to `inputPath` and `outputPath` in all four handlers. Note that
+**Recommended fix:** import `resolveInsideLibrary` from `library.mjs` (already extracted and
+exported — see the update above) and apply it to `inputPath` and `outputPath` in all four
+handlers. Note that
 `inputPath`/`outputPath` are legitimately allowed to point outside the library for the "export
 to a user-chosen location" flows (`dialog:saveExportedFile`, `LibraryVideoDetail.tsx:533/551`) —
 so the right guard is *input must be inside `libraryDir`; output must be either inside
@@ -293,24 +322,26 @@ and accept only that, rather than trusting the renderer to echo it back honestly
 
 ### SEC-012 — 2026-08-10 — yt-dlp self-updater fetches and executes unverified, unpinned code
 
-**Where:** `src/electron/updater.mjs` — `ensurePythonRuntime()` (`:151`), `ensurePyinstaller()`
-(`:181`), `rebuildYtdlp()` (`:190`), `verifyAndSwap()` (`:236`); triggered from
-`ipcMain.handle('ytdlp:startUpdate')` (`main.js:1887`).
+**Where:** `src/electron/updater.mjs` — `ensurePythonRuntime()` (`:227`), `ensurePyinstaller()`
+(`:257`), `rebuildYtdlp()` (`:266`), `verifyAndSwap()` (`:320`); triggered from
+`ipcMain.handle('ytdlp:startUpdate')` (`main.mjs:1217`).
 
-**What happens today:** pressing "update yt-dlp" in the app performs this sequence:
+**What happens today:** pressing "update yt-dlp" in the app performs this sequence (line numbers
+current as of the 2026-08-24 refactor — `updater.mjs` itself wasn't restructured, but did shift
+from unrelated comment-trimming and feature work since the original review):
 
 1. `GET https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest`
-   (`:161`) — the **latest** release, not a pinned one.
-2. Downloads the matching CPython archive from `asset.browser_download_url` (`:164`) with **no
-   checksum and no signature check**, following redirects to any host (`downloadFile`, `:78`).
-3. Extracts it by spawning **`tar` resolved from `PATH`** (`:166`).
-4. `pip install pyinstaller>=6.10,<7 certifi` (`:187`) and `pip install --upgrade yt-dlp[default]`
-   (`:196`) — **unpinned**, latest-at-the-time, no hash pinning.
-5. PyInstaller-freezes the result (`:204`) and swaps it into `userDataYtdlpBinDir` (`:255`) — the
+   (`:237`) — the **latest** release, not a pinned one.
+2. Downloads the matching CPython archive from `asset.browser_download_url` (`:240`) with **no
+   checksum and no signature check**, following redirects to any host (`downloadFile`, `:146`).
+3. Extracts it by spawning **`tar` resolved from `PATH`** (`:242`).
+4. `pip install pyinstaller>=6.10,<7 certifi` (`:263`) and `pip install --upgrade yt-dlp[default]`
+   (`:272`) — **unpinned**, latest-at-the-time, no hash pinning.
+5. PyInstaller-freezes the result (`:286-298`) and swaps it into `liveYtdlpBinDir` (`:339`) — the
    exact binary the app spawns on every metadata fetch and every download.
 
-The only verification performed is `verifyAndSwap`'s `--version` sanity check (`:238`), which
-confirms the binary *runs*, not that it is authentic.
+The only verification performed is `verifyAndSwap`'s `--version` sanity check (`:322`), which
+confirms the binary *runs*, not that it is authentic. Still unfixed.
 
 **Why it's a risk:** this is the only path in the app that downloads new executable code and
 installs it as something the app runs. A compromise anywhere in that chain — the GitHub release,
@@ -331,7 +362,7 @@ distribution rather than the user.
 - Pin the python-build-standalone release **tag** and verify the downloaded archive against a
   known SHA-256 recorded in the repo, rather than taking `releases/latest` on trust.
 - Pin yt-dlp to an explicit version resolved from PyPI's JSON API (already fetched by
-  `getLatestYtdlpVersionFromPyPI`, `:98`) and install with `pip install --require-hashes` against
+  `getLatestYtdlpVersionFromPyPI`, `updater.mjs:175`) and install with `pip install --require-hashes` against
   the hashes PyPI reports, instead of a bare `--upgrade`.
 - Use an absolute path for `tar`, or extract in-process, rather than resolving it from `PATH`.
 - Strongly consider whether the app should rebuild yt-dlp at all at runtime. yt-dlp publishes
@@ -345,8 +376,9 @@ distribution rather than the user.
 
 ### SEC-004 — 2026-08-10 — `cookies.txt` written with default (group/world-readable) permissions
 
-**Where:** `main.js:947` — `fs.writeFileSync(cookiesPath, content, 'utf-8')`, writing
-`<userData>/cookies.txt` (`main.js:88`).
+**Where:** `main.mjs`, in the `cookies:save` handler (`main.mjs:682`) —
+`fs.writeFileSync(cookiesPath, content, 'utf-8')`, writing `<userData>/cookies.txt`. Still
+unfixed; unaffected by the 2026-08-24 refactor beyond relocating from `main.js` to `main.mjs`.
 
 **What happens today:** no `mode` is specified, so the file is created `0o666 & ~umask` — 0644
 under a typical umask on macOS/Linux. Existing files' modes are never corrected. The file
@@ -378,8 +410,9 @@ feature like this.
 
 ### SEC-005 — 2026-08-10 — Pasted cookies are re-scoped to all of `.google.com` with a 5-year expiry
 
-**Where:** `convertHeaderCookiesToNetscape()`, `main.js:873-908` — specifically the domain loop at
-`main.js:900` and `farFutureExpiry` at `main.js:874`.
+**Where:** `convertHeaderCookiesToNetscape()`, `cookies.mjs:35-64` — specifically the domain loop
+at `cookies.mjs:56` and `farFutureExpiry` at `cookies.mjs:36`. Still unfixed; test coverage for
+this function still lives in `main.test.mjs` per the original recommendation below.
 
 **What happens today:** every cookie parsed out of a pasted request header is written to the jar
 **twice** — once for `.youtube.com` and once for `.google.com` — each with
@@ -419,16 +452,21 @@ real, observed yt-dlp failure requires them (`accounts.google.com` is the likely
 narrow host entry, not a subdomain wildcard over all of Google). Stop extending expiry — preserve
 whatever the source expiry was, and for header-pasted cookies (which carry no expiry) use a short
 horizon (e.g. 30 days) so a forgotten paste ages out. Both changes are in one function with
-existing unit-test coverage in `main.test.js`.
+existing unit-test coverage in `main.test.mjs`.
 
 ---
 
 ### SEC-006 — 2026-08-10 — One cookie jar shared across every site and up to 5 concurrent yt-dlp runs
 
-**Where:** `cookiesArgs()` (`main.js:103`) spliced unconditionally into `main.js:431`, `640`,
-`1174`, `1234`, and `buildDownloadArgs` (`main.js:1353`); concurrency from
-`MAX_SIMULTANEOUS_DOWNLOADS_CEILING = 5` (`main.js:375`) and the 5-slot worker pool in
-`useBulkAddQueue.tsx`.
+**Where:** `cookiesArgs()` (`cookies.mjs:17`) spliced unconditionally into `thumbnails.mjs:51`,
+`main.mjs:456`, `videoInfo.mjs:129`, `videoInfo.mjs:131/208`, and `buildDownloadArgs`
+(`main.mjs:815`); concurrency from `MAX_SIMULTANEOUS_DOWNLOADS_CEILING = 5` (now `settings.mjs:28`,
+was `main.js:375`) and the 5-slot worker pool in `useBulkAddQueue.tsx` (`useBulkAddQueue.tsx:62`).
+The renderer's own copy of this constant is no longer independently hand-typed in three places —
+`OptionsScreen.tsx` and `useBulkAddQueue.tsx` now both import one shared `utils/constants.ts`
+value — but that value is still a separate, manually-kept-in-sync `5` from the main-process
+`settings.mjs` copy (the cross-process boundary this finding's own recommended fix already
+anticipated). Doesn't change this finding's severity.
 
 **What happens today:** the same single `cookies.txt` is passed to yt-dlp for *every* extraction,
 regardless of target host — including the non-YouTube platforms the app explicitly supports
@@ -441,7 +479,7 @@ and bulk-add can add metadata fetches on top of that.
 *Cookie mixing*: yt-dlp writes its cookie jar back to the `--cookies` file at the end of a run.
 If so, cookies set by unrelated third-party sites during a download get merged into the file the
 user thinks of as "my YouTube cookie" — the file grows to hold credentials for sites they never
-intended to store, and `cookies:status`'s count (`main.js:962`) silently starts reporting them.
+intended to store, and `cookies:status`'s count (`main.mjs:706`) silently starts reporting them.
 
 *Corruption*: concurrent read-modify-write of a single jar file by five processes has no
 coordination here. A lost update or an interleaved truncation destroys the user's pasted session
@@ -468,14 +506,15 @@ both safer and closer to what the user expects from a feature labeled "personal 
 
 ### SEC-008 — 2026-08-10 — Remote-supplied image URLs fetched with no allowlist, size cap, or timeout
 
-**Where:** `downloadImageToFile()` (`main.js:464`), called from `ensureChannelIcon`
-(`main.js:508`), `ensureVideoThumbnail` (`main.js:527`), and `library:embedMetadata`
-(`main.js:1835`).
+**Where:** `downloadImageToFile()` (`thumbnails.mjs:11`), called from `ensureChannelIcon` and
+`ensureVideoThumbnail` (both defined inside `createThumbnailFetchers()`, `thumbnails.mjs:82`), and
+`library:embedMetadata` (`main.mjs:1165`).
 
 **What happens today:** the URL comes from yt-dlp's info dict (`info.thumbnail` /
-`thumbnails[].url`, reshaped at `main.js:1089-1090`, or a channel-page avatar at `main.js:452`) —
+`thumbnails[].url`, reshaped in `reshapeVideoInfo`, `videoInfo.mjs:62`, or a channel-page avatar
+via `fetchChannelAvatarUrl`, `thumbnails.mjs:48`) —
 i.e. from remote metadata a content author influences. It is passed to `https.get` with:
-no host or scheme allowlist; up to 5 redirects followed to any location (`main.js:467-470`); no
+no host or scheme allowlist; up to 5 redirects followed to any location (`thumbnails.mjs:11-16`); no
 response size limit; no timeout. The body is streamed to disk inside the library folder
 (`channel-icon.*`, `video-thumbnail.*`) or into `os.tmpdir()`.
 
@@ -502,9 +541,9 @@ timeout. Reduce `redirectsLeft` and validate each hop rather than only the first
 
 ### SEC-015 — 2026-08-10 — `shell.openPath` on renderer-supplied paths
 
-**Where:** `main.js:1912` (`system:openFileInDirectory` → `shell.showItemInFolder`),
-`main.js:1919` (`system:openDirectory` → `shell.openPath`), `main.js:1929`
-(`system:openFileExternally` → `shell.openPath`).
+**Where:** `main.mjs:1252` (`system:openFileInDirectory` → `shell.showItemInFolder`),
+`main.mjs:1258` (`system:openDirectory` → `shell.openPath`), `main.mjs:1266`
+(`system:openFileExternally` → `shell.openPath`). Still unfixed.
 
 **What happens today:** the path is taken from the IPC payload and passed to the OS shell with no
 validation of location or file type. `shell.openPath` asks the OS to open the file with its
@@ -530,12 +569,12 @@ safer primitive where it suffices.
 
 ### SEC-007 — 2026-08-10 — Cookie lifecycle: no expiry, no clear-on-exit, file persists after mode switch
 
-**Where:** `main.js:99-108` (`cookiesArgs`'s documented precedence), `main.js:951`
+**Where:** `cookies.mjs:9-24` (`makeCookiesArgs`'s documented precedence), `main.mjs:699`
 (`cookies:delete`), `OptionsScreen.tsx:449-512` (the Options UI).
 
 **What happens today:** switching from "paste cookie" to "cookies from browser" mode deliberately
-leaves `cookies.txt` on disk — the code comment at `main.js:99-102` documents this as intentional
-so that mode switching doesn't destroy the saved file. There is no expiry, no "clear on exit"
+leaves `cookies.txt` on disk — the code comment at `cookies.mjs:12-15` documents this as
+intentional so that mode switching doesn't destroy the saved file. There is no expiry, no "clear on exit"
 option, and no periodic prompt. The only removal path is the explicit "Delete cookie" button.
 Browser mode reads the user's live browser profile on every single yt-dlp invocation.
 
@@ -560,13 +599,21 @@ a tool whose selling point is local, portable archiving, that transparency is a 
 
 ### SEC-010 — 2026-08-10 — `app-video://` containment degrades to cwd; no symlink resolution
 
-**Where:** `handleAppVideoRequest()`, `main.js:211-221`.
+**Where:** `handleAppVideoRequest()`, `main.mjs:186-191`, calling the shared
+`resolveInsideLibrary()` (`library.mjs:57-65`).
 
 **What happens today:**
 
 ```js
-const { libraryDir } = readSettings();
-const resolvedLibraryDir = path.resolve(libraryDir || '');
+export function resolveInsideLibrary(libraryDir, targetPath) {
+    const resolvedLibraryDir = path.resolve(libraryDir || '');
+    const resolvedTarget = path.resolve(targetPath || '');
+    const relative = path.relative(resolvedLibraryDir, resolvedTarget);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        return null;
+    }
+    return resolvedTarget;
+}
 ```
 
 When no library folder is configured, `path.resolve('')` returns the process's current working
@@ -574,8 +621,17 @@ directory, so the containment check becomes "anything under the app's cwd" inste
 Separately, the check uses `path.resolve`, not `fs.realpathSync` — a symlink placed inside the
 library that points outside it passes the check, and `fs.statSync`/`net.fetch` then follow it.
 
+**Update (2026-08-24):** the readability-motivated CC-004 extraction (see the note at the top of
+this document) moved this exact logic — unchanged — out of six duplicated inline copies into this
+one shared, exported function, now also reused by `library.mjs`'s own five internal call sites
+(`addLibraryVersion` `:140`, `refreshLibraryEntryMetadata` `:163`, `swapLibraryDownload` `:208`,
+`deleteLibraryEntry` `:254`, `deletePlaylistSnapshot` `:777`) and by `handleAppVideoRequest`
+itself. Both bugs described above are unchanged — they now live in exactly one place, which is a
+meaningfully smaller fix than before (one function edit instead of six), but neither has actually
+been made yet.
+
 **Why it's a risk:** the protocol is registered with `corsEnabled` and `bypassCSP`
-(`main.js:142`), so any page loaded in the renderer can fetch `app-video://` URLs. Under the
+(`main.mjs:122-124`), so any page loaded in the renderer can fetch `app-video://` URLs. Under the
 default-library-unset state, that becomes a read primitive over the app's working directory; via
 symlinks, over anything the user can read. Impact is bounded (files must be reachable and the
 attacker must already have script execution in the renderer — SEC-002), which is why this is
@@ -585,10 +641,11 @@ rated low, but the fix is two lines.
 
 **Severity:** Low–Medium.
 
-**Recommended fix:** return 403 immediately when `libraryDir` is unset or empty, rather than
-resolving `''`. Resolve both sides with `fs.realpathSync` before the `path.relative` comparison so
-symlinks are normalized. Apply the same two corrections to the identical guard in `library.mjs`
-(`:130`, `:159`, `:213`, `:267`), which shares both weaknesses.
+**Recommended fix:** in `resolveInsideLibrary()` (`library.mjs:57`), return `null` immediately
+when `libraryDir` is unset or empty, rather than resolving `''`. Resolve both sides with
+`fs.realpathSync` before the `path.relative` comparison so symlinks are normalized. Because this
+is now one function shared by every call site (library.mjs's five plus `handleAppVideoRequest`),
+this fix applies everywhere at once rather than needing six separate corrections.
 
 ---
 
@@ -612,9 +669,10 @@ expected ones. This is the build-time counterpart to SEC-012's runtime problem.
 **Positive context, stated for balance:** `npm audit` reports **0 vulnerabilities across 614
 dependencies** (89 prod / 526 dev) as of this review; `package-lock.json` is committed; the
 runtime dependency tree is small and mainstream (React, MUI, dayjs, react-router); no committed
-secrets were found anywhere in git history; and `main.js`/`preload.mjs` import zero third-party
-packages (only `electron` and Node built-ins), which is what makes the tiny 524KB asar of TD-003
-possible.
+secrets were found anywhere in git history; and `main.mjs`/`preload.mjs` — and, as of the
+2026-08-24 split, `settings.mjs`/`cookies.mjs`/`thumbnails.mjs`/`ffmpegUtils.mjs`/`videoInfo.mjs`
+too — import zero third-party packages (only `electron` and Node built-ins), which is what makes
+the tiny 524KB asar of TD-003 possible.
 
 **Confidence:** Confirmed.
 
@@ -638,14 +696,15 @@ video ID) flowing into local binaries and the filesystem. The primary answer is 
 sound:
 
 - **No shell is ever involved.** Every subprocess call in the app uses `spawn(cmd, argsArray)`
-  with no `shell: true` anywhere (verified across `main.js`, `updater.mjs`, `scripts/`). Shell
+  with no `shell: true` anywhere (verified across `main.mjs` and its split-out modules,
+  `updater.mjs`, `scripts/`). Shell
   metacharacters in a video title are inert — there is no command-injection vector via metadata.
-- **Filesystem naming is properly sanitized.** `sanitizeForFilesystem()` (`library.mjs:26`)
+- **Filesystem naming is properly sanitized.** `sanitizeForFilesystem()` (`library.mjs:33`)
   strips `< > : " / \ | ? *` and control characters `\x00-\x1F`, trims trailing dots/spaces,
   caps length at 100, and appends `_` to Windows reserved device names. Path traversal via a
   crafted title or channel name is not possible: separators are removed before the value is ever
-  joined into a path. Video folders are keyed on `videoId` rather than title (`library.mjs:57`),
-  which narrows the surface further.
+  joined into a path. Video folders are keyed on `videoId` rather than title (`library.mjs:75`,
+  `videoFolderName`), which narrows the surface further.
 - **No dynamic code execution or raw HTML.** Zero occurrences of `eval`, `new Function`,
   `dangerouslySetInnerHTML`, `innerHTML`, or `srcdoc` in the entire codebase. React's default
   escaping handles titles and descriptions.
@@ -655,7 +714,7 @@ sound:
 
 **The residue**, all low:
 
-1. **ffmpeg metadata keys are unvalidated.** `main.js:1829-1831` builds
+1. **ffmpeg metadata keys are unvalidated.** `main.mjs:1159-1161` builds
    `['-metadata', `${key}=${value}`]` from `metadataTags` entries. Values are safe (one argv
    token, no shell). A key containing `=` or a newline produces a malformed tag rather than a new
    argument, since key and value share a single token — so this is a data-integrity nit, not an
@@ -664,11 +723,11 @@ sound:
    `https://www.youtube-nocookie.com/embed/${videoId}` with no encoding. A crafted id containing
    `../` or `?`/`#` can redirect the frame to a different path on that same origin. Contained to
    youtube-nocookie.com; fix with `encodeURIComponent` and an `^[A-Za-z0-9_-]{11}$` check.
-3. **`channelId` is interpolated into a yt-dlp target URL.** `main.js:430` builds
-   `https://www.youtube.com/channel/${channelId}`. Because the value is embedded mid-string, it
-   can't become a leading-dash argument (so SEC-001 doesn't apply), but it can alter which URL is
-   fetched. Encode it.
-4. **CSS injection via thumbnail URL.** `LibraryVideoPlayer.tsx:127` passes a remote URL to MUI's
+3. **`channelId` is interpolated into a yt-dlp target URL.** `fetchChannelAvatarUrl`
+   (`thumbnails.mjs:50`) builds `https://www.youtube.com/channel/${channelId}`. Because the value
+   is embedded mid-string, it can't become a leading-dash argument (so SEC-001 doesn't apply), but
+   it can alter which URL is fetched. Encode it.
+4. **CSS injection via thumbnail URL.** `LibraryVideoPlayer.tsx:124` passes a remote URL to MUI's
    `CardMedia image={…}`, which emits `background-image: url("…")`. A URL containing `")` can
    break out of the `url()` and inject CSS declarations. No script execution results, and there is
    no CSP to backstop it (SEC-002); impact is limited to visual defacement of the app's own
@@ -676,10 +735,10 @@ sound:
 
 **Confidence:** Confirmed.
 
-**Severity:** Low (each item).
+**Severity:** Low (each item). All four unfixed as of the 2026-08-24 refactor.
 
 **Recommended fix:** as noted per item. The broader recommendation is a single validation point
-where yt-dlp's info dict is reshaped (`reshapeVideoInfo`, `main.js:1084`) — assert types and
+where yt-dlp's info dict is reshaped (`reshapeVideoInfo`, `videoInfo.mjs:62`) — assert types and
 shapes there, so downstream consumers can rely on `videoId` being an id, `thumbnail` being an
 https URL, and so on, rather than each call site defending itself.
 
@@ -687,12 +746,13 @@ https URL, and so on, rather than each call site defending itself.
 
 ### SEC-011 — 2026-08-10 — Loopback renderer server has no `Host` header check
 
-**Where:** `startRendererServer()`, `main.js:167-190`.
+**Where:** `startRendererServer()`, `main.mjs:145-178`.
 
 **What happens today:** an HTTP server bound to `127.0.0.1` on an OS-assigned ephemeral port
 serves the renderer bundle out of `rendererDir`. Path traversal *is* correctly prevented
-(`main.js:172-177` uses the same `path.relative` guard as elsewhere). There is no `Host` header
-validation and no authentication.
+(`main.mjs:150-153` uses the same `path.relative` guard as elsewhere — this specific instance is
+a distinct, legitimate check against `rendererDir`, not one of the six library-containment copies
+CC-004 consolidated). There is no `Host` header validation and no authentication.
 
 **Why it's a risk:** any local process can enumerate the port and fetch the static bundle, and a
 remote page can reach it via DNS-rebinding. What's served is only the app's own already-public
@@ -711,9 +771,9 @@ server useless to any other local process.
 
 ### SEC-014 — 2026-08-10 — Unvalidated settings and dialog-option IPC
 
-**Where:** `main.js:317` (`settings:setDownloadDir`), `main.js:332` (`settings:setLibraryDir`),
-`main.js:400` (`settings:setCustomConvertFormats`), `main.js:1006` (`dialog:openFolder`),
-`main.js:1013` (`dialog:saveVideoFile`).
+**Where:** `main.mjs:274` (`settings:setDownloadDir`), `main.mjs:289` (`settings:setLibraryDir`),
+`main.mjs:343` (`settings:setCustomConvertFormats`), `main.mjs:757` (`dialog:openFolder`),
+`main.mjs:764` (`dialog:saveVideoFile`).
 
 **What happens today:** the settings setters persist whatever value they're given. Notably
 `settings:setLibraryDir` accepts any path and that value becomes the root of the `app-video://`
@@ -723,9 +783,9 @@ that protocol. The two dialog handlers spread a renderer-supplied `options` obje
 `filters`, etc.
 
 Not every setting is unguarded — `maxSimultaneousDownloads` is clamped in the main process
-(`clampMaxSimultaneousDownloads`, `main.js:377`), theme and view mode are normalized to known
-values, and the cookie browser is allowlisted. Those are the right patterns; the paths just don't
-follow them.
+(`clampMaxSimultaneousDownloads`, now `settings.mjs:30`, was `main.js:377`), theme and view mode
+are normalized to known values, and the cookie browser is allowlisted. Those are the right
+patterns; the paths just don't follow them.
 
 **Confidence:** Confirmed.
 
@@ -739,8 +799,9 @@ the dialog calls, accept a small set of named, validated fields.
 
 ### SEC-016 — 2026-08-10 — Unbounded, unrotated `main.log`; raw tool stderr surfaced to UI
 
-**Where:** `log()` (`main.js:16`), `errorLog:report` (`main.js:1937`), `summarizeFfmpegError`
-(`main.js:1487`), the download error path (`main.js:1661`).
+**Where:** `log()` (`main.mjs:26`), `errorLog:report` (`main.mjs:1273`), `summarizeFfmpegError`
+(now `ffmpegUtils.mjs:26`, was `main.js:1487`), the download error path (`main.mjs`, inside
+`downloadVideoWithProgressUpdates` — `main.mjs:908`).
 
 **What happens today:** `main.log` is appended to with `fs.appendFileSync` and never rotated,
 trimmed, or size-capped. Renderer errors are forwarded into the same file. yt-dlp's accumulated
@@ -772,7 +833,7 @@ Electron apps, and a security report that lists only problems misrepresents the 
 project.
 
 - **Correct process isolation.** `contextIsolation: true`, `nodeIntegration: false`
-  (`main.js:997-998`). The preload exposes a fixed, enumerated API surface — no raw `ipcRenderer`,
+  (`main.mjs:748-749`). The preload exposes a fixed, enumerated API surface — no raw `ipcRenderer`,
   no `require`, no channel-name passthrough. This is the single most important structural decision
   in an Electron app and it's right.
 - **No dynamic code execution or raw HTML anywhere.** Zero `eval` / `new Function` /
@@ -791,8 +852,8 @@ project.
   favor of bundling deno. That was the right instinct, and SEC-012 is the argument for applying it
   to the updater too.
 - **Crash-safe write patterns** — temp-then-rename for metadata (`library.mjs:763`,
-  `main.js:1827`), backup-before-reconcile for playlists, and tolerant scanning that skips corrupt
-  entries rather than failing a whole library scan.
+  `main.mjs:1200` inside `library:embedMetadata`), backup-before-reconcile for playlists, and
+  tolerant scanning that skips corrupt entries rather than failing a whole library scan.
 - **Clean dependency posture** — 0 npm audit findings across 614 deps, committed lockfile, no
   secrets in git history, zero third-party imports in the main process.
 - **The code is unusually well commented.** Nearly every non-obvious decision carries a rationale
@@ -845,8 +906,10 @@ it's the order in which fixing things buys the most.
 - SEC-007 (cookie lifecycle + documentation), SEC-009 (validation at `reshapeVideoInfo`),
   SEC-010, SEC-011, SEC-013, SEC-014, SEC-016, and the §6 signing question.
 
-**Test coverage to add alongside the fixes.** The existing suite (289 tests, `main.test.js`
-covers the exported pure helpers) is the natural home for most of this: assert that
+**Test coverage to add alongside the fixes.** The existing suite (287 tests as of 2026-08-24;
+`main.test.mjs` covers the exported pure helpers, alongside sibling `*.test.mjs` files for the
+modules split out of `main.js` since this report was written) is the natural home for most of
+this: assert that
 `buildDownloadArgs` emits `--` before the URL; that `convertHeaderCookiesToNetscape` emits only
 the intended domains and doesn't extend expiry; and add direct tests for a shared path-containment
 helper once SEC-003 introduces one. Each is a pure-function test, which is why these fixes are

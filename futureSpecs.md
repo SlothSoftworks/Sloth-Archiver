@@ -36,7 +36,6 @@ you point it here.
 1. Video merger (requires video versioning first): Sometimes videos get re-edited and reuploaded and this causes them to have a different link. This feature would add an option to add the new link in the video library view and the metadata will replace the main link to the video (to keep updating and downloading if he wants to) but keep the original video data in a version marked (legacy/deleted from youtube)
 2. Small improvements to the embedded local player:
    - remove the buffer looking effect in the local player it could confuse users thinking they are watching the video online
-3. Customizable thumbnail sizes for video view. As part of this let's add a new element to the general view. a bottom page settings bar that will have a small slider type of menu similar to that zoom level indicator apps like Word have that will allow you to change the size of the thumbnails. Let's try with 4 sizes to start (Large, Medium, Small, Miniature) with Large being the current size we have as default and the others being smaller.
 
 
 ### Bugs found

@@ -63,7 +63,7 @@ these are detailed in the dated log under [Archived](#archived).
 - [Small features and corrections](#small-features)
   - [Video merger](#video-merger)
   - [Player UX](#player-ux)
-  - [Customizable thumbnail sizes](#thumbnail-sizes)
+  - [~~Customizable thumbnail sizes~~ — shipped](#thumbnail-sizes)
   - [~~Metadata schema versioning~~ — shipped](#schema-versioning)
   - [~~Copy-link button~~ — shipped](#copy-link)
   - [~~Ordering/"order by" filter~~ — shipped](#ordering-filter)
@@ -113,6 +113,7 @@ flowchart LR
         d20["Player: pick-timestamp buttons for clip tool"]
         d21["Dailymotion support (curl_cffi) + quality picker"]
         d22["yt-dlp self-update: timeout + logging + Open error log button"]
+        d23["Customizable thumbnail sizes (continuous slider + bottom options bar)"]
     end
 
     subgraph PARTIAL["Partially done"]
@@ -131,7 +132,6 @@ flowchart LR
         t12["Player: MKV/more-codec support"]
         t13["Clip collection (saved clips + Clips tab)"]
         t14["Playlist mode (internal queue playback)"]
-        t15["Customizable thumbnail sizes"]
     end
 
     DONE ~~~ PARTIAL ~~~ TODO
@@ -139,7 +139,7 @@ flowchart LR
     class d1,d1b,p3,t9,t10,t13 library
     class d2,d22 updater
     class d3,d8,d9,d10,d11,d12,d17,d19,d21,t14 playlist
-    class d4,d7,d15,d16,d18,t1,t15 smallfeat
+    class d4,d7,d15,d16,d18,d23,t1 smallfeat
     class d5,d6,d13,d14,t6 qol
     class t7 longshot
     class d20,t11,t12 player
@@ -398,10 +398,9 @@ stating the videos themselves aren't removed. Removed from `futureSpecs.md` dire
 <a id="small-features"></a>
 ## Small features and corrections
 
-Two items (Video merger, Player UX) carry over unchanged. The other four — metadata
-schema versioning, copy-link button, ordering/"order by" filter, and playlist
-thumbnail — have all shipped, see below. One brand new item this pass —
-Customizable thumbnail sizes — assessed below.
+Two items (Video merger, Player UX) carry over unchanged. The other five — metadata
+schema versioning, copy-link button, ordering/"order by" filter, playlist thumbnail,
+and customizable thumbnail sizes — have all shipped, see below.
 
 <a id="video-merger"></a>
 ### 1. Video merger
@@ -446,38 +445,18 @@ scoping as one combined "personalize the player" effort rather than three separa
 partial attempts.
 
 <a id="thumbnail-sizes"></a>
-### 3. Customizable thumbnail sizes
+### ~~3. Customizable thumbnail sizes~~ — SHIPPED
 
-**New this pass.** **Overall: Low-Medium** — mechanically simple (MUI's own grid
-breakpoint system already does most of the work); the only real decision is UI
-placement, since the spec asks for a specific new layout element, not just a control
-dropped into an existing toolbar.
-
-**Confirmed directly:** `VideoCard` (`LibraryScreen.tsx`) has no fixed pixel size of
-its own today — it's rendered inside a MUI `Grid size={{ xs: 12, sm: 6, md: 4 }}`
-(a fixed 1/2/3-column layout depending on viewport width, not user-adjustable), used
-identically in both the flat by-video list and the per-channel drill-in view. Card
-size is entirely a function of how many columns the grid is told to use per row, via
-CSS Grid — a well-understood lever to expose as a size setting.
-
-| Piece | Difficulty | Why |
-|---|---|---|
-| Mapping "4 sizes" onto the grid | Low | Each size level is just a different `Grid size={...}` breakpoint object — Large keeps today's `{xs:12, sm:6, md:4}` (~3 columns) as the spec asks; Medium/Small/Miniature are progressively smaller-fraction/more-columns variants of the same prop. No new layout mechanism needed, just a variable instead of the current hardcoded object. |
-| Persisted setting | Low | Same settings pattern used everywhere else in this app (`settings:getLibraryThumbnailSize`/`setLibraryThumbnailSize`, mirroring `libraryViewMode`) — a `main.js` IPC pair plus a bit of `readSettings`/`writeSettings` plumbing, all existing precedent. |
-| The slider control itself | Low | A plain MUI `Slider` with 4 discrete marked steps (`step={null}`, a `marks` array) — no new component, no new dependency. |
-| Where it lives: a new bottom-of-viewport bar | Medium | This is the one genuinely new piece — the spec explicitly asks for a persistent bottom bar (like Word's zoom control), not a control folded into the existing top toolbar (which already holds search + sort, per the ordering-filter work). Nothing in this app today renders outside the tab-switching content area (`MainPage.tsx`) except the always-mounted bulk-add side panel — a new bottom bar would be a similar structural sibling to that, not a per-screen addition, if it's meant to persist across the whole app rather than just the Library tab. |
-
-**Open question worth deciding before building:** does the size setting apply only to
-the flat by-video grid, or also to the per-channel video grid (both currently render
-the same `VideoCard`, so this is a scope decision, not a technical constraint either
-way) — and is the bottom bar Library-tab-only or app-wide chrome? The spec's own
-Word-zoom-bar comparison suggests something closer to persistent app chrome, but
-it's only ever mentioned in the context of "the video view."
-
-**Recommendation:** land the setting + `VideoCard` size variants first (useful and
-testable even via a temporary dropdown in the existing toolbar), then decide the
-bottom-bar placement question separately — the two are independent pieces of work
-and the visual-chrome decision shouldn't block the underlying resize capability.
+Landed 2026-08-24, in a different shape than originally assessed: a continuous
+pixel-based slider rather than the 4-discrete-size (Large/Medium/Small/Miniature)
+idea scoped above — decided directly with the user as a better fit for a slider
+control and for the "customizable" framing, at no real extra implementation cost
+over discrete presets. Scoped to video thumbnails only, per the same open question
+this section originally flagged: the flat by-video list and the per-channel drill-in
+grid both resize; the root channel-icon grid does not. See
+[Archived](#archived) for the full writeup, including two same-day layout follow-ups
+(the bar not staying pinned when a channel had too little content to scroll, and the
+bar being inset instead of full-width). Removed from `futureSpecs.md` directly.
 
 <a id="schema-versioning"></a>
 ### ~~3. Metadata schema versioning~~ — SHIPPED
@@ -595,8 +574,43 @@ Removed from `futureSpecs.md` directly 2026-08-15.
 | Player "pick timestamp" -- Set-as-start/Set-as-end buttons next to the clip fields | 2026-08-14 |
 | Dailymotion added as a supported download platform (bundled `curl_cffi` browser-impersonation) + a per-resolution quality picker for it | 2026-08-15 |
 | yt-dlp self-update reliability: bounded timeout on every step (was previously unbounded, could hang forever) + logging threaded through the whole flow to `main.log` + an "Open error log" button on the update-failed screen | 2026-08-20 |
+| Customizable thumbnail sizes: continuous slider resizing video-grid thumbnails (video thumbnails only, not channel icons), in a new Library-tab-only bottom options bar built as an extensible container for future display controls, persisted setting | 2026-08-24 |
 
 ### Recently shipped, dated log
+
+**2026-08-24:**
+- **Customizable thumbnail sizes**, landed in a different shape than originally
+  assessed above: a continuous pixel-based slider (min-card-width driven, `Slider`'s
+  `onChange` for live resize + `onChangeCommitted` for the single persisted write)
+  rather than 4 discrete size presets — decided directly with the user, since a
+  slider that only ever snaps to a few stops reads oddly as a control, and continuous
+  sizing wasn't meaningfully harder to build (one CSS property templated by the
+  slider value). Scoped to video thumbnails only: `FlatVideoList`'s flat list and
+  `VideoGrid` (inside a selected channel) both switched from MUI's fixed
+  `Grid size={{xs,sm,md}}` breakpoints to a CSS `repeat(auto-fill, minmax(Npx, 1fr))`
+  grid; the root `ChannelList` channel-icon grid is untouched, exactly per the scope
+  question this section originally raised. New `LibraryBottomBar.tsx` component,
+  explicitly built as an extensible container (slider on the right, left side
+  reserved) rather than a single-purpose widget, per the user's own framing of "this
+  and future design related options." Persisted via the standard settings round-trip
+  (`settings.mjs`/`main.mjs`/`preload.mjs`/`electron-api.d.ts`, mirroring
+  `libraryViewMode`), and shown only on the Library tab, only while a video-thumbnail
+  grid is actually on screen (hidden during loading, no-library-dir, Playlists,
+  video detail, and the root channel list).
+- Two same-day layout follow-ups from manual testing, both about the bar not
+  actually reading as static chrome: (1) it stayed put via `position: sticky`
+  initially, which only pins once there's enough content to scroll — a channel with
+  too few videos left it looking like a normal in-page element instead of pinned to
+  the bottom. Fixed structurally instead: `MainPage.tsx`'s `CustomTabPanel` gained an
+  opt-in `fill` prop (Library tab only) giving it a full-height flex column, with the
+  grid content in a scrollable inner region and the bar as a non-scrolling sibling
+  outside it — the same mechanism that already keeps the top tab bar pinned above
+  `.tabContainer`'s own scroll region, rather than a CSS positioning trick.
+  (2) the bar was inset by the tab's own `p:3` padding, unlike the edge-to-edge top
+  tab bar; moved that padding down onto just the scrollable content region so the bar
+  spans the tab's full width. `LibraryScreen.test.tsx` updated with the new mock
+  methods and coverage for the bar's visibility/persistence, but the suite wasn't run
+  this pass, per explicit instruction to defer that until after manual testing.
 
 **2026-08-20:**
 - **yt-dlp self-update reliability**, from a real bug report: the installed app got stuck at "Setting up build tools..." during a self-update while the same update ran fine via `dev:electron` on the same machine, and there was no way to tell why on either one. Confirmed directly: `updater.mjs`'s `run()`/`probe()` (subprocess) and `fetchJson()`/`downloadFile()` (HTTPS) had no timeout at all — a stalled connection or wedged process left the promise pending forever, no resolve/reject, nothing logged, and the update overlay has no cancel button by design (yt-dlp is a required dependency). Fixed: every one of those four helpers now takes a bounded `timeoutMs` (10 minutes, generous on purpose — meant to catch "actually stuck," not "slower than usual") and kills/destroys the stalled operation, turning a silent hang into a real, retryable error. Also threaded an optional `onLog` through the entire call chain (`performYtdlpUpdate` → `ensurePythonRuntime`/`ensurePyinstaller`/`rebuildYtdlp`/`verifyAndSwap` → every `run`/`probe`/`fetchJson`/`downloadFile` call), wired to `main.js`'s existing `log()` (`userData/main.log`) — every step now logs what it's running and how it ended (success, failure with stderr, or an explicit `TIMED OUT` line). Separately, added an "Open error log" button directly to `YtdlpUpdateDialog.tsx`'s "Update failed" screen (reuses the exact same `openErrorLog`/`shell.openPath` handler Options' own button already used) — previously the only options there were Quit or Retry, with no way to see why without leaving the app. Verified with lint + `tsc -b` only, per explicit instruction not to run the test suite this pass.

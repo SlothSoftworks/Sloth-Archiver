@@ -36,6 +36,7 @@ import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils
 import LibraryVideoDetail from './LibraryVideoDetail';
 import PlaylistsSection from '../components/PlaylistsSection';
 import LibrarySearchBar from '../components/LibrarySearchBar';
+import LibraryBottomBar from '../components/LibraryBottomBar';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 import type { LibraryVideoMetadata } from '../../types';
 
@@ -148,20 +149,23 @@ export default function LibraryScreen() {
   const [selectedVideo, setSelectedVideo] = useState<LibraryVideo | null>(null);
   const [viewMode, setViewMode] = useState<LibraryViewMode>('channel');
   const [librarySection, setLibrarySection] = useState<LibrarySection>('videos');
+  const [thumbnailSize, setThumbnailSize] = useState(220); // overwritten by load()
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
   const deepLinkMatch = useMatch('/library/video/:videoId');
   const navigate = useNavigate();
 
   const load = async () => {
     setLoading(true);
-    const [{ libraryDir }, index, { libraryViewMode }] = await Promise.all([
+    const [{ libraryDir }, index, { libraryViewMode }, { thumbnailSize }] = await Promise.all([
       window.electronAPI.getLibraryDir(),
       window.electronAPI.getLibraryIndex(),
       window.electronAPI.getLibraryViewMode(),
+      window.electronAPI.getThumbnailSize(),
     ]);
     setLibraryDir(libraryDir);
     setChannels(index.channels);
     setViewMode(libraryViewMode);
+    setThumbnailSize(thumbnailSize);
     setLoading(false);
   };
 
@@ -175,6 +179,17 @@ export default function LibraryScreen() {
   const handleViewModeChange = (mode: LibraryViewMode) => {
     setViewMode(mode);
     window.electronAPI.setLibraryViewMode(mode);
+  };
+
+  // Local state updates continuously as the slider drags (smooth grid
+  // resize); the persisted write only fires once, on release -- see
+  // LibraryBottomBar's onChange vs onChangeCommitted split.
+  const handleThumbnailSizeChange = (size: number) => {
+    setThumbnailSize(size);
+  };
+
+  const handleThumbnailSizeCommit = (size: number) => {
+    window.electronAPI.setThumbnailSize(size);
   };
 
   const handleRefresh = async () => {
@@ -307,6 +322,7 @@ export default function LibraryScreen() {
   ) : selectedChannel ? (
     <VideoGrid
       channel={selectedChannel}
+      thumbnailSize={thumbnailSize}
       onBack={() => setSelectedChannel(null)}
       onSelectVideo={setSelectedVideo}
       onChannelsUpdated={handleChannelsUpdated}
@@ -316,6 +332,7 @@ export default function LibraryScreen() {
       channels={channels}
       libraryDir={libraryDir}
       viewMode={viewMode}
+      thumbnailSize={thumbnailSize}
       onViewModeChange={handleViewModeChange}
       onSelectVideo={setSelectedVideo}
       onRefresh={handleRefresh}
@@ -333,26 +350,42 @@ export default function LibraryScreen() {
 
   return (
     <>
-      {/* Only shown at the root level -- hidden while drilled into a
-          channel's video grid or a video's own detail. */}
-      {!loading && libraryDir && !selectedVideo && !selectedChannel &&
-        <ToggleButtonGroup
-          value={librarySection}
-          exclusive
-          size="small"
-          onChange={(_e, value: LibrarySection | null) => value && setLibrarySection(value)}
-          sx={{ mb: 2 }}
-        >
-          <ToggleButton value="videos">
-            <VideoLibraryIcon fontSize="small" sx={{ mr: 0.5 }} />
-            Videos
-          </ToggleButton>
-          <ToggleButton value="playlists">
-            <PlaylistPlayIcon fontSize="small" sx={{ mr: 0.5 }} />
-            Playlists
-          </ToggleButton>
-        </ToggleButtonGroup>}
-      {content}
+      {/* Scrollable region -- everything above the bottom options bar scrolls
+          in here; the bar itself (below, outside this Box) stays pinned at
+          the bottom of the tab regardless of how much content is above it,
+          the same way MainPage's own tab bar stays pinned above
+          .tabContainer's scroll region. Requires CustomTabPanel's `fill`
+          prop (MainPage.tsx), which leaves its wrapping Box unpadded so the
+          bar below can span the tab's full width -- p:3 lives here instead,
+          on just this scrollable region, rather than on that shared Box. */}
+      <Box sx={{ flex: 1, overflow: 'auto', minHeight: 0, p: 3 }}>
+        {/* Only shown at the root level -- hidden while drilled into a
+            channel's video grid or a video's own detail. */}
+        {!loading && libraryDir && !selectedVideo && !selectedChannel &&
+          <ToggleButtonGroup
+            value={librarySection}
+            exclusive
+            size="small"
+            onChange={(_e, value: LibrarySection | null) => value && setLibrarySection(value)}
+            sx={{ mb: 2 }}
+          >
+            <ToggleButton value="videos">
+              <VideoLibraryIcon fontSize="small" sx={{ mr: 0.5 }} />
+              Videos
+            </ToggleButton>
+            <ToggleButton value="playlists">
+              <PlaylistPlayIcon fontSize="small" sx={{ mr: 0.5 }} />
+              Playlists
+            </ToggleButton>
+          </ToggleButtonGroup>}
+        {content}
+      </Box>
+      {!loading && libraryDir && librarySection === 'videos' && !selectedVideo && (selectedChannel || viewMode === 'video') &&
+        <LibraryBottomBar
+          thumbnailSize={thumbnailSize}
+          onThumbnailSizeChange={handleThumbnailSizeChange}
+          onThumbnailSizeCommit={handleThumbnailSizeCommit}
+        />}
       <Snackbar
         open={!!deepLinkError}
         autoHideDuration={4000}
@@ -443,10 +476,11 @@ function VideoCard({ video, onSelect, channelLabel }: {
   );
 }
 
-function FlatVideoList({ channels, libraryDir, viewMode, onViewModeChange, onSelectVideo, onRefresh }: {
+function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, onViewModeChange, onSelectVideo, onRefresh }: {
   channels: LibraryChannel[];
   libraryDir: string;
   viewMode: LibraryViewMode;
+  thumbnailSize: number;
   onViewModeChange: (mode: LibraryViewMode) => void;
   onSelectVideo: (video: LibraryVideo) => void;
   onRefresh: () => void;
@@ -521,13 +555,11 @@ function FlatVideoList({ channels, libraryDir, viewMode, onViewModeChange, onSel
       ) : isSearching && filtered.length === 0 && (
         <Typography variant="body2" color="text.secondary">No videos match "{query}".</Typography>
       )}
-      <Grid container spacing={2}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${thumbnailSize}px, 1fr))`, gap: 2 }}>
         {filtered.map(({ video, channelName }) => (
-          <Grid size={{ xs: 12, sm: 6, md: 4 }} key={video.videoDir}>
-            <VideoCard video={video} onSelect={onSelectVideo} channelLabel={channelName} />
-          </Grid>
+          <VideoCard key={video.videoDir} video={video} onSelect={onSelectVideo} channelLabel={channelName} />
         ))}
-      </Grid>
+      </Box>
     </Box>
   );
 }
@@ -595,8 +627,9 @@ function ChannelList({ channels, libraryDir, viewMode, onViewModeChange, onSelec
   );
 }
 
-function VideoGrid({ channel, onBack, onSelectVideo, onChannelsUpdated }: {
+function VideoGrid({ channel, thumbnailSize, onBack, onSelectVideo, onChannelsUpdated }: {
   channel: LibraryChannel;
+  thumbnailSize: number;
   onBack: () => void;
   onSelectVideo: (video: LibraryVideo) => void;
   onChannelsUpdated: (channels: LibraryChannel[]) => void;
@@ -645,13 +678,11 @@ function VideoGrid({ channel, onBack, onSelectVideo, onChannelsUpdated }: {
       </Stack>
       {isSearching && filtered.length === 0 &&
         <Typography variant="body2" color="text.secondary">No videos match "{query}".</Typography>}
-      <Grid container spacing={2}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${thumbnailSize}px, 1fr))`, gap: 2 }}>
         {filtered.map((video) => (
-          <Grid size={{ xs: 12, sm: 6, md: 4 }} key={video.videoFolderName}>
-            <VideoCard video={video} onSelect={onSelectVideo} />
-          </Grid>
+          <VideoCard key={video.videoFolderName} video={video} onSelect={onSelectVideo} />
         ))}
-      </Grid>
+      </Box>
     </Box>
   );
 }

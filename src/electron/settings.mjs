@@ -32,3 +32,18 @@ export function clampMaxSimultaneousDownloads(value) {
     if (!Number.isInteger(n)) return 1;
     return Math.min(Math.max(n, 1), MAX_SIMULTANEOUS_DOWNLOADS_CEILING);
 }
+
+// Bounds for the Library tab's thumbnail-size slider (LibraryBottomBar.tsx).
+// 160px floor keeps a video card's title/quality-chip row from wrapping
+// awkwardly; 360px ceiling still fits 2+ columns at typical content widths.
+// 220px default approximates the old fixed sm:6/md:4 breakpoint sizing, so
+// existing users see an unsurprising layout until they touch the slider.
+export const THUMBNAIL_SIZE_MIN = 160;
+export const THUMBNAIL_SIZE_MAX = 360;
+export const THUMBNAIL_SIZE_DEFAULT = 220;
+
+export function clampThumbnailSize(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return THUMBNAIL_SIZE_DEFAULT;
+    return Math.min(Math.max(n, THUMBNAIL_SIZE_MIN), THUMBNAIL_SIZE_MAX);
+}

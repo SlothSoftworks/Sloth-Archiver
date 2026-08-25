@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setCustomConvertFormats: (formats) => ipcRenderer.invoke('settings:setCustomConvertFormats', formats),
     getMaxSimultaneousDownloads: () => ipcRenderer.invoke('settings:getMaxSimultaneousDownloads'),
     setMaxSimultaneousDownloads: (value) => ipcRenderer.invoke('settings:setMaxSimultaneousDownloads', value),
+    getThumbnailSize: () => ipcRenderer.invoke('settings:getThumbnailSize'),
+    setThumbnailSize: (value) => ipcRenderer.invoke('settings:setThumbnailSize', value),
     getLibraryIndex: () => ipcRenderer.invoke('library:getIndex'),
     refreshLibraryIndex: () => ipcRenderer.invoke('library:refreshIndex'),
     refreshChannelIcon: (payload) => ipcRenderer.invoke('library:refreshChannelIcon', payload),

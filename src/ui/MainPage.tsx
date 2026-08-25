@@ -58,10 +58,22 @@ interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
   value: number;
+  // Opt-in for a screen that needs a definite height to lay its own content
+  // out against -- e.g. LibraryScreen's bottom options bar, which has to
+  // stay pinned at the tab's bottom regardless of content length rather than
+  // just being the last thing before .tabContainer's own scrollbar kicks in.
+  // Deliberately unpadded (unlike the plain p:3 Box below) so a full-bleed
+  // bottom bar can span the tab's actual width, the same way the top tab bar
+  // above .tabContainer isn't padded either -- the screen itself is
+  // responsible for padding whichever inner region needs it (its own
+  // scrollable content, not the bar). Downloader/Options don't need any of
+  // this and keep the plain auto-height, padded Box, scrolled via
+  // .tabContainer as before.
+  fill?: boolean;
 }
 
 function CustomTabPanel(props: TabPanelProps) {
-  const { children, value, index, ...other } = props;
+  const { children, value, index, fill, ...other } = props;
 
   return (
     <div
@@ -72,7 +84,10 @@ function CustomTabPanel(props: TabPanelProps) {
       className='tabContainer'
       {...other}
     >
-      {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
+      {value === index &&
+        <Box sx={fill ? { height: '100%', display: 'flex', flexDirection: 'column' } : { p: 3 }}>
+          {children}
+        </Box>}
     </div>
   );
 }
@@ -156,7 +171,7 @@ export function BasicTabs() {
       <CustomTabPanel value={value} index={0}>
         <DownloaderScreen/>
       </CustomTabPanel>
-      <CustomTabPanel value={value} index={1}>
+      <CustomTabPanel value={value} index={1} fill>
         <LibraryScreen key={libraryResetKey}/>
       </CustomTabPanel>
       <CustomTabPanel value={value} index={2}>
