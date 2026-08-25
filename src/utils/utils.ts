@@ -1,5 +1,6 @@
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
+import type { LibraryVideoMetadata } from '../types';
 // Shared with the main process (src/electron/utils/youtube.mjs) rather than
 // a separate copy here -- see that file's own comment for why it lives
 // there. Drives DownloaderScreen.tsx's choice between the full YouTube flow
@@ -73,5 +74,29 @@ function buildAppVideoUrl(filePath: string, cacheBustKey = 0): string {
   return `app-video://local/${encodeURIComponent(filePath)}?v=${cacheBustKey}`;
 }
 
-export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl };
+// Reflects the best quality captured across ALL versions, not just the
+// video's latest one -- a newer version might not be downloaded yet while
+// an older one already has a real file, and showing "Not downloaded" in
+// that case would misrepresent what's actually archived. Shared between
+// LibraryScreen.tsx (video grids) and PlaylistsSection.tsx (bulk-select
+// gating for in-library playlist entries) rather than duplicated.
+function getBestDownloadedQuality(epochs: { metadata: LibraryVideoMetadata }[]): { resolution: string; format: string | null } | null {
+  const downloaded = epochs.filter((e) => e.metadata.downloadedFilePath);
+  if (downloaded.length > 0) {
+    // Prefer an actual video resolution over a legacy MP3-only capture (from
+    // before MP3 got its own downloadedAudioFilePath slot) when both exist.
+    const videoOnly = downloaded.filter((e) => e.metadata.downloadedResolution !== 'MP3');
+    const pool = videoOnly.length > 0 ? videoOnly : downloaded;
+    const best = pool.reduce((a, b) => (Number(b.metadata.downloadedResolution) > Number(a.metadata.downloadedResolution) ? b : a));
+    return { resolution: best.metadata.downloadedResolution as string, format: best.metadata.downloadedFormat };
+  }
+  // No video download in any version -- a separately-downloaded MP3 still
+  // counts as "something is archived" for the grid badge.
+  if (epochs.some((e) => e.metadata.downloadedAudioFilePath)) {
+    return { resolution: 'MP3', format: null };
+  }
+  return null;
+}
+
+export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality };
 

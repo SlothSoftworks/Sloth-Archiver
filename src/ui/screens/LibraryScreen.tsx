@@ -33,9 +33,9 @@ import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
-import { convertYYYYMMDDStringToDate, buildAppVideoUrl } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, buildAppVideoUrl, getBestDownloadedQuality } from '../../utils/utils.ts';
 import LibraryVideoDetail from './LibraryVideoDetail';
-import PlaylistsSection from '../components/PlaylistsSection';
+import PlaylistsSection, { type PlaylistBulkBar } from '../components/PlaylistsSection';
 import LibrarySearchBar from '../components/LibrarySearchBar';
 import LibraryBottomBar from '../components/LibraryBottomBar';
 import BulkDownloadQualityDialog from '../components/BulkDownloadQualityDialog';
@@ -67,28 +67,6 @@ type LibraryChannel = {
   channelIconPath: string | null;
   videos: LibraryVideo[];
 };
-
-// Reflects the best quality captured across ALL versions, not just the
-// video's latest one -- a newer version might not be downloaded yet while
-// an older one already has a real file, and showing "Not downloaded" in
-// that case would misrepresent what's actually archived.
-function getBestDownloadedQuality(epochs: { metadata: LibraryVideoMetadata }[]): { resolution: string; format: string | null } | null {
-  const downloaded = epochs.filter((e) => e.metadata.downloadedFilePath);
-  if (downloaded.length > 0) {
-    // Prefer an actual video resolution over a legacy MP3-only capture (from
-    // before MP3 got its own downloadedAudioFilePath slot) when both exist.
-    const videoOnly = downloaded.filter((e) => e.metadata.downloadedResolution !== 'MP3');
-    const pool = videoOnly.length > 0 ? videoOnly : downloaded;
-    const best = pool.reduce((a, b) => (Number(b.metadata.downloadedResolution) > Number(a.metadata.downloadedResolution) ? b : a));
-    return { resolution: best.metadata.downloadedResolution as string, format: best.metadata.downloadedFormat };
-  }
-  // No video download in any version -- a separately-downloaded MP3 still
-  // counts as "something is archived" for the grid badge.
-  if (epochs.some((e) => e.metadata.downloadedAudioFilePath)) {
-    return { resolution: 'MP3', format: null };
-  }
-  return null;
-}
 
 // Only the flat by-video list gets a sort control -- the channel view's own
 // ordering is alphabetical-by-channel and isn't in scope here.
@@ -160,6 +138,7 @@ export default function LibraryScreen() {
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
+  const [playlistBulkBar, setPlaylistBulkBar] = useState<PlaylistBulkBar | null>(null);
   const deepLinkMatch = useMatch('/library/video/:videoId');
   const navigate = useNavigate();
   const { start } = useBulkAddQueue();
@@ -400,7 +379,7 @@ export default function LibraryScreen() {
       </Typography>
     </Box>
   ) : librarySection === 'playlists' ? (
-    <PlaylistsSection />
+    <PlaylistsSection onBulkBarUpdate={setPlaylistBulkBar} />
   ) : selectedVideo ? (
     <LibraryVideoDetail
       video={selectedVideo}
@@ -483,6 +462,13 @@ export default function LibraryScreen() {
           canBulkDownload={canBulkDownload}
           onDownloadSelected={() => setBulkDownloadDialogOpen(true)}
           onDeleteSelected={() => setBulkDeleteDialogOpen(true)}
+        />}
+      {!loading && libraryDir && librarySection === 'playlists' && playlistBulkBar &&
+        <LibraryBottomBar
+          selectedCount={playlistBulkBar.selectedCount}
+          canBulkDownload={playlistBulkBar.canBulkDownload}
+          onDownloadSelected={playlistBulkBar.onDownloadSelected}
+          onDeleteSelected={playlistBulkBar.onDeleteSelected}
         />}
       <BulkDownloadQualityDialog
         open={bulkDownloadDialogOpen}

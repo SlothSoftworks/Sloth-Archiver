@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   CardActionArea,
+  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
@@ -32,10 +33,20 @@ import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import { convertYYYYMMDDStringToDate, buildAppVideoUrl, formatEpochLabel } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, buildAppVideoUrl, formatEpochLabel, getBestDownloadedQuality } from '../../utils/utils.ts';
 import LibrarySearchBar from './LibrarySearchBar';
+import BulkDownloadQualityDialog from './BulkDownloadQualityDialog';
+import BulkDeleteConfirmDialog from './BulkDeleteConfirmDialog';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
-import type { PlaylistSummary, PlaylistSnapshot } from '../../types';
+import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
+import type { PlaylistSummary, PlaylistSnapshot, LibraryVideoMetadata } from '../../types';
+
+export type PlaylistBulkBar = {
+  selectedCount: number;
+  canBulkDownload: boolean;
+  onDownloadSelected: () => void;
+  onDeleteSelected: () => void;
+};
 
 // Mirrors library.mjs's own CURRENT_PLAYLIST_SCHEMA_VERSION (main process
 // and renderer never cross-import in this codebase).
@@ -50,9 +61,22 @@ function playlistThumbnailSrc(thumbnailUrl: string | null | undefined, thumbnail
   return undefined;
 }
 
+// Minimal shape this component needs from a library index entry -- just
+// enough to compute download state (getBestDownloadedQuality) and the
+// resume-at-download fields (videoDir/latestEpoch) for whichever playlist
+// entries are already in the library.
+type IndexedVideo = { videoDir: string; latestEpoch: string | null; epochs: { metadata: LibraryVideoMetadata }[] };
+
 // Deliberately minimal for this first version -- a plain list and detail
 // view, no extra polish beyond title search (sorting, bulk actions, etc).
-export default function PlaylistsSection() {
+// onBulkBarUpdate reports a summary of the current selection (count, whether
+// "Download selected" applies, and the two trigger closures) up to
+// LibraryScreen, which renders the actual bottom bar -- that bar has to live
+// outside this component's own scrollable region to stay pinned to the
+// tab's bottom (see LibraryScreen.tsx's structural split), but the
+// selection state and its confirm dialogs stay owned here, where the
+// playlist data already lives. null means "no bar" (list view, or loading).
+export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate: (bar: PlaylistBulkBar | null) => void }) {
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
@@ -65,10 +89,125 @@ export default function PlaylistsSection() {
   const [linkCopiedSnackbarOpen, setLinkCopiedSnackbarOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [videoByDir, setVideoByDir] = useState<Map<string, IndexedVideo>>(new Map());
+  const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set());
+  const [bulkDownloadDialogOpen, setBulkDownloadDialogOpen] = useState(false);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
+  const { start } = useBulkAddQueue();
   const { query, setQuery, isSearching, filtered: filteredPlaylists, clear } = useLibrarySearch(
     playlists,
     (playlist) => playlist.title || playlist.playlistId,
   );
+
+  const toggleVideoSelected = (videoId: string) => {
+    setSelectedVideoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(videoId)) {
+        next.delete(videoId);
+      } else {
+        next.add(videoId);
+      }
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedVideoIds(new Set());
+
+  // Selectable entries (per the confirmed design) are every entry not
+  // confirmed unavailable -- both already-in-library and not-yet-added ones.
+  const selectableEntries = (selectedPlaylist?.entries || []).filter((e) => !e.unavailable);
+  const selectedEntries = selectableEntries.filter((e) => selectedVideoIds.has(e.videoId));
+  // An in-library entry's downloaded quality comes from its own epochs; a
+  // not-yet-added entry (no videoDir) has nothing downloaded by definition.
+  // Backs both the bulk-download gating below and each row's quality chip.
+  const getEntryQuality = (videoId: string) => {
+    const videoDir = selectedPlaylist?.localFiles[videoId];
+    const video = videoDir ? videoByDir.get(videoDir) : undefined;
+    return video ? getBestDownloadedQuality(video.epochs) : null;
+  };
+  const isEntryDownloaded = (videoId: string) => getEntryQuality(videoId) !== null;
+  const canBulkDownload = selectedEntries.length > 0 && selectedEntries.every((e) => !isEntryDownloaded(e.videoId));
+
+  const handleConfirmBulkDownload = (targetResolution: string) => {
+    const isMp3 = targetResolution.toLowerCase() === 'mp3';
+    const entries: BulkAddEntry[] = selectedEntries.map((entry) => {
+      const videoDir = selectedPlaylist?.localFiles[entry.videoId];
+      const video = videoDir ? videoByDir.get(videoDir) : undefined;
+      // Already in the library -- resume straight at download (see
+      // useBulkAddQueue's getRetryStage), same as the video-grid flow.
+      if (video && video.latestEpoch) {
+        return {
+          id: entry.videoId,
+          title: entry.title,
+          url: entry.url,
+          videoId: entry.videoId,
+          videoDir: videoDir!, // truthy: `video` was only found via a truthy videoDir lookup above
+          epoch: video.latestEpoch,
+          resolution: isMp3 ? 'mp3' : targetResolution,
+          kind: isMp3 ? 'audio' : 'video',
+        };
+      }
+      // Not yet added -- the normal fetch/add/download path, exactly like
+      // pasting this same playlist into Bulk Add today.
+      return { id: entry.videoId, title: entry.title, url: entry.url, videoId: entry.videoId };
+    });
+    start(entries, { download: true, targetResolution, playlistId: selectedPlaylistId || undefined });
+    setBulkDownloadDialogOpen(false);
+    clearSelection();
+  };
+
+  // Only entries actually in the library can be deleted -- a not-yet-added
+  // entry has nothing to remove, so it's silently excluded here rather than
+  // blocking the whole batch.
+  const deletableSelectedVideoDirs = selectedEntries
+    .map((e) => selectedPlaylist?.localFiles[e.videoId])
+    .filter((dir): dir is string => !!dir);
+
+  const handleConfirmBulkDelete = async () => {
+    setBulkDeleting(true);
+    setBulkDeleteError(null);
+    try {
+      const { success, results } = await window.electronAPI.deleteLibraryEntries(deletableSelectedVideoDirs);
+      if (!success) {
+        const failedDirs = new Set(results.filter((r) => !r.success).map((r) => r.videoDir));
+        setBulkDeleteError(`${failedDirs.size} of ${deletableSelectedVideoDirs.length} video(s) couldn't be deleted. Try again, or delete them individually.`);
+        setSelectedVideoIds((prev) => {
+          const next = new Set<string>();
+          for (const entry of selectableEntries) {
+            const dir = selectedPlaylist?.localFiles[entry.videoId];
+            if (prev.has(entry.videoId) && dir && failedDirs.has(dir)) next.add(entry.videoId);
+          }
+          return next;
+        });
+      } else {
+        setBulkDeleteDialogOpen(false);
+        clearSelection();
+      }
+      if (selectedPlaylistId) await loadDetail(selectedPlaylistId);
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedPlaylistId || detailLoading) {
+      onBulkBarUpdate(null);
+      return;
+    }
+    onBulkBarUpdate({
+      selectedCount: selectedVideoIds.size,
+      canBulkDownload,
+      onDownloadSelected: () => setBulkDownloadDialogOpen(true),
+      onDeleteSelected: () => setBulkDeleteDialogOpen(true),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPlaylistId, detailLoading, selectedVideoIds, canBulkDownload]);
+
+  // Reported bar has to be torn down on unmount too -- otherwise LibraryScreen
+  // keeps rendering a bottom bar for a PlaylistsSection that's no longer there
+  // (e.g. switching to the Videos toggle).
+  useEffect(() => () => onBulkBarUpdate(null), [onBulkBarUpdate]);
 
   const loadList = async () => {
     setLoading(true);
@@ -83,14 +222,25 @@ export default function PlaylistsSection() {
 
   const loadDetail = async (playlistId: string) => {
     setDetailLoading(true);
-    const { playlist } = await window.electronAPI.getPlaylist(playlistId);
+    const [{ playlist }, index] = await Promise.all([
+      window.electronAPI.getPlaylist(playlistId),
+      window.electronAPI.getLibraryIndex(),
+    ]);
     setSelectedPlaylist(playlist);
+    const map = new Map<string, IndexedVideo>();
+    for (const channel of index.channels) {
+      for (const video of channel.videos) {
+        map.set(video.videoDir, video);
+      }
+    }
+    setVideoByDir(map);
     setDetailLoading(false);
   };
 
   const handleSelectPlaylist = (playlistId: string) => {
     setSelectedPlaylistId(playlistId);
     setActionError(null);
+    clearSelection();
     loadDetail(playlistId);
   };
 
@@ -103,6 +253,7 @@ export default function PlaylistsSection() {
   const handleBack = () => {
     setSelectedPlaylistId(null);
     setSelectedPlaylist(null);
+    clearSelection();
     // The list's own hasPreviousMetadata/entryCount can be stale after any
     // refresh/undo done while viewing the detail -- cheap to just reload.
     loadList();
@@ -242,15 +393,29 @@ export default function PlaylistsSection() {
           <List dense>
             {selectedPlaylist?.entries.map((entry) => {
               const videoDir = selectedPlaylist.localFiles[entry.videoId];
+              const entryQuality = getEntryQuality(entry.videoId);
               return (
                 <ListItem
                   key={entry.videoId}
-                  secondaryAction={videoDir &&
-                    <Tooltip title="Go to library">
-                      <IconButton size="small" component={RouterLink} to={`/library/video/${entry.videoId}`} aria-label="Go to library">
-                        <OpenInNewIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>}
+                  secondaryAction={
+                    <Stack direction="row" alignItems="center" spacing={0.5}>
+                      {/* Every entry not confirmed unavailable is selectable --
+                          both already-in-library and not-yet-added ones. */}
+                      {!entry.unavailable &&
+                        <Checkbox
+                          size="small"
+                          checked={selectedVideoIds.has(entry.videoId)}
+                          onChange={() => toggleVideoSelected(entry.videoId)}
+                          inputProps={{ 'aria-label': `Select ${entry.title || entry.videoId}` }}
+                        />}
+                      {videoDir &&
+                        <Tooltip title="Go to library">
+                          <IconButton size="small" component={RouterLink} to={`/library/video/${entry.videoId}`} aria-label="Go to library">
+                            <OpenInNewIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>}
+                    </Stack>
+                  }
                 >
                   <ListItemAvatar>
                     <Avatar variant="rounded" src={entry.thumbnailUrl || undefined} sx={{ width: 64, height: 36, mr: 1 }} />
@@ -261,6 +426,16 @@ export default function PlaylistsSection() {
                         <Typography component="span" noWrap>
                           {entry.title || <em>Unknown title</em>}
                         </Typography>
+                        {entryQuality ? (
+                          <Chip
+                            size="small"
+                            color="success"
+                            label={entryQuality.resolution === 'MP3' ? 'MP3' : `${entryQuality.resolution}p`}
+                            sx={{ flexShrink: 0 }}
+                          />
+                        ) : (
+                          <Chip size="small" variant="outlined" label="Not downloaded" sx={{ flexShrink: 0 }} />
+                        )}
                         {entry.unavailable &&
                           <Chip size="small" color="warning" variant="outlined" label="Not on YouTube" sx={{ flexShrink: 0 }} />}
                       </Stack>
@@ -319,6 +494,21 @@ export default function PlaylistsSection() {
             </Button>
           </DialogActions>
         </Dialog>
+
+        <BulkDownloadQualityDialog
+          open={bulkDownloadDialogOpen}
+          onClose={() => setBulkDownloadDialogOpen(false)}
+          videos={selectedEntries.filter((e) => !isEntryDownloaded(e.videoId)).map((e) => ({ videoDir: e.videoId, metadata: { originalUrl: e.url } }))}
+          onConfirm={handleConfirmBulkDownload}
+        />
+        <BulkDeleteConfirmDialog
+          open={bulkDeleteDialogOpen}
+          count={deletableSelectedVideoDirs.length}
+          deleting={bulkDeleting}
+          error={bulkDeleteError}
+          onCancel={() => { setBulkDeleteDialogOpen(false); setBulkDeleteError(null); }}
+          onConfirm={handleConfirmBulkDelete}
+        />
       </Box>
     );
   }

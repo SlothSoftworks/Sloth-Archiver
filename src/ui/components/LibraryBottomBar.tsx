@@ -8,19 +8,22 @@ export const THUMBNAIL_SIZE_MIN = 160;
 export const THUMBNAIL_SIZE_MAX = 360;
 export const THUMBNAIL_SIZE_STEP = 10;
 
-// Persistent bottom bar for the Library tab's video grids -- a container for
-// display/customization controls, not a single-purpose slider widget. Ships
-// with thumbnail size and bulk-select actions; the left region was reserved
-// for exactly this kind of addition without restructuring the component.
-// Purely presentational/controlled, same pattern as LibraryViewModeToggle --
-// LibraryScreen owns the state and the settings IPC round-trip.
+// Persistent bottom bar for the Library tab -- a container for display/
+// customization controls, not a single-purpose slider widget. Ships with
+// thumbnail size (video grids only) and bulk-select actions (video grids and
+// the Playlists view); the left region was reserved for exactly this kind of
+// addition without restructuring the component. Purely presentational/
+// controlled, same pattern as LibraryViewModeToggle -- the caller owns the
+// state and any settings IPC round-trip. Thumbnail-size props are optional:
+// the Playlists view has no thumbnail grid to size, so omitting them hides
+// that section entirely rather than showing an irrelevant control.
 export default function LibraryBottomBar({
   thumbnailSize, onThumbnailSizeChange, onThumbnailSizeCommit,
   selectedCount, canBulkDownload, onDownloadSelected, onDeleteSelected,
 }: {
-  thumbnailSize: number;
-  onThumbnailSizeChange: (size: number) => void;
-  onThumbnailSizeCommit: (size: number) => void;
+  thumbnailSize?: number;
+  onThumbnailSizeChange?: (size: number) => void;
+  onThumbnailSizeCommit?: (size: number) => void;
   selectedCount: number;
   canBulkDownload: boolean;
   onDownloadSelected: () => void;
@@ -53,20 +56,21 @@ export default function LibraryBottomBar({
             </Button>
           </>}
       </Box>
-      <Stack direction="row" spacing={1.5} alignItems="center" sx={{ width: 220 }}>
-        <PhotoSizeSelectSmallIcon fontSize="small" color="action" />
-        <Slider
-          size="small"
-          value={thumbnailSize}
-          min={THUMBNAIL_SIZE_MIN}
-          max={THUMBNAIL_SIZE_MAX}
-          step={THUMBNAIL_SIZE_STEP}
-          onChange={(_e, value) => onThumbnailSizeChange(value as number)}
-          onChangeCommitted={(_e, value) => onThumbnailSizeCommit(value as number)}
-          aria-label="Thumbnail size"
-        />
-        <PhotoSizeSelectLargeIcon fontSize="small" color="action" />
-      </Stack>
+      {thumbnailSize !== undefined && onThumbnailSizeChange && onThumbnailSizeCommit &&
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ width: 220 }}>
+          <PhotoSizeSelectSmallIcon fontSize="small" color="action" />
+          <Slider
+            size="small"
+            value={thumbnailSize}
+            min={THUMBNAIL_SIZE_MIN}
+            max={THUMBNAIL_SIZE_MAX}
+            step={THUMBNAIL_SIZE_STEP}
+            onChange={(_e, value) => onThumbnailSizeChange(value as number)}
+            onChangeCommitted={(_e, value) => onThumbnailSizeCommit(value as number)}
+            aria-label="Thumbnail size"
+          />
+          <PhotoSizeSelectLargeIcon fontSize="small" color="action" />
+        </Stack>}
     </Paper>
   );
 }
