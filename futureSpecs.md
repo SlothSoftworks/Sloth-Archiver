@@ -16,11 +16,10 @@ you point it here.
    - A feature that let's you export the entire current scan of the library to a unified json that when imported in another instance of the app it will create the structures of the videos in the archive and load the metadata from the json into their corresponding files
 2. Customization of embedded player: have the user select the start and end point of a clip directly via buttons on the player itself (the "pick timestamp" buttons next to the clip fields, which just grab the player's current position, already shipped)
 3. Implementation of a more resilient embedded player that supports more codecs like MKV
-4. Clip collection feature: Let's make it so the clips the user makes can be saved into the video as a separate /clips directory that will be located on the videoID level (not inside the epoch folder level) these clips will be collected in a "clips" tab where the user can see the list of clips and play them if they want to
-5. Playlist mode: An internal quasi-playlist mode that allows the user to queue videos and they will play back to back in that order (this playlist function should have the option to enable/disable autoplay the next video after the last finishes downloading). This feature will also show small arrow indicators in the screen to allow the user to move next or previous video in the current playlist. Making this feature will enable to also add other smaller features such as:
+4. Playlist mode: An internal quasi-playlist mode that allows the user to queue videos and they will play back to back in that order (this playlist function should have the option to enable/disable autoplay the next video after the last finishes downloading). This feature will also show small arrow indicators in the screen to allow the user to move next or previous video in the current playlist. Making this feature will enable to also add other smaller features such as:
    - "Play" playlist button that queues all of the playlist items to play back to back
    - Context based playlist in the video search view that will pick up all the viewos currently displayed in the search and let the user navigate on this search context as a playlist.
-6. Local files library support.
+5. Local files library support.
    - A feature that let's the user add local files to the library and make use of some of the features like clipping, converting and extracting mp3 inside the app. These videos should not have the quality selectors and any of the other options pertaining to obtaining data form youtube. Local files should be able to be loaded into the library through a new "add local file option" in the video view and there should be a new "Local" option in the Video/Playlist selector to filter for only the local files
 
 ### QoL features

@@ -54,10 +54,12 @@ these are detailed in the dated log under [Archived](#archived).
   - [~~Bulk select + download/delete~~ — shipped](#bulk-select)
   - [Player customization (pick timestamp) — partially shipped](#player-customization)
   - [More resilient embedded player / MKV support](#resilient-player)
-  - [Clip collection](#clip-collection)
+  - [~~Clip collection~~ — shipped](#clip-collection)
   - [Playlist mode (internal queue playback)](#playlist-mode)
+  - [Local files library support](#local-files-library)
 - [QoL features](#qol-features)
   - [Language support](#language-support)
+  - [Embed clip controls into a custom player](#custom-player-clip-controls)
   - [~~Cookie browser-picker "Clear" quirk~~ — shipped](#cookie-picker-quirk)
   - [~~Delete feature for playlists~~ — shipped](#playlist-delete)
 - [Small features and corrections](#small-features)
@@ -115,6 +117,7 @@ flowchart LR
         d22["yt-dlp self-update: timeout + logging + Open error log button"]
         d23["Customizable thumbnail sizes (continuous slider + bottom options bar)"]
         d24["Bulk select + download/delete-from-library/delete-local-files (video grids + Playlist view)"]
+        d25["Clip collection (saved clips/videoDir/clips + Clip Collection view + file-location/extract-MP3 options), incl. a lossless clip-trim freeze-frame fix"]
     end
 
     subgraph PARTIAL["Partially done"]
@@ -130,17 +133,18 @@ flowchart LR
         t9["Export/Import library JSON"]
         t11["Player: click-to-select start/end on scrub bar"]
         t12["Player: MKV/more-codec support"]
-        t13["Clip collection (saved clips + Clips tab)"]
         t14["Playlist mode (internal queue playback)"]
+        t15["Embed clip controls into a custom player (QoL)"]
+        t16["Local files library support"]
     end
 
     DONE ~~~ PARTIAL ~~~ TODO
 
-    class d1,d1b,d24,p3,t9,t13 library
+    class d1,d1b,d24,d25,p3,t9,t16 library
     class d2,d22 updater
     class d3,d8,d9,d10,d11,d12,d17,d19,d21,t14 playlist
     class d4,d7,d15,d16,d18,d23,t1 smallfeat
-    class d5,d6,d13,d14,t6 qol
+    class d5,d6,d13,d14,t6,t15 qol
     class t7 longshot
     class d20,t11,t12 player
 ```
@@ -200,8 +204,9 @@ from `futureSpecs.md` directly 2026-08-15.
 
 Export/Import JSON is unchanged. Player customization's "pick timestamp" half
 shipped 2026-08-14 — see below for what's still open there. Resilient
-player/MKV support is unchanged. Clip collection and Playlist mode remain
-assessed-but-not-built. Bulk select shipped 2026-08-25 — see below.
+player/MKV support is unchanged. Playlist mode remains assessed-but-not-built.
+Bulk select and Clip collection both shipped 2026-08-25 — see below. **New this
+pass:** Local files library support, assessed for the first time below.
 
 <a id="export-import-json"></a>
 ### Export/Import library JSON
@@ -280,38 +285,62 @@ so this isn't a bug to fix, it's a real gap to close.
 **Recommendation:** scope this to Option C (MKV specifically, via the existing ffmpeg remux pipeline) rather than the more open-ended "more codecs" framing in the spec text — it reuses infrastructure that already exists and ships the concrete, named pain point (MKV) without taking on a new dependency or an open-ended "support everything" commitment.
 
 <a id="clip-collection"></a>
-### Clip collection
+### ~~Clip collection~~ — SHIPPED
 
-**New this pass.** **Overall: Medium** — the ffmpeg mechanics are a pure reuse of
-what already exists; what's actually new is a storage location one level up from
-anything else in this app, plus a whole new list/detail UI to browse the result.
+Landed 2026-08-25, resolving this section's own open scope question in favor of
+the cheaper option it flagged: a per-video "Clip Collection" view (not a new
+library-wide top-level tab), swapping in for the whole normal player+instrument-panel
+layout on a `ToggleButtonGroup`, rather than a separate cross-video scan/aggregation.
 
-**Confirmed directly against the current code:** "Extract clip" today
-(`handleExtractClip`, `LibraryVideoDetail.tsx`) is a pure one-shot export — it always
-goes through a save-file dialog (`saveExportedFile`) to a location the user picks
-outside the library entirely, and the app never records that a clip was made at all.
-There is no clip tracking, storage, or listing anywhere in the codebase today; this
-is a genuinely new capability, not an extension of an existing one.
+Clips save into `<videoDir>/clips/<name>.<ext>` (video-ID level, sibling of the epoch
+folders, exactly as scoped) via a new `SaveClipDialog` replacing the old save-file-dialog
+flow entirely — name + fine-tunable start/end + a format selector defaulting to "Same as
+source," trimming and any format conversion done in one ffmpeg pass
+(`clipAndConvert`, `ffmpegUtils.mjs`). A `clips.json` manifest per video
+(`recordClip`/`listClips`/`deleteClip`, `library.mjs`) tracks id/fileName/title/
+createdAt/durationSeconds; `scanLibrary` explicitly excludes the new `clips/`
+directory from its epoch-folder scan (same reserved-name pattern as
+`PLAYLISTS_DIR_NAME`) and surfaces a cheap `clipCount` per video for an "N clips"
+grid badge. Delete was included in this pass (not deferred), using the same
+containment-checked delete pattern as every other destructive library op, and a
+duplicate clip name is blocked with an inline dialog error rather than
+auto-renamed — both decided directly with the user before building.
 
-| Piece | Difficulty | Why |
-|---|---|---|
-| Saving a clip into the library instead of exporting it | Low-Medium | `runFfmpegWithProgress`/the extract-clip ffmpeg invocation (`main.js`) is unchanged — only the output path changes, from a user-picked save-dialog path to a deterministic `<videoDir>/clips/<clipId>.<ext>` path. `videoDir` (channel/videoId level) is already exactly the right unit, per the spec's own "videoID level, not inside the epoch folder" framing — every version of a video shares one clip collection, which matches how a clip is conceptually "of the video," not of one specific downloaded quality. |
-| A metadata record per clip | Low | New, small — a `clips/<clipId>.json` (or one `clips/index.json` covering all of a video's clips) holding at minimum source epoch, start/end timestamps, created-at epoch, and the output filename. Same shape of work as any other `library.mjs` metadata write, just a new file convention. |
-| A "Clips" tab/view | Medium | New UI surface: could be a new top-level tab (sibling to Downloader/Library/Options) showing every clip across the whole library, or a per-video sub-section inside the existing video detail view (simpler, avoids a new cross-video aggregation read). The spec text ("collected in a clips tab where the user can see the list of clips") reads more like the former (library-wide), which needs a new `scanClips()`-style read path over every video's `clips/` folder, similar in shape to how `scanLibrary()` already walks channel/video/epoch. |
-| Playback of a saved clip | Low | Reuses `LibraryVideoPlayer.tsx` as-is (it's already just a `<video>`/`<audio>` element pointed at a local file path) — a saved clip is just another local media file to hand it. |
-| Deleting a saved clip | Low | Same `path.relative`-containment-checked delete pattern every other destructive library operation (`deleteLibraryEntry`, `deletePlaylistSnapshot`) already uses, scoped to the one clip file + its metadata record. |
+Three same-session follow-up rounds, all from real usage after the initial build:
+1. **A real ffmpeg quirk, not a bug in this app's own logic**: the first ~3 seconds
+   of every clip played back as a frozen frame with audio only. Root cause:
+   `-ss`/`-to` were output-side options (placed after `-i`) — combined with `-c copy`,
+   a copied (non-decoded) video stream can only resume at the next keyframe *after*
+   the cut point, while audio has no such restriction and starts exactly on time.
+   Fixed losslessly: `-ss` moved to an input-side seek (before `-i`, via a new
+   `preInputArgs` parameter on `runFfmpegWithProgress`) so the demuxer seeks to the
+   keyframe *at or before* the cut point instead, and `-to <absolute end>` replaced
+   with `-t <duration>` since `-to`'s absolute-timestamp meaning breaks once the
+   input's been seeked/PTS-rebased. Zero re-encoding, zero quality loss on the
+   `-c copy` path — the only tradeoff is a clip may start up to one GOP length
+   *earlier* than the exact requested timestamp, never later, never missing frames.
+2. A progress bar (`LinearProgressWithLabel`, already used elsewhere) added to
+   `SaveClipDialog` itself — no new IPC needed, since `LibraryVideoDetail.tsx`
+   already had a global, action-agnostic ffmpeg-progress listener; just needed
+   resetting to 0 before each save and threading through as a prop.
+3. Two polish fixes from manual testing: the clip player was showing the *parent
+   video's* stored thumbnail as its poster (misleading, since a clip is a different
+   piece of media) — fixed by not passing a `thumbnailPath` at all, so the browser's
+   own natural first-frame poster shows instead. And deleting the last remaining
+   clip left an empty `clips/` folder + an empty `clips.json` behind while the
+   "Clip Collection" tab kept showing (an empty view) — `deleteClip` now removes the
+   whole `clips/` directory when it empties out, and the tab's visibility now trusts
+   the actually-loaded `clips` array once fetched, not the possibly-stale `clipCount`
+   from the library index.
 
-**Open question worth deciding before building:** is "the Clips tab" library-wide
-(every clip from every video, one flat list) or scoped per-video (a section within
-each video's own detail view)? That decision changes whether this needs a new
-top-level tab + a new whole-library scan, or stays entirely local to a video already
-being viewed — the spec text leans library-wide, but a per-video section is
-meaningfully cheaper and may satisfy the actual want just as well.
+A same-day final round added a small "Clip options" card below the clip player
+itself: **Open file location** (opens the video's `clips/` folder directly via the
+existing `system:openDirectory` IPC) and **Extract audio as MP3** (reuses the
+existing `extractMp3FromFile` pipeline unchanged, pointed at the active clip's own
+file instead of the video's).
 
-**Recommendation:** land the storage change first (clips saved into `<videoDir>/clips/`
-instead of exported away) — that alone is useful even before any listing UI exists,
-since the clip is now at least kept. Then decide the scope question above before
-building the Clips tab itself.
+See [Archived](#archived) for the dated log entry. Removed from `futureSpecs.md`
+directly.
 
 <a id="playlist-mode"></a>
 ### Playlist mode (internal queue playback)
@@ -347,11 +376,49 @@ implementation once decided. The two sub-features (Play-playlist, context-playli
 are both cheap once the core queue+next/prev mechanism exists, since both already
 have their ordered-list data sitting ready to reuse.
 
+<a id="local-files-library"></a>
+### Local files library support
+
+**New this pass.** **Overall: Medium** — no single hard piece, but it's a real
+design decision (how local entries fit into a channel/YouTube-shaped data model)
+stacked on top of several small, genuinely new mechanisms, not a repackaging of
+existing ones.
+
+**Confirmed directly against the current code:** `writeLibraryEntry` (`library.mjs`)
+takes a `videoMetaData` shape assumed to come straight from a yt-dlp fetch (`id`,
+`title`, `channelId`, `uploader`, `resolutions`, etc.) — there's no path today that
+constructs this shape from anything but a real fetch. There's also no single-file
+picker anywhere in the app: `dialog:openFolder` (`main.mjs`) is the only
+`dialog.showOpenDialog` call, used exclusively for picking the library's root
+folder. One real point in this feature's favor, confirmed directly:
+`metadata.originalUrl` is already used as a live disable-gate on both "Refresh from
+YouTube" and "Download new version" in `LibraryVideoDetail.tsx` (`!metadata.originalUrl`
+in each button's `disabled`) — a local entry with `originalUrl: null` would already,
+for free, correctly disable both of those without any new gating code.
+
+| Piece | Difficulty | Why |
+|---|---|---|
+| A file picker + copy-into-library write path | Medium | Needs a new `dialog.showOpenDialog` call (file mode, video/audio filters — no precedent to copy, but a small, well-understood addition next to the existing folder picker) plus a new `library.mjs` primitive (e.g. `addLocalVideoEntry`) that copies the picked file into a new `<video>/<epoch>/` structure and writes its own `metadata.json` — same folder-layout conventions `writeLibraryEntry` already uses, just skipping the yt-dlp fetch step entirely. |
+| Metadata shape for a file with no YouTube data | Low-Medium | `LibraryVideoMetadata` assumes fields a local file simply doesn't have (`uploadDate`, `resolutions`, a real `thumbnail`, etc.). These need sensible, explicit fallbacks (title defaults to the filename, `resolutions: []`, `thumbnail: null`) rather than fetch failures — mechanical once decided, but every field needs an explicit call, not a generic default. |
+| Suppressing YouTube-only controls in the UI | Low for two controls, Medium overall | The "Refresh from YouTube"/"Download new version" buttons already gate on `originalUrl` (see above) — free. The resolution/quality picker (`VideoQualityDownload.tsx`) does not: it assumes a populated `resolutions` array driving real UI branches (tier buttons, quality-swap flow), so a local entry needs an explicit "just play/convert/clip the one file, no quality picker at all" branch — this doesn't fall out of the existing `resolutions.length === 0` cases for free, since those currently mean "not downloaded yet," not "there is no quality concept here." |
+| ffmpeg utilities (Extract MP3/Convert/Clip/Embed metadata) | Low | Every one of these already operates purely on `metadata.downloadedFilePath` regardless of how that file got there — confirmed directly, none of `handleExtractMp3`/`handleConvertFormat`/`handleOpenSaveClipDialog`/embed-metadata read `originalUrl` or `resolutions` at all. Once a local file is copied in as `downloadedFilePath`, these all work with zero changes. |
+| A "Local" filter in the Video/Playlist selector | Low-Medium | `librarySection` (`LibraryScreen.tsx`) is a strict two-value type (`'videos' \| 'playlists'`) today. Adding a third top-level mode means a new read path and its own empty/loading states; a client-side filter within the existing flat video list (`originalUrl === null`), reusing the exact same list/search/sort UI already built for Ordering, is meaningfully cheaper and likely satisfies the actual want just as well. |
+| Where local entries live in the channel/video tree | Medium, real decision needed | Every video today is written under a real YouTube channel folder (`channelFolderName`, derived from `uploader`/`channelId`). Local files have no channel — this needs an explicit decision: a single synthetic "Local files" pseudo-channel bucket (simplest, fits the existing channel-grid view unchanged), or a genuinely channel-less flat area (cleaner conceptually, but a new code path the channel-grid view doesn't have today). |
+
+**Recommendation:** decide the two open design questions first — the pseudo-channel
+bucket vs. channel-less placement, and whether "Local" is a new top-level
+`librarySection` or a filter within the existing video list (the filter route is
+cheaper and reuses more) — before writing any code. Once decided, the actual
+mechanics are low-risk: the ffmpeg tooling this feature most wants to reuse
+(clip/convert/extract MP3) already works on any `downloadedFilePath` with zero
+YouTube-specific assumptions baked in.
+
 <a id="qol-features"></a>
 ## QoL features
 
-Language support carries over unchanged. Both other items — the cookie
-browser-picker quirk and playlist delete — have now shipped, see below.
+Language support carries over unchanged. **New this pass:** Embed clip controls
+into a custom player, assessed for the first time below. The cookie
+browser-picker quirk and playlist delete have both shipped, see below.
 
 <a id="language-support"></a>
 ### Language support (i18n / "strings" file)
@@ -371,6 +438,38 @@ ongoing tax on every future PR that adds user-facing text. **Unchanged this pass
 extraction mechanism and lookup hook end-to-end without committing to full parity
 across many languages immediately — expanding language coverage afterward is just
 adding more JSON files, not more engineering.
+
+<a id="custom-player-clip-controls"></a>
+### Embed clip controls into a custom player
+
+**New this pass.** **Overall: Medium-High** — not a new problem so much as a third
+restatement of one already-identified project. This is the same underlying "build a
+custom player" work [Player customization](#player-customization)'s still-open
+scrub-bar range-selection piece and [Player UX](#player-ux)'s parked
+custom-controls conclusion have both already converged on independently.
+
+**Confirmed directly against the current code:** `LibraryVideoPlayer.tsx` renders a
+plain native `<video controls>` element (line ~99) — the only custom UI on top of
+it is a one-time play-icon overlay shown before playback first starts (gone for
+good afterward). The clip Start/End fields and their "pick timestamp" buttons
+(`FfmpegUtilitiesPanel.tsx`, `handleSetClipStartFromPlayer`/`handleSetClipEndFromPlayer`
+in `LibraryVideoDetail.tsx`) already exist, but live entirely *outside* the player
+as separate text fields + buttons in the instrument panel — nothing about clip
+selection is embedded in the player's own chrome today.
+
+| Piece | Difficulty | Why |
+|---|---|---|
+| A custom player shell (play/pause/seek/volume/fullscreen) to replace native `controls` | Medium | The real foundation everything else here sits on — native `<video controls>` is used unconditionally today, and this project has no video-player dependency to reach for (consistent with its general preference for avoiding new dependencies), so every basic control needs building from scratch on top of the raw `<video>` element. |
+| Start/end range selection embedded on the custom scrub bar | Medium | This is exactly [Player customization](#player-customization)'s still-open "drag/click-to-select on the scrub bar" piece, not new scope — building it once for "embed it in the player" and separately for that item would be pure duplicated work. |
+| An embedded "Clip" button inside the player chrome | Low | `SaveClipDialog` and its submit flow already exist and work — an embedded button is just relocating the trigger for `setSaveClipDialogOpen(true)` into the player's own controls once a start/end is already selected there, not new logic. |
+| Losing native browser affordances | Low effort, but a real tradeoff | Native controls come with free accessibility, keyboard shortcuts, picture-in-picture, and browser-maintained buffering/seek correctness — a custom player needs to consciously reimplement or accept dropping each of these, not just the visible scrub bar. |
+
+**Recommendation:** don't scope this as its own effort — fold it into the same
+combined "personalize the player" project [Player UX](#player-ux) already
+recommends for its own parked item, alongside [Player customization](#player-customization)'s
+scrub-bar selection. All three want the same foundational custom-controls shell;
+building it three separate times for three separate asks would be the actual waste,
+not the shell itself.
 
 <a id="cookie-picker-quirk"></a>
 ### ~~Cookie browser-picker "Clear" quirk~~ — SHIPPED
@@ -572,6 +671,7 @@ Removed from `futureSpecs.md` directly 2026-08-15.
 | yt-dlp self-update reliability: bounded timeout on every step (was previously unbounded, could hang forever) + logging threaded through the whole flow to `main.log` + an "Open error log" button on the update-failed screen | 2026-08-20 |
 | Customizable thumbnail sizes: continuous slider resizing video-grid thumbnails (video thumbnails only, not channel icons), in a new Library-tab-only bottom options bar built as an extensible container for future display controls, persisted setting | 2026-08-24 |
 | Bulk select: checkbox multi-select in the flat video list, a channel's video grid, and the Playlist view, with "Download selected" (quality-picker dialog, resume-at-download queuing), "Delete local files" (media only, every version, entry stays), and "Delete from library" (whole entry) actions in the bottom options bar | 2026-08-25 |
+| Clip collection: permanent named clips saved into `<videoDir>/clips/` (+ manifest, "N clips" grid badge, per-video Clip Collection view with delete), a lossless clip-trim freeze-frame fix (input-side `-ss`/`-t` replacing output-side `-ss`/`-to`), a save-progress bar, a natural-first-frame clip poster fix, self-cleanup of an emptied clips folder, and per-clip "Open file location"/"Extract audio as MP3" options | 2026-08-25 |
 
 ### Recently shipped, dated log
 
@@ -630,6 +730,64 @@ Removed from `futureSpecs.md` directly 2026-08-15.
   `eslint` (clean), and the full `npm test` suite (320 passing, including new
   coverage in `library.test.mjs`, `LibraryScreen.test.tsx`, and a from-scratch
   `PlaylistsSection.test.tsx` — that file had no tests at all before this pass).
+- **Clip collection**, built the same day as a separate follow-on feature: "Extract
+  clip" no longer exports to an arbitrary disk location — a new `SaveClipDialog`
+  collects a name, a fine-tunable start/end, and a format selector (defaulting to
+  "Same as source," otherwise the same option list "Convert to" already offers),
+  and `clipAndConvert` (`ffmpegUtils.mjs`) trims + optionally converts in one ffmpeg
+  pass. Clips land in a new `<videoDir>/clips/` folder — video-ID level, sibling of
+  the epoch folders, not inside any one of them, so every version of a video shares
+  one clip collection — tracked in a `clips.json` manifest (`recordClip`/`listClips`/
+  `deleteClip`, `library.mjs`); `scanLibrary` excludes `clips/` from its epoch scan
+  (same reserved-name pattern as `PLAYLISTS_DIR_NAME`) and now surfaces a `clipCount`
+  per video for an "N clips" grid badge. A new "Clip Collection" `ToggleButtonGroup`
+  on the video detail view (shown only once a video actually has clips) swaps the
+  whole normal player+instrument-panel layout for `ClipCollectionView`: player on the
+  left (pointed at the active clip's file via a new `overrideFilePath` prop on
+  `LibraryVideoPlayer`, bypassing the YouTube-embed fallback entirely since a clip
+  has no remote identity), a scrollable clip list on the right showing title/date/
+  duration with click-to-swap and an `action.selected` highlight, and delete
+  (included in this pass, not deferred) reusing the generic `BulkDeleteConfirmDialog`.
+  A duplicate clip name is blocked with an inline dialog error rather than
+  auto-renamed — both decisions confirmed directly with the user via clarifying
+  questions before building, alongside the per-video-not-library-wide "Clips tab"
+  scope call this section's own prior assessment had flagged as the open question.
+- Same-day polish, all from real usage against the finished feature:
+  1. **Progress bar** for `SaveClipDialog` — reused the existing
+     `LinearProgressWithLabel` component and the ffmpeg-progress channel
+     `LibraryVideoDetail.tsx` already listened to globally; only needed resetting to
+     0 before each save and threading through as a new prop, no new IPC.
+  2. **A real ffmpeg quirk, reported as "the first ~3 seconds of every clip have no
+     video, just a frozen frame + audio."** Root cause: `-ss`/`-to` were output-side
+     options (after `-i`) — combined with `-c copy`, a copied (non-decoded) video
+     stream can only resume at the next keyframe *after* the cut point, while audio
+     has no such restriction and starts exactly on time, producing exactly that
+     symptom. Fixed losslessly, not by re-encoding: `-ss` moved to an input-side seek
+     (a new `preInputArgs` parameter on `runFfmpegWithProgress`, placed before `-i`)
+     so the demuxer seeks to the keyframe *at or before* the cut point instead, and
+     `-to <absolute end>` replaced with `-t <duration>` since `-to`'s
+     absolute-timestamp meaning breaks once the input's been seeked/PTS-rebased.
+     Zero re-encoding and zero quality loss on the `-c copy` path — the only
+     tradeoff is a clip may start up to one GOP length *earlier* than the exact
+     requested timestamp, never later, never with missing frames.
+  3. The clip player was showing the **parent video's** stored thumbnail as its
+     poster — misleading, since a clip is different media entirely. Fixed by not
+     passing a `thumbnailPath` into the clip's `LibraryVideoPlayer` at all, so the
+     browser's own natural first-frame poster renders instead.
+  4. Deleting the last remaining clip left an empty `clips/` folder + an empty
+     `clips.json` behind, and the "Clip Collection" tab kept showing an empty view.
+     `deleteClip` now removes the whole `clips/` directory once it empties out, and
+     the tab's visibility now trusts the actually-loaded `clips` array once fetched
+     (falling back to the possibly-stale `clipCount` only before that fetch lands),
+     rather than trusting `clipCount` unconditionally.
+  5. A final small round added a "Clip options" card below the clip player: **Open
+     file location** (the existing `system:openDirectory` IPC, pointed at the
+     video's `clips/` folder) and **Extract audio as MP3** (the existing
+     `extractMp3FromFile` pipeline, completely unchanged, pointed at the active
+     clip's own file instead of the video's).
+- Verified with `tsc -b` (zero new errors beyond the same pre-existing baseline),
+  `eslint` (clean), and the full `npm test` suite (355 passing by the end of this
+  feature's last round, up from 320 before it started).
 
 **2026-08-24:**
 - **Customizable thumbnail sizes**, landed in a different shape than originally
