@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Box, Card, IconButton, List, ListItem, ListItemButton, ListItemText, Stack, Tooltip, Typography } from '@mui/material';
+import {
+  Box, Card, Checkbox, Divider, FormControlLabel, IconButton, List, ListItem, ListItemButton, ListItemText,
+  MenuItem, Select, Stack, TextField, Tooltip, Typography,
+} from '@mui/material';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import AudiotrackIcon from '@mui/icons-material/Audiotrack';
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import LibraryVideoPlayer from './LibraryVideoPlayer';
 import BulkDeleteConfirmDialog from './BulkDeleteConfirmDialog';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
-import { formatSecondsAsClipTimestamp } from '../screens/FfmpegUtilitiesPanel';
+import { formatSecondsAsClipTimestamp, OTHER_FORMAT_VALUE } from '../screens/FfmpegUtilitiesPanel';
 import type { LibraryClip, LibraryVideoMetadata } from '../../types';
 
 // Placeholder metadata for LibraryVideoPlayer -- overrideFilePath takes
@@ -23,6 +27,7 @@ const EMPTY_METADATA = { downloadedFilePath: null, thumbnail: null, videoId: '' 
 export default function ClipCollectionView({
   videoDir, clips, onClipsChanged, onEmptied,
   onOpenFileLocation, onExtractMp3, extractingMp3, extractMp3Disabled, extractMp3Progress, extractMp3Error,
+  convertFormatOptions, onConvertClip, convertingClip, convertClipDisabled, convertClipProgress, convertClipError,
 }: {
   videoDir: string;
   clips: LibraryClip[];
@@ -34,11 +39,20 @@ export default function ClipCollectionView({
   extractMp3Disabled: boolean;
   extractMp3Progress: number;
   extractMp3Error: string | null;
+  convertFormatOptions: string[];
+  onConvertClip: (clip: LibraryClip, format: string, saveAsNewFile: boolean) => void;
+  convertingClip: boolean;
+  convertClipDisabled: boolean;
+  convertClipProgress: number;
+  convertClipError: string | null;
 }) {
   const [activeClipId, setActiveClipId] = useState<string | null>(clips[0]?.id ?? null);
   const [deleteTarget, setDeleteTarget] = useState<LibraryClip | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [convertFormat, setConvertFormat] = useState(convertFormatOptions[0]?.toLowerCase() ?? 'mp4');
+  const [otherFormatInput, setOtherFormatInput] = useState('');
+  const [saveAsNewFile, setSaveAsNewFile] = useState(false);
 
   // Keep a valid active clip if the list changes underneath us (e.g. a
   // delete elsewhere, or the initial fetch landing after mount).
@@ -50,6 +64,12 @@ export default function ClipCollectionView({
   }, [clips]);
 
   const activeClip = clips.find((c) => c.id === activeClipId) || null;
+  const resolvedConvertFormat = convertFormat === OTHER_FORMAT_VALUE ? otherFormatInput.trim().toLowerCase() : convertFormat;
+
+  const handleConvert = () => {
+    if (!activeClip || !resolvedConvertFormat) return;
+    onConvertClip(activeClip, resolvedConvertFormat, saveAsNewFile);
+  };
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
@@ -102,6 +122,8 @@ export default function ClipCollectionView({
                 </Tooltip>
               </Stack>
 
+              <Divider />
+
               <Stack direction="row" spacing={1} alignItems="center">
                 <Typography variant="body2" sx={{ flexGrow: 1 }}>Extract audio as MP3</Typography>
                 <Tooltip title="Extract audio as MP3">
@@ -117,6 +139,63 @@ export default function ClipCollectionView({
                   </span>
                 </Tooltip>
               </Stack>
+
+              <Divider />
+
+              {convertingClip &&
+                <LinearProgressWithLabel value={convertClipProgress} valueBuffer={convertClipProgress} />}
+              {convertClipError &&
+                <Typography variant="caption" color="error">{convertClipError}</Typography>}
+
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Typography variant="body2" sx={{ flexGrow: 1 }}>Convert to</Typography>
+                <Select
+                  size="small"
+                  variant="standard"
+                  value={convertFormat}
+                  onChange={(e) => setConvertFormat(e.target.value)}
+                  disabled={convertClipDisabled}
+                >
+                  {convertFormatOptions.map((format) => (
+                    <MenuItem key={format} value={format.toLowerCase()}>{format.toUpperCase()}</MenuItem>
+                  ))}
+                  <MenuItem value={OTHER_FORMAT_VALUE}>Other...</MenuItem>
+                </Select>
+                <Tooltip title="Convert">
+                  <span>
+                    <IconButton
+                      size="small"
+                      aria-label="Convert clip to a different format"
+                      onClick={handleConvert}
+                      disabled={convertClipDisabled || !resolvedConvertFormat}
+                    >
+                      <SwapHorizIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </Stack>
+              {convertFormat === OTHER_FORMAT_VALUE &&
+                <TextField
+                  size="small"
+                  variant="standard"
+                  placeholder="Format name"
+                  value={otherFormatInput}
+                  onChange={(e) => setOtherFormatInput(e.target.value)}
+                  disabled={convertClipDisabled}
+                  slotProps={{ htmlInput: { 'aria-label': 'Custom convert format name' } }}
+                />}
+              <FormControlLabel
+                sx={{ ml: 0 }}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={saveAsNewFile}
+                    onChange={(e) => setSaveAsNewFile(e.target.checked)}
+                    disabled={convertClipDisabled}
+                  />
+                }
+                label={<Typography variant="body2">Save into new file</Typography>}
+              />
             </Stack>
           </Card>}
       </Stack>

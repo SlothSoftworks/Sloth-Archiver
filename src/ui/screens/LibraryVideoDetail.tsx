@@ -113,7 +113,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // the same way downloadTarget gates video-vs-audio above, but on an
   // entirely separate hook/channel: these run against an already-downloaded
   // file, not a fresh yt-dlp download (see main.mjs's ffmpegUtilityProgress).
-  const [ffmpegAction, setFfmpegAction] = useState<'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | 'extractClipMp3' | null>(null);
+  const [ffmpegAction, setFfmpegAction] = useState<'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | 'extractClipMp3' | 'convertClip' | null>(null);
   const [ffmpegProgress, setFfmpegProgress] = useState(0);
   const [ffmpegError, setFfmpegError] = useState<string | null>(null);
   // Separate from ffmpegError -- embedding is fast enough that a plain
@@ -391,6 +391,42 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setFfmpegProgress(0);
     const res = await window.electronAPI.extractMp3FromFile({ inputPath, outputPath: result.filePath });
     if (!res.success) setFfmpegError(res.message || 'Failed to extract MP3.');
+    setFfmpegAction(null);
+  };
+
+  // "Save into new file" mirrors handleExtractClipMp3's export-outside-the-library
+  // flow (a save dialog + the existing generic convertFormat IPC, no clips.json
+  // involvement); leaving it unchecked converts the clip in place instead --
+  // window.electronAPI.convertClip does the temp-file-then-rename swap on the
+  // main process side and returns the clip's updated manifest record (same
+  // id/title/createdAt, new fileName/durationSeconds) to merge into local state.
+  const handleConvertClip = async (clip: LibraryClip, format: string, saveAsNewFile: boolean) => {
+    const inputPath = `${video.videoDir}/clips/${clip.fileName}`;
+    if (saveAsNewFile) {
+      const result = await window.electronAPI.saveExportedFile({
+        defaultName: `${clip.title}.${format}`,
+        extensions: [format],
+        inputPath,
+      });
+      if (result.canceled || !result.filePath) return;
+      setFfmpegAction('convertClip');
+      setFfmpegError(null);
+      setFfmpegProgress(0);
+      const res = await window.electronAPI.convertFileFormat({ inputPath, outputPath: result.filePath, format });
+      if (!res.success) setFfmpegError(res.message || 'Failed to convert.');
+      setFfmpegAction(null);
+      return;
+    }
+    setFfmpegAction('convertClip');
+    setFfmpegError(null);
+    setFfmpegProgress(0);
+    const res = await window.electronAPI.convertClip({ videoDir: video.videoDir, clipId: clip.id, format });
+    if (!res.success || !res.clip) {
+      setFfmpegError(res.message || 'Failed to convert.');
+      setFfmpegAction(null);
+      return;
+    }
+    setClips((prev) => prev.map((c) => (c.id === clip.id ? res.clip! : c)));
     setFfmpegAction(null);
   };
 
@@ -694,6 +730,12 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           extractMp3Disabled={ffmpegAction !== null}
           extractMp3Progress={ffmpegProgress}
           extractMp3Error={ffmpegError}
+          convertFormatOptions={convertFormatOptions}
+          onConvertClip={handleConvertClip}
+          convertingClip={ffmpegAction === 'convertClip'}
+          convertClipDisabled={ffmpegAction !== null}
+          convertClipProgress={ffmpegProgress}
+          convertClipError={ffmpegError}
         />
       ) : (
       /* Keyed on the selected version so switching versions forces a full

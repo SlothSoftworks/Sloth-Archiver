@@ -86,7 +86,7 @@ export default function FfmpegUtilitiesPanel({
   onExtractClip,
   onEmbedMetadata,
 }: {
-  ffmpegAction: 'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | 'extractClipMp3' | null;
+  ffmpegAction: 'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | 'extractClipMp3' | 'convertClip' | null;
   ffmpegProgress: number;
   ffmpegError: string | null;
   isVideoDownloaded: boolean;

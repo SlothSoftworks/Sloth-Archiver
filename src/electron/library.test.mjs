@@ -25,6 +25,7 @@ import {
   recordClip,
   listClips,
   deleteClip,
+  updateClipFile,
 } from './library.mjs';
 
 let libraryDir;
@@ -396,6 +397,36 @@ describe('clips (recordClip / listClips / deleteClip)', () => {
   it('deleteClip returns { success: false } for an unknown clipId', () => {
     const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
     expect(deleteClip({ libraryDir, videoDir, clipId: 'nope' })).toEqual({ success: false });
+  });
+
+  it('updateClipFile updates fileName/durationSeconds and keeps id/title/createdAt', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clip = recordClip({ libraryDir, videoDir, fileName: 'My Clip.mp4', title: 'My Clip', durationSeconds: 5 });
+
+    const updated = updateClipFile({ libraryDir, videoDir, clipId: clip.id, fileName: 'My Clip.mkv', durationSeconds: 6 });
+
+    expect(updated).toEqual({ ...clip, fileName: 'My Clip.mkv', durationSeconds: 6 });
+    expect(listClips({ libraryDir, videoDir })).toEqual([]); // file on disk is still the old one in this unit test
+  });
+
+  it('updateClipFile throws when the new fileName collides with a different clip', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clipA = recordClip({ libraryDir, videoDir, fileName: 'Clip A.mp4', title: 'Clip A', durationSeconds: 1 });
+    recordClip({ libraryDir, videoDir, fileName: 'Clip B.mkv', title: 'Clip B', durationSeconds: 1 });
+
+    expect(() => updateClipFile({ libraryDir, videoDir, clipId: clipA.id, fileName: 'Clip B.mkv', durationSeconds: 1 }))
+      .toThrow(/already exists/);
+  });
+
+  it('updateClipFile throws for an unknown clipId', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    expect(() => updateClipFile({ libraryDir, videoDir, clipId: 'nope', fileName: 'x.mp4', durationSeconds: 1 }))
+      .toThrow(/not found/);
+  });
+
+  it('updateClipFile refuses a videoDir outside the configured library folder', () => {
+    expect(() => updateClipFile({ libraryDir, videoDir: '/etc', clipId: 'x', fileName: 'x.mp4', durationSeconds: 1 }))
+      .toThrow(/outside the configured library folder/);
   });
 });
 

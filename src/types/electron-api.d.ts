@@ -96,6 +96,7 @@ declare global {
             createClip: (payload: { videoDir: string; inputPath: string; start: string; end: string; format: string; clipName: string }) => Promise<{ success: boolean; clip?: LibraryClip; message?: string }>
             getClips: (payload: { videoDir: string }) => Promise<{ success: boolean; clips: LibraryClip[]; message?: string }>
             deleteClip: (payload: { videoDir: string; clipId: string }) => Promise<{ success: boolean; message?: string }>
+            convertClip: (payload: { videoDir: string; clipId: string; format: string }) => Promise<{ success: boolean; clip?: LibraryClip; message?: string }>
             embedFileMetadata: (payload: { inputPath: string; metadataTags: Record<string, string | null | undefined>; thumbnailPath?: string | null; kind: 'video' | 'audio' }) => Promise<{ success: boolean; message?: string }>
             onFfmpegUtilityProgress: (callback: (data: { type: string; percent?: number }) => void) => void
             removeFfmpegUtilityProgressListener: () => void

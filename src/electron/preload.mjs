@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createClip: (payload) => ipcRenderer.invoke('library:createClip', payload),
     getClips: (payload) => ipcRenderer.invoke('library:getClips', payload),
     deleteClip: (payload) => ipcRenderer.invoke('library:deleteClip', payload),
+    convertClip: (payload) => ipcRenderer.invoke('library:convertClip', payload),
     embedFileMetadata: (payload) => ipcRenderer.invoke('library:embedMetadata', payload),
     onFfmpegUtilityProgress: (callback) => ipcRenderer.on('ffmpegUtilityProgress', (_event, data) => callback(data)),
     removeFfmpegUtilityProgressListener: () => ipcRenderer.removeAllListeners('ffmpegUtilityProgress'),

@@ -83,6 +83,7 @@ beforeEach(() => {
     getClips: vi.fn().mockResolvedValue({ success: true, clips: [] }),
     createClip: vi.fn().mockResolvedValue({ success: true, clip: { id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 5 } }),
     deleteClip: vi.fn().mockResolvedValue({ success: true }),
+    convertClip: vi.fn().mockResolvedValue({ success: true, clip: { id: 'clip1', fileName: 'My Clip.mkv', title: 'My Clip', createdAt: 0, durationSeconds: 5 } }),
   };
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),
@@ -380,6 +381,55 @@ describe('LibraryVideoDetail', () => {
     await user.click(await screen.findByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Clip Collection' })).not.toBeInTheDocument());
+  });
+
+  it('converts a clip in place and merges the updated clip record', async () => {
+    const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720', downloadedFormat: 'dflt' });
+    renderDetail(video);
+    const user = userEvent.setup();
+    window.electronAPI.getClips = vi.fn().mockResolvedValue({
+      success: true,
+      clips: [{ id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 5 }],
+    });
+
+    await user.type(screen.getByLabelText('Clip start (HH:MM:SS)'), '000010');
+    await user.type(screen.getByLabelText('Clip end (HH:MM:SS)'), '000020');
+    await user.click(screen.getByRole('button', { name: 'Extract clip' }));
+    await user.type(screen.getByLabelText('Clip name'), 'My Clip');
+    await user.click(screen.getByRole('button', { name: 'Save clip' }));
+    await user.click(await screen.findByRole('button', { name: 'Clip Collection' }));
+
+    await user.click(await screen.findByRole('button', { name: 'Convert clip to a different format' }));
+
+    await waitFor(() => expect(window.electronAPI.convertClip).toHaveBeenCalledWith({
+      videoDir: video.videoDir, clipId: 'clip1', format: 'mp4',
+    }));
+    expect(await screen.findByText(/My Clip\.mkv|My Clip/)).toBeInTheDocument();
+  });
+
+  it('converts a clip into a new external file when "Save into new file" is checked', async () => {
+    const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720', downloadedFormat: 'dflt' });
+    renderDetail(video);
+    const user = userEvent.setup();
+    window.electronAPI.getClips = vi.fn().mockResolvedValue({
+      success: true,
+      clips: [{ id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 5 }],
+    });
+
+    await user.type(screen.getByLabelText('Clip start (HH:MM:SS)'), '000010');
+    await user.type(screen.getByLabelText('Clip end (HH:MM:SS)'), '000020');
+    await user.click(screen.getByRole('button', { name: 'Extract clip' }));
+    await user.type(screen.getByLabelText('Clip name'), 'My Clip');
+    await user.click(screen.getByRole('button', { name: 'Save clip' }));
+    await user.click(await screen.findByRole('button', { name: 'Clip Collection' }));
+
+    await user.click(await screen.findByRole('checkbox', { name: 'Save into new file' }));
+    await user.click(await screen.findByRole('button', { name: 'Convert clip to a different format' }));
+
+    await waitFor(() => expect(window.electronAPI.convertFileFormat).toHaveBeenCalledWith({
+      inputPath: `${video.videoDir}/clips/My Clip.mp4`, outputPath: '/exported/out', format: 'mp4',
+    }));
+    expect(window.electronAPI.convertClip).not.toHaveBeenCalled();
   });
 
   it('embeds metadata into every downloaded file (video and audio) and shows a success toast', async () => {

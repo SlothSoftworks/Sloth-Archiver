@@ -9,7 +9,7 @@ import os from 'node:os';
 
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -1254,6 +1254,67 @@ ipcMain.handle('library:deleteClip', async (e, { videoDir, clipId }) => {
     try {
         return deleteClip({ libraryDir, videoDir, clipId });
     } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// Converts a saved clip to another format "in place" -- the clip keeps its
+// id/title/createdAt, only its underlying file (and clips.json's fileName/
+// durationSeconds for it) change. ffmpeg can't read and write the same file
+// at once, so this converts into a randomly-named temp file inside clips/
+// first, and only deletes the original + renames the temp file into its
+// final <title>.<newExt> spot once the conversion has actually succeeded --
+// same temp-then-rename shape as swapLibraryDownload (library.mjs) uses for
+// quality swaps, chosen specifically so a failed conversion never touches
+// the original file at all.
+ipcMain.handle('library:convertClip', async (e, { videoDir, clipId, format }) => {
+    const { libraryDir } = readSettings();
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
+        return { success: false, message: 'Refusing to convert a clip outside the configured library folder.' };
+    }
+    let tempPath = null;
+    try {
+        const clips = listClips({ libraryDir, videoDir: resolvedVideoDir });
+        const clip = clips.find((c) => c.id === clipId);
+        if (!clip) return { success: false, message: 'Clip not found.' };
+
+        const clipsDir = path.join(resolvedVideoDir, CLIPS_DIR_NAME);
+        const oldPath = path.join(clipsDir, clip.fileName);
+        const targetFileName = `${sanitizeForFilesystem(clip.title)}.${format}`;
+        // Checked upfront, before spending any ffmpeg time on a conversion
+        // that can never be saved -- same duplicate-name rule recordClip
+        // enforces on clip creation.
+        if (clips.some((c) => c.id !== clipId && c.fileName === targetFileName)) {
+            return { success: false, message: 'A clip with this name already exists for this video.' };
+        }
+
+        tempPath = path.join(clipsDir, `${crypto.randomUUID()}.${format}`);
+        const duration = await getMediaDurationSeconds(oldPath);
+        await convertWithFallback({
+            inputPath: oldPath,
+            outputPath: tempPath,
+            format,
+            totalDurationSeconds: duration,
+            onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
+        });
+
+        fs.rmSync(oldPath, { force: true });
+        const targetPath = path.join(clipsDir, targetFileName);
+        fs.renameSync(tempPath, targetPath);
+        tempPath = null;
+
+        const durationSeconds = await getMediaDurationSeconds(targetPath);
+        const updatedClip = updateClipFile({
+            libraryDir,
+            videoDir: resolvedVideoDir,
+            clipId,
+            fileName: targetFileName,
+            durationSeconds,
+        });
+        return { success: true, clip: updatedClip };
+    } catch (err) {
+        if (tempPath) fs.rmSync(tempPath, { force: true });
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
 });
