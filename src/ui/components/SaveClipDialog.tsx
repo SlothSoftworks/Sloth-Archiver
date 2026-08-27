@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react';
 import {
   Button,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   MenuItem,
   Select,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
-import { formatClipTimestampInput, parseClipTimestampSeconds, OTHER_FORMAT_VALUE } from '../screens/FfmpegUtilitiesPanel';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import { formatClipTimestampInput, parseClipTimestampSeconds, OTHER_FORMAT_VALUE, TRANSCODE_ON_CONVERT_TOOLTIP } from '../screens/FfmpegUtilitiesPanel';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
 
 // "Same as source" sentinel -- skips the convert step entirely (fast
@@ -36,13 +40,14 @@ export default function SaveClipDialog({
   submitting: boolean;
   progress: number;
   error: string | null;
-  onSubmit: (payload: { clipName: string; start: string; end: string; format: string }) => void;
+  onSubmit: (payload: { clipName: string; start: string; end: string; format: string; forceReencode: boolean }) => void;
 }) {
   const [clipName, setClipName] = useState('');
   const [start, setStart] = useState(defaultClipStart);
   const [end, setEnd] = useState(defaultClipEnd);
   const [format, setFormat] = useState(SOURCE_FORMAT_VALUE);
   const [otherFormatInput, setOtherFormatInput] = useState('');
+  const [forceReencode, setForceReencode] = useState(false);
 
   // Re-seed from the panel's current values each time the dialog opens --
   // it may be reopened later with a different range than last time.
@@ -53,6 +58,7 @@ export default function SaveClipDialog({
       setEnd(defaultClipEnd);
       setFormat(SOURCE_FORMAT_VALUE);
       setOtherFormatInput('');
+      setForceReencode(false);
     }
   }, [open, defaultClipStart, defaultClipEnd]);
 
@@ -65,7 +71,7 @@ export default function SaveClipDialog({
 
   const handleSubmit = () => {
     if (!canSubmit) return;
-    onSubmit({ clipName: trimmedName, start: start.trim(), end: end.trim(), format: resolvedFormat });
+    onSubmit({ clipName: trimmedName, start: start.trim(), end: end.trim(), format: resolvedFormat, forceReencode });
   };
 
   return (
@@ -124,6 +130,24 @@ export default function SaveClipDialog({
               disabled={submitting}
               helperText="Must match a real ffmpeg muxer name (e.g. mp4, matroska, avi)."
             />}
+          {format !== SOURCE_FORMAT_VALUE &&
+            <Stack direction="row" spacing={0.5} alignItems="center">
+              <FormControlLabel
+                sx={{ ml: 0 }}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={forceReencode}
+                    onChange={(e) => setForceReencode(e.target.checked)}
+                    disabled={submitting}
+                  />
+                }
+                label={<Typography variant="body2">Transcode on convert</Typography>}
+              />
+              <Tooltip title={TRANSCODE_ON_CONVERT_TOOLTIP}>
+                <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+              </Tooltip>
+            </Stack>}
 
           {submitting && <LinearProgressWithLabel value={progress} valueBuffer={progress} />}
 

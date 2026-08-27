@@ -1145,7 +1145,7 @@ ipcMain.handle('library:extractMp3', async (e, { inputPath, outputPath }) => {
     }
 });
 
-ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, format }) => {
+ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, format, forceReencode = false }) => {
     try {
         const duration = await getMediaDurationSeconds(inputPath);
         await convertWithFallback({
@@ -1154,6 +1154,7 @@ ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, forma
             format,
             totalDurationSeconds: duration,
             onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
+            forceReencode,
         });
         return { success: true, outputPath };
     } catch (err) {
@@ -1199,7 +1200,7 @@ function parseClipTimestampSeconds(value) {
 // above (which takes a pre-picked outputPath from a save dialog and never
 // touches clips.json). videoDir is the video's own folder, not an epoch --
 // clips are video-level, independent of which version they were cut from.
-ipcMain.handle('library:createClip', async (e, { videoDir, inputPath, start, end, format, clipName }) => {
+ipcMain.handle('library:createClip', async (e, { videoDir, inputPath, start, end, format, clipName, forceReencode = false }) => {
     const { libraryDir } = readSettings();
     const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
     if (!resolvedVideoDir) {
@@ -1224,6 +1225,7 @@ ipcMain.handle('library:createClip', async (e, { videoDir, inputPath, start, end
             format: targetFormat,
             totalDurationSeconds: Math.max(0, endSeconds - startSeconds),
             onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
+            forceReencode,
         });
 
         const durationSeconds = await getMediaDurationSeconds(outputPath);
@@ -1267,7 +1269,7 @@ ipcMain.handle('library:deleteClip', async (e, { videoDir, clipId }) => {
 // same temp-then-rename shape as swapLibraryDownload (library.mjs) uses for
 // quality swaps, chosen specifically so a failed conversion never touches
 // the original file at all.
-ipcMain.handle('library:convertClip', async (e, { videoDir, clipId, format }) => {
+ipcMain.handle('library:convertClip', async (e, { videoDir, clipId, format, forceReencode = false }) => {
     const { libraryDir } = readSettings();
     const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
     if (!resolvedVideoDir) {
@@ -1297,6 +1299,7 @@ ipcMain.handle('library:convertClip', async (e, { videoDir, clipId, format }) =>
             format,
             totalDurationSeconds: duration,
             onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
+            forceReencode,
         });
 
         fs.rmSync(oldPath, { force: true });

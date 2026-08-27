@@ -1,22 +1,31 @@
 import { useEffect, useState } from 'react';
 import {
-  Box, Card, Checkbox, Divider, FormControlLabel, IconButton, List, ListItem, ListItemButton, ListItemText,
+  Box, Card, Checkbox, Chip, Divider, FormControlLabel, IconButton, List, ListItem, ListItemButton, ListItemText,
   MenuItem, Select, Stack, TextField, Tooltip, Typography,
 } from '@mui/material';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import AudiotrackIcon from '@mui/icons-material/Audiotrack';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import LibraryVideoPlayer from './LibraryVideoPlayer';
 import BulkDeleteConfirmDialog from './BulkDeleteConfirmDialog';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
-import { formatSecondsAsClipTimestamp, OTHER_FORMAT_VALUE } from '../screens/FfmpegUtilitiesPanel';
+import { formatSecondsAsClipTimestamp, OTHER_FORMAT_VALUE, TRANSCODE_ON_CONVERT_TOOLTIP } from '../screens/FfmpegUtilitiesPanel';
 import type { LibraryClip, LibraryVideoMetadata } from '../../types';
 
 // Placeholder metadata for LibraryVideoPlayer -- overrideFilePath takes
 // priority over every field here, this just satisfies the required prop
 // without pretending a clip has a real video identity.
 const EMPTY_METADATA = { downloadedFilePath: null, thumbnail: null, videoId: '' } as LibraryVideoMetadata;
+
+// The clip list has no separate "format" field -- a clip's extension (from
+// its own fileName) already is its format, and stays in sync automatically
+// whenever Convert changes that file.
+function getClipExtension(fileName: string): string {
+  const lastDot = fileName.lastIndexOf('.');
+  return lastDot === -1 ? '' : fileName.slice(lastDot + 1).toUpperCase();
+}
 
 // Swaps in for the whole normal video layout (player + instrument panel)
 // when the "Clip Collection" tab is active -- a player on the left, a
@@ -40,7 +49,7 @@ export default function ClipCollectionView({
   extractMp3Progress: number;
   extractMp3Error: string | null;
   convertFormatOptions: string[];
-  onConvertClip: (clip: LibraryClip, format: string, saveAsNewFile: boolean) => void;
+  onConvertClip: (clip: LibraryClip, format: string, saveAsNewFile: boolean, forceReencode: boolean) => void;
   convertingClip: boolean;
   convertClipDisabled: boolean;
   convertClipProgress: number;
@@ -53,6 +62,7 @@ export default function ClipCollectionView({
   const [convertFormat, setConvertFormat] = useState(convertFormatOptions[0]?.toLowerCase() ?? 'mp4');
   const [otherFormatInput, setOtherFormatInput] = useState('');
   const [saveAsNewFile, setSaveAsNewFile] = useState(false);
+  const [forceReencode, setForceReencode] = useState(false);
 
   // Keep a valid active clip if the list changes underneath us (e.g. a
   // delete elsewhere, or the initial fetch landing after mount).
@@ -68,7 +78,7 @@ export default function ClipCollectionView({
 
   const handleConvert = () => {
     if (!activeClip || !resolvedConvertFormat) return;
-    onConvertClip(activeClip, resolvedConvertFormat, saveAsNewFile);
+    onConvertClip(activeClip, resolvedConvertFormat, saveAsNewFile, forceReencode);
   };
 
   const handleConfirmDelete = async () => {
@@ -196,6 +206,23 @@ export default function ClipCollectionView({
                 }
                 label={<Typography variant="body2">Save into new file</Typography>}
               />
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <FormControlLabel
+                  sx={{ ml: 0 }}
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={forceReencode}
+                      onChange={(e) => setForceReencode(e.target.checked)}
+                      disabled={convertClipDisabled}
+                    />
+                  }
+                  label={<Typography variant="body2">Transcode on convert</Typography>}
+                />
+                <Tooltip title={TRANSCODE_ON_CONVERT_TOOLTIP}>
+                  <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                </Tooltip>
+              </Stack>
             </Stack>
           </Card>}
       </Stack>
@@ -216,7 +243,12 @@ export default function ClipCollectionView({
             >
               <ListItemButton onClick={() => setActiveClipId(clip.id)}>
                 <ListItemText
-                  primary={clip.title}
+                  primary={
+                    <Stack direction="row" spacing={0.5} alignItems="center">
+                      <Typography variant="body2" component="span">{clip.title}</Typography>
+                      <Chip label={getClipExtension(clip.fileName)} size="small" variant="outlined" sx={{ height: 18, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }} />
+                    </Stack>
+                  }
                   secondary={`${new Date(clip.createdAt).toLocaleDateString()} · ${formatSecondsAsClipTimestamp(Math.round(clip.durationSeconds))}`}
                 />
               </ListItemButton>

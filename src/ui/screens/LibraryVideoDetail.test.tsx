@@ -301,7 +301,7 @@ describe('LibraryVideoDetail', () => {
     await user.click(screen.getByRole('button', { name: 'Convert to a different format' }));
 
     await waitFor(() => expect(window.electronAPI.convertFileFormat).toHaveBeenCalledWith({
-      inputPath: '/v/video.mp4', outputPath: '/exported/out', format: 'mp4',
+      inputPath: '/v/video.mp4', outputPath: '/exported/out', format: 'mp4', forceReencode: false,
     }));
   });
 
@@ -317,7 +317,7 @@ describe('LibraryVideoDetail', () => {
     await user.click(screen.getByRole('button', { name: 'Convert to a different format' }));
 
     await waitFor(() => expect(window.electronAPI.convertFileFormat).toHaveBeenCalledWith({
-      inputPath: '/v/video.mp4', outputPath: '/exported/out', format: 'flac',
+      inputPath: '/v/video.mp4', outputPath: '/exported/out', format: 'flac', forceReencode: false,
     }));
   });
 
@@ -337,7 +337,7 @@ describe('LibraryVideoDetail', () => {
     await user.click(screen.getByRole('button', { name: 'Save clip' }));
 
     await waitFor(() => expect(window.electronAPI.createClip).toHaveBeenCalledWith({
-      videoDir: video.videoDir, inputPath: '/v/video.mp4', start: '00:00:10', end: '00:00:20', format: 'source', clipName: 'My Clip',
+      videoDir: video.videoDir, inputPath: '/v/video.mp4', start: '00:00:10', end: '00:00:20', format: 'source', clipName: 'My Clip', forceReencode: false,
     }));
     // Dialog closes and the parent's index refresh fires so clipCount updates.
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Save clip' })).not.toBeInTheDocument());
@@ -402,7 +402,7 @@ describe('LibraryVideoDetail', () => {
     await user.click(await screen.findByRole('button', { name: 'Convert clip to a different format' }));
 
     await waitFor(() => expect(window.electronAPI.convertClip).toHaveBeenCalledWith({
-      videoDir: video.videoDir, clipId: 'clip1', format: 'mp4',
+      videoDir: video.videoDir, clipId: 'clip1', format: 'mp4', forceReencode: false,
     }));
     expect(await screen.findByText(/My Clip\.mkv|My Clip/)).toBeInTheDocument();
   });
@@ -427,7 +427,7 @@ describe('LibraryVideoDetail', () => {
     await user.click(await screen.findByRole('button', { name: 'Convert clip to a different format' }));
 
     await waitFor(() => expect(window.electronAPI.convertFileFormat).toHaveBeenCalledWith({
-      inputPath: `${video.videoDir}/clips/My Clip.mp4`, outputPath: '/exported/out', format: 'mp4',
+      inputPath: `${video.videoDir}/clips/My Clip.mp4`, outputPath: '/exported/out', format: 'mp4', forceReencode: false,
     }));
     expect(window.electronAPI.convertClip).not.toHaveBeenCalled();
   });

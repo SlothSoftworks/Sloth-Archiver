@@ -107,16 +107,36 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
     // back to a full re-encode if the source codec isn't compatible with the
     // target container. Shared by the download-time format recode and the
     // Library view's standalone "Convert to" utility.
-    async function convertWithFallback({ inputPath, outputPath, format, totalDurationSeconds, onProgress }) {
+    //
+    // forceReencode skips the remux attempt entirely. A remux is a container
+    // swap only -- it happily "succeeds" whenever the target container is
+    // capable of holding whatever codec the source already used, even if
+    // that's not the codec the format nominally implies (e.g. WebM's spec
+    // now also permits AV1 alongside VP8/VP9, so remuxing an AV1 source into
+    // .webm succeeds and silently produces an AV1-in-WebM file instead of the
+    // VP9 a "convert to WebM" request actually implies). The Library view's
+    // user-invoked "Convert to"/clip-convert features pass forceReencode:true
+    // so their output's *codec*, not just its container, always matches what
+    // was actually requested; the download-time postprocess step (fresh from
+    // yt-dlp, not a user "convert" action) keeps the default remux-first
+    // behavior, since forcing a re-encode on every single download would be a
+    // real, unwanted performance/quality cost for no benefit in that case.
+    async function convertWithFallback({ inputPath, outputPath, format, totalDurationSeconds, onProgress, forceReencode = false }) {
+        // WebM is spec'd to hold VP8/VP9/AV1 video + Vorbis/Opus audio --
+        // falling back to libx264/aac universally would produce a file
+        // labeled .webm that isn't actually valid WebM. VP9 (not AV1) is the
+        // one actually meant by "convert to WebM" here, matching what sites
+        // that only claim VP8/VP9 support expect.
+        const reencodeCodecArgs = (format || '').toLowerCase() === 'webm'
+            ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus']
+            : ['-c:v', 'libx264', '-c:a', 'aac'];
+        if (forceReencode) {
+            await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: reencodeCodecArgs, totalDurationSeconds, onProgress });
+            return;
+        }
         try {
             await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: ['-c', 'copy'], totalDurationSeconds, onProgress });
         } catch {
-            // WebM is spec'd to only hold VP8/VP9/AV1 video + Vorbis/Opus
-            // audio -- falling back to libx264/aac universally would produce
-            // a file labeled .webm that isn't actually valid WebM.
-            const reencodeCodecArgs = (format || '').toLowerCase() === 'webm'
-                ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus']
-                : ['-c:v', 'libx264', '-c:a', 'aac'];
             await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: reencodeCodecArgs, totalDurationSeconds, onProgress });
         }
     }
@@ -125,9 +145,11 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
     // trim then a separate convert (two ffmpeg invocations, two temp files).
     // 'source' (or falsy) keeps the source container: fast lossless -c copy
     // trim only, same as the plain "export a clip" flow. Any other format
-    // mirrors convertWithFallback's remux-then-reencode-fallback shape, with
-    // the same seek/trim args on both attempts, since a trimmed remux and a
-    // trimmed re-encode are both still "trim to this range."
+    // mirrors convertWithFallback's own forceReencode option: a remux that
+    // happens to succeed just keeps whatever codec the source already used,
+    // which can silently produce e.g. an AV1-in-WebM clip when VP9 was
+    // actually requested -- forceReencode:true skips that risk entirely by
+    // going straight to a real re-encode into the target format's codec.
     //
     // -ss is placed BEFORE -i (an input-side seek), not after (output-side)
     // -- this is the fix for a well-documented ffmpeg quirk: an output-side
@@ -146,19 +168,23 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
     // once the input has been seeked, -to's "absolute timestamp" meaning is
     // no longer relative to the original file, but -t's plain duration is
     // unambiguous regardless of where the seek landed.
-    async function clipAndConvert({ inputPath, outputPath, start, format, totalDurationSeconds, onProgress }) {
+    async function clipAndConvert({ inputPath, outputPath, start, format, totalDurationSeconds, onProgress, forceReencode = false }) {
         const preInputArgs = ['-ss', start];
         const durationArgs = ['-t', String(totalDurationSeconds)];
         if (!format || format === 'source') {
             await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, '-c', 'copy'], totalDurationSeconds, onProgress, preInputArgs });
             return;
         }
+        const reencodeCodecArgs = format.toLowerCase() === 'webm'
+            ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus']
+            : ['-c:v', 'libx264', '-c:a', 'aac'];
+        if (forceReencode) {
+            await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, ...reencodeCodecArgs], totalDurationSeconds, onProgress, preInputArgs });
+            return;
+        }
         try {
             await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, '-c', 'copy'], totalDurationSeconds, onProgress, preInputArgs });
         } catch {
-            const reencodeCodecArgs = format.toLowerCase() === 'webm'
-                ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus']
-                : ['-c:v', 'libx264', '-c:a', 'aac'];
             await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, ...reencodeCodecArgs], totalDurationSeconds, onProgress, preInputArgs });
         }
     }

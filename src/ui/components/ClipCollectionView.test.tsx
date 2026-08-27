@@ -47,6 +47,13 @@ beforeEach(() => {
 });
 
 describe('ClipCollectionView', () => {
+  it('shows a format tag next to each clip title, derived from its file extension', () => {
+    const clips = [makeClip({ fileName: 'Clip One.mkv' }), makeClip({ id: 'clip2', fileName: 'Clip Two.webm', title: 'Clip Two' })];
+    renderView({ clips });
+    expect(screen.getByText('MKV')).toBeInTheDocument();
+    expect(screen.getByText('WEBM')).toBeInTheDocument();
+  });
+
   it('renders every clip with title and formatted duration, and plays the first by default', () => {
     const clips = [makeClip(), makeClip({ id: 'clip2', fileName: 'Clip Two.mp4', title: 'Clip Two', durationSeconds: 65 })];
     const { container } = renderView({ clips });
@@ -120,7 +127,7 @@ describe('ClipCollectionView', () => {
     await user.click(screen.getByText('Clip Two'));
     await user.click(screen.getByRole('button', { name: 'Convert clip to a different format' }));
 
-    expect(onConvertClip).toHaveBeenCalledWith(clips[1], 'mp4', false);
+    expect(onConvertClip).toHaveBeenCalledWith(clips[1], 'mp4', false, false);
   });
 
   it('passes saveAsNewFile=true when "Save into new file" is checked', async () => {
@@ -130,7 +137,17 @@ describe('ClipCollectionView', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Save into new file' }));
     await user.click(screen.getByRole('button', { name: 'Convert clip to a different format' }));
 
-    expect(onConvertClip).toHaveBeenCalledWith(expect.objectContaining({ id: 'clip1' }), 'mp4', true);
+    expect(onConvertClip).toHaveBeenCalledWith(expect.objectContaining({ id: 'clip1' }), 'mp4', true, false);
+  });
+
+  it('passes forceReencode=true when "Transcode on convert" is checked', async () => {
+    const user = userEvent.setup();
+    const { onConvertClip } = renderView();
+
+    await user.click(screen.getByRole('checkbox', { name: 'Transcode on convert' }));
+    await user.click(screen.getByRole('button', { name: 'Convert clip to a different format' }));
+
+    expect(onConvertClip).toHaveBeenCalledWith(expect.objectContaining({ id: 'clip1' }), 'mp4', false, true);
   });
 
   it('reveals a freeform field for "Other..." and requires it before converting', async () => {
@@ -145,7 +162,7 @@ describe('ClipCollectionView', () => {
     await user.type(screen.getByLabelText('Custom convert format name'), 'flac');
     await user.click(screen.getByRole('button', { name: 'Convert clip to a different format' }));
 
-    expect(onConvertClip).toHaveBeenCalledWith(expect.objectContaining({ id: 'clip1' }), 'flac', false);
+    expect(onConvertClip).toHaveBeenCalledWith(expect.objectContaining({ id: 'clip1' }), 'flac', false, false);
   });
 
   it('disables Convert and shows progress/error while converting', () => {

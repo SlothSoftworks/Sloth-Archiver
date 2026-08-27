@@ -1,6 +1,8 @@
 import {
   Box,
+  Checkbox,
   Divider,
+  FormControlLabel,
   IconButton,
   MenuItem,
   Select,
@@ -24,6 +26,18 @@ import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
 // manages (that one adds a format to the dropdown; this one doesn't save
 // anything).
 export const OTHER_FORMAT_VALUE = '__other__';
+
+// Shared wording for every "Transcode on convert" checkbox (main video
+// Convert to, clip creation, clip Convert to) so the explanation reads
+// identically wherever the option appears.
+export const TRANSCODE_ON_CONVERT_TOOLTIP = 'When on, converting fully '
+  + 're-encodes into the target format’s real codec (e.g. H.264 for MP4, '
+  + 'VP9 for WebM) instead of just swapping the container -- guarantees the '
+  + 'actual codec matches what the format implies, at the cost of a slower '
+  + 'conversion and a re-encoded (not bit-identical) file. When off, a fast '
+  + 'lossless container swap is tried first and only falls back to '
+  + 're-encoding if that isn’t possible -- quicker, but the codec inside '
+  + 'can end up being whatever the source file already used.';
 
 // Digit-only, auto-formatting clip-timestamp input -- strips non-digits and
 // right-aligns the typed digits into HH:MM:SS, growing an hours group past 4
@@ -75,6 +89,8 @@ export default function FfmpegUtilitiesPanel({
   convertFormatOptions,
   otherFormatInput,
   setOtherFormatInput,
+  forceReencode,
+  setForceReencode,
   clipStart,
   setClipStart,
   clipEnd,
@@ -96,6 +112,8 @@ export default function FfmpegUtilitiesPanel({
   convertFormatOptions: string[];
   otherFormatInput: string;
   setOtherFormatInput: (value: string) => void;
+  forceReencode: boolean;
+  setForceReencode: (value: boolean) => void;
   clipStart: string;
   setClipStart: (value: string) => void;
   clipEnd: string;
@@ -191,6 +209,23 @@ export default function FfmpegUtilitiesPanel({
               Must match a real ffmpeg muxer name (e.g. mp4, matroska, avi).
             </Typography>
           </Stack>}
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <FormControlLabel
+            sx={{ ml: 0 }}
+            control={
+              <Checkbox
+                size="small"
+                checked={forceReencode}
+                onChange={(e) => setForceReencode(e.target.checked)}
+                disabled={ffmpegControlsDisabled}
+              />
+            }
+            label={<Typography variant="body2">Transcode on convert</Typography>}
+          />
+          <Tooltip title={TRANSCODE_ON_CONVERT_TOOLTIP}>
+            <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+          </Tooltip>
+        </Stack>
 
         <Stack direction="row" spacing={1} alignItems="center">
           <Typography variant="body2">Clip</Typography>
