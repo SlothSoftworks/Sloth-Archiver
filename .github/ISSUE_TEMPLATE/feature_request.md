@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea or improvement for yt-archiver
+about: Suggest an idea or improvement for sloth-archiver
 title: ""
 labels: enhancement
 assignees: ""

@@ -116,7 +116,7 @@ const PYTHON_BUILD_STANDALONE_REPO = 'astral-sh/python-build-standalone';
 // routes it into the existing 'error' handler below.
 function fetchJson(url, { onLog, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     return new Promise((resolve, reject) => {
-        const req = https.get(url, { headers: { 'User-Agent': 'yt-archiver' } }, (res) => {
+        const req = https.get(url, { headers: { 'User-Agent': 'sloth-archiver' } }, (res) => {
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                 fetchJson(res.headers.location, { onLog, timeoutMs }).then(resolve, reject);
                 return;
@@ -145,7 +145,7 @@ function fetchJson(url, { onLog, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
 
 function downloadFile(url, destPath, { onLog, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     return new Promise((resolve, reject) => {
-        const req = https.get(url, { headers: { 'User-Agent': 'yt-archiver' } }, (res) => {
+        const req = https.get(url, { headers: { 'User-Agent': 'sloth-archiver' } }, (res) => {
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                 downloadFile(res.headers.location, destPath, { onLog, timeoutMs }).then(resolve, reject);
                 return;

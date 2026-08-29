@@ -1,6 +1,6 @@
 # Future Specs
 
-Running list of features and tasks planned for `yt-archiver`. Add items under
+Running list of features and tasks planned for `sloth-archiver`. Add items under
 the relevant section below; Claude will pick these up as work requests when
 you point it here.
 

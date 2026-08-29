@@ -1,6 +1,6 @@
-# yt-archiver — Architecture Overview
+# sloth-archiver — Architecture Overview
 
-yt-archiver is a desktop application (built on Electron, with a React/TypeScript
+sloth-archiver is a desktop application (built on Electron, with a React/TypeScript
 interface) for downloading and archiving video and audio content — primarily from
 YouTube, with support for several other platforms — into a personal, local library
 on the user's own machine. It wraps the well-known `yt-dlp` tool for the actual

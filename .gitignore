@@ -11,7 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
-yt-archiver-dist
+sloth-archiver-dist
 scripts/dev-build-shell.ps1
 coverage
 
