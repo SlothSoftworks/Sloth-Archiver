@@ -2,6 +2,8 @@
 
 **Your own personal, offline video archive.**
 
+*Free and open source — no subscriptions, no accounts, no server to run.*
+
 SlothArchiver is a free desktop app for downloading and organizing videos and audio
 from YouTube and other platforms into a permanent library on your own computer —
 no subscriptions, no re-uploading to yet another cloud service, no losing access
@@ -27,15 +29,48 @@ easy to find again, playable straight from the app whether or not you're online.
 Paste a link, pick a quality, and it's yours — saved, catalogued, and searchable, on
 your own machine.
 
+## Why SlothArchiver?
+
+Most tools in this space ask you to pick your trade-off. Self-hosted servers give you
+a real library, but only if you're willing to run Docker and keep a machine on around
+the clock. Lightweight desktop downloaders skip all of that, but most of them just drop
+files in a folder and call it done — or eventually ask you to pay once you want more
+than that.
+
+SlothArchiver doesn't make you choose. It's a normal app you install like any other,
+with a real searchable library, playlist tracking, and version history built in — and
+it's free, in full, with no plan to change that.
+
+| | **SlothArchiver** | Arroxy | TubeArchiver | TubeArchivist / Pinchflat |
+|---|:---:|:---:|:---:|:---:|
+| Free, no paywall | ✅ | ✅ | ❌ (tiered plans) | ✅ |
+| Open source | ✅ | ✅ | ❌ | ✅ |
+| Runs locally — no Docker or server | ✅ | ✅ | ✅ | ❌ |
+| Real searchable library (not just a folder) | ✅ | ❌ | ❌ (history list only) | ✅ |
+| Playlist tracking that detects removed videos | ✅ | ❌ | ❌ (one-time fetch) | ✅ |
+| Per-video version history | ✅ | ❌ | ❌ | ❌ |
+| Library is plain files — no hidden database | ✅ | ✅ | N/A | ❌ (Elasticsearch) |
+| Built-in playback in the app | ✅ | ❌ | ❌ | ✅ (web UI) |
+| In-app clipping, MP3 extraction & format tools | ✅ | ❌ | ❌ | ❌ |
+| macOS / Windows / Linux | ✅ | ✅ | Mac/Win only | ✅ (via Docker) |
+
+No other tool in this space currently checks every one of those boxes at once —
+that combination is the whole point of SlothArchiver.
+
 ## Features
 
+- **No paywall, ever** — every feature below is free today and will stay free in
+  future updates. No tiers, no locked resolutions, no daily download caps.
 - **Download video or audio** from YouTube and a growing list of other platforms
   (SoundCloud, TikTok, Instagram, Facebook, Dailymotion, and more), in the quality
   you choose.
 - **A real library, not just a downloads folder** — every video is organized by
   channel, searchable, and keeps a history of versions if you ever re-fetch it.
+  Most downloaders stop at "file saved somewhere"; SlothArchiver actually keeps
+  track of what you have.
 - **Playlist archiving** — save an entire playlist at once, and refresh it later to
-  pick up new additions without losing what you already have.
+  pick up new additions without losing what you already have, with removed videos
+  automatically flagged instead of silently disappearing.
 - **Bulk downloading** — paste a whole list of links or a playlist and let the app
   work through them in the background, several at a time.
 - **Built-in playback** — watch or listen to anything in your library right inside
@@ -66,7 +101,8 @@ to find out at all.
 Tired of a video getting edited, re-uploaded, or quietly censored after the
 fact? Download the original before it changes, and if a newer version comes
 along later, grab that too — SlothArchiver keeps both side by side instead of
-overwriting what you already had.
+overwriting what you already had. This is a level of history most archivers,
+paid or free, don't track at all.
 
 ![Demo: version history](docs/media/version-history.gif)
 
@@ -89,8 +125,9 @@ playlist — whichever fits how you think about your collection.
 ### Light footprint, no lock-in
 
 Your library lives as plain files and folders — nothing hidden in a database
-you can't get to. Want it gone? Delete the folder and it's gone, completely,
-with nothing left behind.
+you can't get to, and no Elasticsearch or Redis instance to maintain in the
+background. Want it gone? Delete the folder and it's gone, completely, with
+nothing left behind.
 
 ![Demo: library filesystem layout](docs/media/library-filesystem.gif)
 
@@ -106,7 +143,9 @@ all straight from the library view, no other software required.
 
 SoundCloud, TikTok, Instagram, Facebook, Dailymotion, and more — paste a link
 from any of them and SlothArchiver figures out the platform automatically and
-gets you a download, no separate tool needed for each site.
+gets you a download, no separate tool needed for each site. This list keeps
+growing as development continues, so expect more platforms to be supported
+over time.
 
 ![Demo: multi-platform downloads](docs/media/multi-platform-downloads.gif)
 
@@ -126,6 +165,15 @@ yourself. For a deeper, more technical look at how the app is put together, see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## FAQ
+
+#### How is this different from other YouTube downloaders?
+Most tools fall into one of two camps: self-hosted servers (like TubeArchivist or
+Pinchflat) that need Docker and a machine running around the clock, or desktop
+downloaders (like Arroxy or TubeArchiver) that save files but don't keep an actual
+library — and some of those eventually put real features behind a subscription.
+SlothArchiver is a normal desktop app with a real searchable library, playlist
+tracking, and version history, and it's free without any tier to upgrade to. See the
+[Why SlothArchiver?](#why-slotharchiver) section above for a fuller comparison.
 
 #### Is SlothArchiver free?
 Yes, it's free and open source.
