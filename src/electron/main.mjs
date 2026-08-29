@@ -981,7 +981,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
         // restart yt-dlp's download from scratch, losing TD-001's resume
         // behavior even when a partial raw file already existed.
         const rawDirId = crypto.createHash('sha1').update(options.outputPath).digest('hex').slice(0, 16);
-        rawDir = path.join(app.getPath('temp'), 'yt-archiver-raw', rawDirId);
+        rawDir = path.join(app.getPath('temp'), 'sloth-archiver-raw', rawDirId);
         if (options.overwriteMode === 'overwrite') {
             fs.rmSync(rawDir, { recursive: true, force: true });
         }

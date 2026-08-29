@@ -38,7 +38,7 @@ let libraryDir;
 let mockNow;
 
 beforeEach(() => {
-  libraryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yt-archiver-test-'));
+  libraryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-'));
   mockNow = Date.now();
   vi.spyOn(Date, 'now').mockImplementation(() => mockNow++);
 });
@@ -537,7 +537,7 @@ describe('getLibraryIndex / refreshLibraryIndex caching', () => {
 
   it('starts a new scan for a different libraryDir', () => {
     const first = getLibraryIndex(libraryDir);
-    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yt-archiver-test-other-'));
+    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-other-'));
     try {
       const second = getLibraryIndex(otherDir);
       expect(first).not.toBe(second);

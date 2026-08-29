@@ -429,7 +429,7 @@ export default function OptionsScreen() {
                 <DialogContentText component="div">
                   <Typography variant="body2" sx={{ mb: 1.5 }}>
                     yt-dlp is the tool this app uses behind the scenes to actually talk to
-                    YouTube and download videos. It's separate from YT Archiver itself --
+                    YouTube and download videos. It's separate from Sloth Archiver itself --
                     updating it here does <strong>not</strong> update the app.
                   </Typography>
                   <Typography variant="body2">

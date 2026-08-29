@@ -1,8 +1,8 @@
-# YTArchiver
+# SlothArchiver
 
 **Your own personal, offline video archive.**
 
-YTArchiver is a free desktop app for downloading and organizing videos and audio
+SlothArchiver is a free desktop app for downloading and organizing videos and audio
 from YouTube and other platforms into a permanent library on your own computer —
 no subscriptions, no re-uploading to yet another cloud service, no losing access
 when a video gets taken down or a channel disappears.
@@ -17,10 +17,10 @@ when a video gets taken down or a channel disappears.
 | Windows | [Download](#) |
 | Linux | [Download](#) |
 
-## What is YTArchiver?
+## What is SlothArchiver?
 
 Videos on the internet aren't permanent — creators delete them, channels get taken
-down, platforms change their terms, and links quietly rot. YTArchiver exists to give
+down, platforms change their terms, and links quietly rot. SlothArchiver exists to give
 you a real, local copy of the videos and audio that matter to you, organized and
 easy to find again, playable straight from the app whether or not you're online.
 
@@ -47,14 +47,14 @@ your own machine.
 
 ## Demos
 
-A quick look at some of the features that make YTArchiver more than just a
+A quick look at some of the features that make SlothArchiver more than just a
 download button. *(Drop a gif or short clip in each spot below — `docs/media/`
 is a good place to keep them, referenced here as `docs/media/<name>.gif`.)*
 
 ### Playlist saving
 
 No more staring at a wall of "Video unavailable" placeholders. Save a playlist
-once and YTArchiver remembers exactly what was on it — title, thumbnail, and
+once and SlothArchiver remembers exactly what was on it — title, thumbnail, and
 order — even for videos that later get pulled, so you always know what you're
 missing, and you can keep the whole thing downloaded locally so you never have
 to find out at all.
@@ -65,7 +65,7 @@ to find out at all.
 
 Tired of a video getting edited, re-uploaded, or quietly censored after the
 fact? Download the original before it changes, and if a newer version comes
-along later, grab that too — YTArchiver keeps both side by side instead of
+along later, grab that too — SlothArchiver keeps both side by side instead of
 overwriting what you already had.
 
 ![Demo: version history](docs/media/version-history.gif)
@@ -73,7 +73,7 @@ overwriting what you already had.
 ### Handles seriously long videos
 
 Thanks to working directly with yt-dlp at a low level instead of a lightweight
-wrapper, YTArchiver can pull down videos that trip up other tools — tested
+wrapper, SlothArchiver can pull down videos that trip up other tools — tested
 successfully on uploads over 9 hours long.
 
 ![Demo: large video download](docs/media/large-video-download.gif)
@@ -105,7 +105,7 @@ all straight from the library view, no other software required.
 ### Download from more than just YouTube
 
 SoundCloud, TikTok, Instagram, Facebook, Dailymotion, and more — paste a link
-from any of them and YTArchiver figures out the platform automatically and
+from any of them and SlothArchiver figures out the platform automatically and
 gets you a download, no separate tool needed for each site.
 
 ![Demo: multi-platform downloads](docs/media/multi-platform-downloads.gif)
@@ -113,21 +113,21 @@ gets you a download, no separate tool needed for each site.
 ### Bulk downloading with live progress
 
 Paste a whole playlist or a big list of links at once and walk away —
-YTArchiver works through them several at a time in the background, with
+SlothArchiver works through them several at a time in the background, with
 per-item progress, retry, and skip, so one bad link never holds up the rest.
 
 ![Demo: bulk downloading](docs/media/bulk-downloading.gif)
 
 ## How it works
 
-YTArchiver runs everything locally on your computer — there's no server, no
+SlothArchiver runs everything locally on your computer — there's no server, no
 account, and nothing about your library ever leaves your machine unless you move it
 yourself. For a deeper, more technical look at how the app is put together, see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## FAQ
 
-#### Is YTArchiver free?
+#### Is SlothArchiver free?
 Yes, it's free and open source.
 
 #### Is it legal to download videos with this app?
@@ -137,10 +137,10 @@ This software is designed to work with yt-dlp and its functionalities without ad
 
 >TL;DR: It's a gray area as far as YouTube is concerned but not illegal.
 
-#### What platforms does YTArchiver support downloading from?
+#### What platforms does SlothArchiver support downloading from?
 At time of writing we support YouTube for downloads, library, and playlists. We support TikTok, Instagram, Twitter, Facebook, SoundCloud, and Dailymotion for pure downloads.
 
-#### What operating systems does YTArchiver run on?
+#### What operating systems does SlothArchiver run on?
 Currently we support Mac, Linux, and Windows. This is a solo dev operation and I manually create the executables per system, so I expect there could be OS issues as more people try out the software on their systems. If you experience any issues, let me know by raising an issue and detailing it there.
 
 #### Where are my downloaded videos stored?
@@ -160,13 +160,13 @@ For YouTube and Dailymotion, all of the video qualities that yt-dlp supports wil
 #### Can I download an entire playlist?
 For YouTube, yes. As of now this is only supported as part of a bulk add feature which saves both the playlist and the video data in your library. For other platforms it's not supported.
 
-#### Does YTArchiver collect any of my data?
+#### Does SlothArchiver collect any of my data?
 No, I designed the app precisely not to collect or require data anywhere whenever possible. That is also the reason the library management is done via pure filesystem instead of depending on a local database.
 
 #### Why does the app need to download extra components on first run?
 These components are required for the low-level features of the app, which include yt-dlp and Deno, which support the download for videos and metadata. And ffmpeg, which supports the extra features like converting your download to MP3 or making clips inside the library view.
 
-#### How do I update YTArchiver?
+#### How do I update SlothArchiver?
 Come back to this page and click on the download button for your platform. It's also worth noting that the "update yt-dlp" feature inside the app doesn't update the archiver app itself, only the low-level download library, and you might need to make sure you have both of them properly updated before using the app.
 
 #### A download is failing or I'm getting a "bot check" error — what do I do?

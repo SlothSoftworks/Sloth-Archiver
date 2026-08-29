@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something in yt-archiver isn't working as expected
+about: Something in sloth-archiver isn't working as expected
 title: ""
 labels: bug
 assignees: ""
@@ -22,7 +22,7 @@ assignees: ""
 
 ## Environment
 
-- yt-archiver version: <!-- Options tab, or package.json if running from source -->
+- sloth-archiver version: <!-- Options tab, or package.json if running from source -->
 - OS: <!-- macOS / Windows, version -->
 - Install method: <!-- packaged .dmg/.exe installer, or running from source -->
 

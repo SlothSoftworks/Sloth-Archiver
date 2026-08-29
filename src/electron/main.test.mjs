@@ -23,7 +23,7 @@ import path from 'path';
 // from it, it doesn't read/write anything there yet). The real directory is
 // created for real just below, before any test runs.
 const electronMocks = vi.hoisted(() => {
-  const mockUserDataDir = `${process.env.TMPDIR || '/tmp'}/yt-archiver-test-userdata-${process.pid}-${Date.now()}`;
+  const mockUserDataDir = `${process.env.TMPDIR || '/tmp'}/sloth-archiver-test-userdata-${process.pid}-${Date.now()}`;
   return {
     mockUserDataDir,
     app: {
@@ -288,7 +288,7 @@ describe('buildDownloadArgs', () => {
 
 describe('findFinalFile', () => {
   it('returns the most recently modified file matching the output path prefix', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yt-archiver-test-final-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-final-'));
     try {
       const outputPath = path.join(dir, 'video');
       fs.writeFileSync(`${outputPath}.mp4`, 'first');
@@ -301,14 +301,14 @@ describe('findFinalFile', () => {
   });
 
   it('falls back to the given outputPath when the directory does not exist', () => {
-    const outputPath = path.join(os.tmpdir(), 'yt-archiver-test-missing-dir', 'video.mp4');
+    const outputPath = path.join(os.tmpdir(), 'sloth-archiver-test-missing-dir', 'video.mp4');
     expect(findFinalFile(outputPath)).toBe(outputPath);
   });
 });
 
 describe('findRawDownloadedFile', () => {
   it('finds the single raw.* file in the given directory', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yt-archiver-test-raw-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-raw-'));
     try {
       fs.writeFileSync(path.join(dir, 'raw.webm'), 'data');
       expect(findRawDownloadedFile(dir)).toBe(path.join(dir, 'raw.webm'));
@@ -318,7 +318,7 @@ describe('findRawDownloadedFile', () => {
   });
 
   it('throws when no raw.* file exists', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yt-archiver-test-raw-empty-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-raw-empty-'));
     try {
       expect(() => findRawDownloadedFile(dir)).toThrow(/no raw downloaded file was found/);
     } finally {

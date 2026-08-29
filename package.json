@@ -1,12 +1,12 @@
 {
-  "name": "yt-archiver",
+  "name": "sloth-archiver",
   "private": true,
   "version": "0.17.0",
   "type": "module",
   "main": "dist/electron/main.mjs",
   "build": {
-    "appId": "com.supersam.ytarchiver.app",
-    "productName": "YTArchiver",
+    "appId": "com.supersam.slotharchiver.app",
+    "productName": "SlothArchiver",
     "files": [
       "dist/electron/**/*",
       "dist/renderer/**/*",
