@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/electron/main.mjs",
   "build": {
-    "appId": "com.supersam.slotharchiver.app",
+    "appId": "com.lltrash.slotharchiver.app",
     "productName": "SlothArchiver",
     "files": [
       "dist/electron/**/*",
