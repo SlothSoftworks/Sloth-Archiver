@@ -147,6 +147,30 @@ export function recordClip({ libraryDir, videoDir, fileName, title, durationSeco
     return clip;
 }
 
+// Updates a clip's fileName/durationSeconds in the manifest after
+// main.mjs's convertClip handler has already converted the file in place and
+// swapped it into position on disk -- this call is purely the JSON-side
+// update, mirroring recordClip's own "ffmpeg already wrote the bytes, this
+// just updates the JSON side" split. Throws on a fileName collision with a
+// *different* clip, same rule and message as recordClip.
+export function updateClipFile({ libraryDir, videoDir, clipId, fileName, durationSeconds }) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
+        throw new Error('Refusing to update a clip outside the configured library folder.');
+    }
+    const manifest = readClipsManifest(resolvedVideoDir);
+    const clip = manifest.find((c) => c.id === clipId);
+    if (!clip) {
+        throw new Error('Clip not found.');
+    }
+    if (manifest.some((c) => c.id !== clipId && c.fileName === fileName)) {
+        throw new Error('A clip with this name already exists for this video.');
+    }
+    const updated = { ...clip, fileName, durationSeconds };
+    writeClipsManifest(resolvedVideoDir, manifest.map((c) => (c.id === clipId ? updated : c)));
+    return updated;
+}
+
 // Mirrors deleteLibraryEntry's containment + rmSync pattern, scoped to one
 // clip file plus its manifest entry. Clips are identified by generated id,
 // not fileName, so callers never need to escape a user-entered filename.

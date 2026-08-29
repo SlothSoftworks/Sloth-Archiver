@@ -92,6 +92,13 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // convert, plain start/end text fields for the clip trim, no scrubber.
   const [convertFormat, setConvertFormat] = useState('mp4');
   const [otherFormatInput, setOtherFormatInput] = useState('');
+  // Default off: the fast remux-first path is correct often enough (most
+  // sources already match the format they're being converted to) that
+  // defaulting to a slower forced re-encode for everyone would be the wrong
+  // tradeoff -- this is an opt-in fix for the specific case where a remux
+  // would silently keep a mismatched codec (e.g. AV1 remuxed into ".webm"
+  // instead of real VP9), not a default-on safety net.
+  const [forceReencode, setForceReencode] = useState(false);
   const [clipStart, setClipStart] = useState('');
   const [clipEnd, setClipEnd] = useState('');
   // Backs the clip fields' "pick from player" buttons -- LibraryVideoPlayer
@@ -113,7 +120,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // the same way downloadTarget gates video-vs-audio above, but on an
   // entirely separate hook/channel: these run against an already-downloaded
   // file, not a fresh yt-dlp download (see main.mjs's ffmpegUtilityProgress).
-  const [ffmpegAction, setFfmpegAction] = useState<'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | 'extractClipMp3' | null>(null);
+  const [ffmpegAction, setFfmpegAction] = useState<'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | 'extractClipMp3' | 'convertClip' | null>(null);
   const [ffmpegProgress, setFfmpegProgress] = useState(0);
   const [ffmpegError, setFfmpegError] = useState<string | null>(null);
   // Separate from ffmpegError -- embedding is fast enough that a plain
@@ -394,6 +401,42 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setFfmpegAction(null);
   };
 
+  // "Save into new file" mirrors handleExtractClipMp3's export-outside-the-library
+  // flow (a save dialog + the existing generic convertFormat IPC, no clips.json
+  // involvement); leaving it unchecked converts the clip in place instead --
+  // window.electronAPI.convertClip does the temp-file-then-rename swap on the
+  // main process side and returns the clip's updated manifest record (same
+  // id/title/createdAt, new fileName/durationSeconds) to merge into local state.
+  const handleConvertClip = async (clip: LibraryClip, format: string, saveAsNewFile: boolean, forceReencode: boolean) => {
+    const inputPath = `${video.videoDir}/clips/${clip.fileName}`;
+    if (saveAsNewFile) {
+      const result = await window.electronAPI.saveExportedFile({
+        defaultName: `${clip.title}.${format}`,
+        extensions: [format],
+        inputPath,
+      });
+      if (result.canceled || !result.filePath) return;
+      setFfmpegAction('convertClip');
+      setFfmpegError(null);
+      setFfmpegProgress(0);
+      const res = await window.electronAPI.convertFileFormat({ inputPath, outputPath: result.filePath, format, forceReencode });
+      if (!res.success) setFfmpegError(res.message || 'Failed to convert.');
+      setFfmpegAction(null);
+      return;
+    }
+    setFfmpegAction('convertClip');
+    setFfmpegError(null);
+    setFfmpegProgress(0);
+    const res = await window.electronAPI.convertClip({ videoDir: video.videoDir, clipId: clip.id, format, forceReencode });
+    if (!res.success || !res.clip) {
+      setFfmpegError(res.message || 'Failed to convert.');
+      setFfmpegAction(null);
+      return;
+    }
+    setClips((prev) => prev.map((c) => (c.id === clip.id ? res.clip! : c)));
+    setFfmpegAction(null);
+  };
+
   const handleExtractMp3 = async () => {
     if (!metadata.downloadedFilePath) return;
     const result = await window.electronAPI.saveExportedFile({
@@ -423,7 +466,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setFfmpegAction('convert');
     setFfmpegError(null);
     setFfmpegProgress(0);
-    const res = await window.electronAPI.convertFileFormat({ inputPath: metadata.downloadedFilePath, outputPath: result.filePath, format: targetFormat });
+    const res = await window.electronAPI.convertFileFormat({ inputPath: metadata.downloadedFilePath, outputPath: result.filePath, format: targetFormat, forceReencode });
     if (!res.success) setFfmpegError(res.message || 'Failed to convert.');
     setFfmpegAction(null);
   };
@@ -456,7 +499,9 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setSaveClipDialogOpen(true);
   };
 
-  const handleSubmitSaveClip = async ({ clipName, start, end, format }: { clipName: string; start: string; end: string; format: string }) => {
+  const handleSubmitSaveClip = async (
+    { clipName, start, end, format, forceReencode }: { clipName: string; start: string; end: string; format: string; forceReencode: boolean },
+  ) => {
     if (!metadata.downloadedFilePath) return;
     setSavingClip(true);
     setSaveClipError(null);
@@ -468,6 +513,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
       end,
       format,
       clipName,
+      forceReencode,
     });
     setSavingClip(false);
     if (!res.success || !res.clip) {
@@ -694,6 +740,12 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           extractMp3Disabled={ffmpegAction !== null}
           extractMp3Progress={ffmpegProgress}
           extractMp3Error={ffmpegError}
+          convertFormatOptions={convertFormatOptions}
+          onConvertClip={handleConvertClip}
+          convertingClip={ffmpegAction === 'convertClip'}
+          convertClipDisabled={ffmpegAction !== null}
+          convertClipProgress={ffmpegProgress}
+          convertClipError={ffmpegError}
         />
       ) : (
       /* Keyed on the selected version so switching versions forces a full
@@ -765,6 +817,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 convertFormatOptions={convertFormatOptions}
                 otherFormatInput={otherFormatInput}
                 setOtherFormatInput={setOtherFormatInput}
+                forceReencode={forceReencode}
+                setForceReencode={setForceReencode}
                 clipStart={clipStart}
                 setClipStart={setClipStart}
                 clipEnd={clipEnd}

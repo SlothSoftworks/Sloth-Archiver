@@ -76,7 +76,7 @@ describe('SaveClipDialog', () => {
     await user.click(screen.getByRole('option', { name: 'MP4' }));
     await user.click(screen.getByRole('button', { name: 'Save clip' }));
 
-    expect(onSubmit).toHaveBeenCalledWith({ clipName: 'New Clip', start: '00:00:10', end: '00:00:20', format: 'mp4' });
+    expect(onSubmit).toHaveBeenCalledWith({ clipName: 'New Clip', start: '00:00:10', end: '00:00:20', format: 'mp4', forceReencode: false });
   });
 
   it('shows a progress bar while submitting', () => {

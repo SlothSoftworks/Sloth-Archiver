@@ -1,7 +1,7 @@
 {
   "name": "sloth-archiver",
   "private": true,
-  "version": "0.17.0",
+  "version": "0.17.2",
   "type": "module",
   "main": "dist/electron/main.mjs",
   "build": {
