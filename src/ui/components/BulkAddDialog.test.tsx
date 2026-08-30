@@ -64,6 +64,26 @@ describe('BulkAddDialog', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
+  it('expands a playlist line and keeps a plain video line standalone when both are pasted together', async () => {
+    const user = userEvent.setup();
+    (window.electronAPI.fetchPlaylistEntries as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true, playlistId: 'PL1', entries: [{ id: 'v1', title: 'One', url: 'https://youtu.be/v1', thumbnailUrl: 't', uploadDate: null }],
+    });
+    const { onClose } = renderDialog();
+
+    await user.type(
+      screen.getByPlaceholderText(/youtube\.com\/playlist/),
+      'https://www.youtube.com/watch?v=RrmWFjnAP2E&list=PL1{enter}https://www.youtube.com/watch?v=oiuyhxp4w9I&rco=1',
+    );
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    await waitFor(() => expect(window.electronAPI.fetchPlaylistEntries).toHaveBeenCalledWith('https://www.youtube.com/watch?v=RrmWFjnAP2E&list=PL1'));
+    // Only the playlist line is expanded via fetchPlaylistEntries -- the
+    // plain video line is never passed to it.
+    expect(window.electronAPI.fetchPlaylistEntries).not.toHaveBeenCalledWith(expect.stringContaining('oiuyhxp4w9I'));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
   it('shows an error and stays open when fetching the playlist fails', async () => {
     const user = userEvent.setup();
     (window.electronAPI.fetchPlaylistEntries as ReturnType<typeof vi.fn>).mockResolvedValue({ success: false, message: 'blocked' });

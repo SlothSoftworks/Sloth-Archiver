@@ -138,6 +138,7 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
 
   const handleConfirmBulkDownload = (targetResolution: string) => {
     const isMp3 = targetResolution.toLowerCase() === 'mp3';
+    const playlistId = selectedPlaylistId || undefined;
     const entries: BulkAddEntry[] = selectedEntries.map((entry) => {
       const videoDir = selectedPlaylist?.localFiles[entry.videoId];
       const video = videoDir ? videoByDir.get(videoDir) : undefined;
@@ -153,13 +154,14 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
           epoch: video.latestEpoch,
           resolution: isMp3 ? 'mp3' : targetResolution,
           kind: isMp3 ? 'audio' : 'video',
+          playlistId,
         };
       }
       // Not yet added -- the normal fetch/add/download path, exactly like
       // pasting this same playlist into Bulk Add today.
-      return { id: entry.videoId, title: entry.title, url: entry.url, videoId: entry.videoId };
+      return { id: entry.videoId, title: entry.title, url: entry.url, videoId: entry.videoId, playlistId };
     });
-    start(entries, { download: true, targetResolution, playlistId: selectedPlaylistId || undefined });
+    start(entries, { download: true, targetResolution });
     setBulkDownloadDialogOpen(false);
     clearSelection();
   };

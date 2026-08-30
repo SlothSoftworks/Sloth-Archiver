@@ -69,6 +69,22 @@ describe('DownloaderScreen', () => {
     expect(await screen.findByRole('link', { name: 'My Great Video' })).toBeInTheDocument();
   });
 
+  it('clears the loaded video when the URL is deleted, instead of misrendering it as another platform', async () => {
+    const user = userEvent.setup();
+    (window.electronAPI.getVideoInfoPython as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true, data: { response: videoResponse, fromCache: false },
+    });
+    renderScreen();
+    const urlField = screen.getByLabelText('URL');
+    await user.type(urlField, videoResponse.originalUrl);
+    expect(await screen.findByRole('link', { name: 'My Great Video' })).toBeInTheDocument();
+
+    await user.clear(urlField);
+
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'My Great Video' })).not.toBeInTheDocument(), { timeout: 2000 });
+    expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
+  });
+
   it('shows a fetch error message instead of a card when the lookup fails', async () => {
     const user = userEvent.setup();
     (window.electronAPI.getVideoInfoPython as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('bot check'));

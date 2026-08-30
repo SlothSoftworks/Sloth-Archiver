@@ -17,6 +17,11 @@ export type BulkAddEntry = {
   // the Library tab's bulk-select "Download selected" action; the
   // URL/playlist-paste flow (BulkAddDialog) never sets these.
   videoDir?: string; epoch?: string; resolution?: string; kind?: 'video' | 'audio';
+  // Set per-entry (not batch-wide) so one bulk-add submission can mix
+  // multiple playlists' entries with plain standalone video links --
+  // BulkAddDialog tags each expanded playlist's own entries with its own
+  // playlistId rather than assuming the whole batch came from one playlist.
+  playlistId?: string;
 };
 
 export type BulkAddItem = {
@@ -44,13 +49,13 @@ export type BulkAddItem = {
   // (see src/electron/downloadErrors.mjs) -- status stays 'downloading'
   // throughout, this is purely a UI hint ("Retrying...").
   isRetrying?: boolean;
+  // Carried over from BulkAddEntry.playlistId -- set when this item came
+  // from an expanded playlist link, so processItem can patch that specific
+  // playlist's saved snapshot with this item's real info as it's fetched.
+  playlistId?: string;
 };
 
-// playlistId is set only when this batch came from a single playlist link
-// (BulkAddDialog) -- lets processItem below patch that playlist's saved
-// snapshot with each item's real info as it's fetched, instead of leaving it
-// stuck with whatever the cheap flat-listing initially guessed.
-type StartOptions = { download: boolean; targetResolution: string; playlistId?: string };
+type StartOptions = { download: boolean; targetResolution: string };
 
 // Derived from the item's own stashed fields (not a separate flag, which
 // could drift) -- 'download' means the library entry already exists and
@@ -272,10 +277,10 @@ function useBulkAddQueueState() {
       // snapshot now, so it survives even if this video later goes
       // unavailable. Best-effort: never lets a failure here interrupt the
       // actual bulk-add item.
-      if (optionsRef.current.playlistId) {
+      if (item.playlistId) {
         try {
           await window.electronAPI.enrichPlaylistEntry({
-            playlistId: optionsRef.current.playlistId,
+            playlistId: item.playlistId,
             videoId: videoInfo.id,
             title: videoInfo.fullTitle || videoInfo.title,
             uploadDate: videoInfo.uploadDate,
@@ -420,6 +425,7 @@ function useBulkAddQueueState() {
       epoch: entry.epoch,
       resolution: entry.resolution,
       kind: entry.kind,
+      playlistId: entry.playlistId,
       // YouTube's thumbnail CDN URL is a stable, public, unauthenticated
       // pattern keyed on videoId -- free to construct for playlist-sourced
       // entries with no extra fetch; list-sourced entries pick this up once

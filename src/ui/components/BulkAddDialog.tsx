@@ -54,38 +54,36 @@ export default function BulkAddDialog({ open, onClose }: { open: boolean; onClos
     if (!trimmed) return;
     setError(null);
 
-    // A single line that's itself a playlist URL is treated as "fetch the
-    // whole playlist" -- anything else (one or more lines) is treated as an
-    // explicit list of individual video links, comma- or newline-separated.
+    // Each line is classified independently -- a playlist-URL line expands
+    // into that playlist's full entry list (tagged with its own playlistId),
+    // any other line is treated as a single standalone video link. This
+    // lets one submission mix a playlist link with plain video links instead
+    // of only ever recognizing a playlist when it's the sole line pasted.
     const lines = trimmed.split(/[\n,]+/).map((l) => l.trim()).filter(Boolean);
-    const isSinglePlaylist = lines.length === 1 && isPlaylistUrl(lines[0]);
 
-    if (!isSinglePlaylist) {
-      const invalid = lines.filter((l) => !isValidUrl(l));
-      if (invalid.length > 0) {
-        setError(`${invalid.length} of ${lines.length} link(s) aren't valid URLs -- fix or remove them before adding.`);
-        return;
-      }
+    const invalid = lines.filter((l) => !isValidUrl(l));
+    if (invalid.length > 0) {
+      setError(`${invalid.length} of ${lines.length} link(s) aren't valid URLs -- fix or remove them before adding.`);
+      return;
     }
 
     setSubmitting(true);
     try {
-      let entries: BulkAddEntry[];
-      let playlistId: string | undefined;
-      if (isSinglePlaylist) {
-        const result = await window.electronAPI.fetchPlaylistEntries(lines[0]);
-        if (!result.success || !result.entries) {
-          throw new Error(result.message || 'Failed to fetch playlist.');
+      const entryLists = await Promise.all(lines.map(async (line): Promise<BulkAddEntry[]> => {
+        if (!isPlaylistUrl(line)) {
+          return [{ id: line, title: null, url: line }];
         }
-        entries = result.entries.map((e) => ({ ...e, videoId: e.id }));
-        playlistId = result.playlistId;
-      } else {
-        entries = lines.map((url) => ({ id: url, title: null, url }));
-      }
+        const result = await window.electronAPI.fetchPlaylistEntries(line);
+        if (!result.success || !result.entries) {
+          throw new Error(result.message || `Failed to fetch playlist: ${line}`);
+        }
+        return result.entries.map((e) => ({ ...e, videoId: e.id, playlistId: result.playlistId }));
+      }));
+      const entries = entryLists.flat();
       if (entries.length === 0) {
         throw new Error('No videos found.');
       }
-      start(entries, { download, targetResolution, playlistId });
+      start(entries, { download, targetResolution });
       setInput('');
       onClose();
     } catch (err) {

@@ -61,7 +61,16 @@ export default function DownloaderScreen() {
 
   useEffect(() => {
     setVideoInfoError(null);
-    if (debouncedVideoUrl === '') { return; }
+    if (debouncedVideoUrl === '') {
+      // Clearing the search bar must also clear any previously loaded
+      // video -- otherwise the stale videoInfo stays rendered while isYouTube
+      // (derived from the now-empty URL) flips to false, misrendering a
+      // real YouTube video through the generic OtherPlatformDownloadCard.
+      setVideoInfo(null);
+      setVideoInfoFromCache(false);
+      setIsUrlError(false);
+      return;
+    }
     if (isValidUrl(debouncedVideoUrl)) {
       setIsUrlError(false)
       handleGetVideoInfo(debouncedVideoUrl);
