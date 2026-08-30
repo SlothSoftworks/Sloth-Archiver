@@ -5,9 +5,11 @@ import Button from '@mui/material/Button';
 import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
 import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
 import Stack from '@mui/material/Stack';
 import Badge from '@mui/material/Badge';
 import Chip from '@mui/material/Chip';
+import Link from '@mui/material/Link';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Dialog from '@mui/material/Dialog';
@@ -24,7 +26,9 @@ import LibraryScreen from './screens/LibraryScreen';
 import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
 import BulkAddSidePanel, { BulkAddToggleButton } from './components/BulkAddSidePanel';
 import { useLibraryNotification } from './hooks/useLibraryNotifications';
-import ltxImage from '../assets/ltx.jpeg';
+import { useYtdlpUpdater } from './hooks/useYtdlpUpdater';
+
+const REPO_URL = 'https://github.com/lltrash94/SlothArchiver';
 
 const LIBRARY_TAB_INDEX = 1;
 const OPTIONS_TAB_INDEX = 2;
@@ -112,6 +116,15 @@ export function BasicTabs() {
   useEffect(() => {
     window.electronAPI.getAppVersion().then(setAppVersion);
   }, []);
+  // ffmpeg has no separate "check for update" flow (it's only ever replaced
+  // by rebuilding the app itself), so this is fetched directly rather than
+  // through useYtdlpUpdater's update-check machinery -- just for display in
+  // the About dialog below.
+  const [ffmpegVersion, setFfmpegVersion] = useState<string | null>(null);
+  useEffect(() => {
+    window.electronAPI.getFfmpegVersion().then(setFfmpegVersion);
+  }, []);
+  const { currentVersion: ytdlpVersion } = useYtdlpUpdater();
   const { count: libraryNotificationCount, reset: resetLibraryNotifications } = useLibraryNotification();
   // Bumped to force LibraryScreen to remount (see its `key` below) -- every
   // other tab gets this reset for free, since CustomTabPanel only renders a
@@ -181,16 +194,46 @@ export function BasicTabs() {
       <BulkAddSidePanel />
 
       <Dialog open={infoOpen} onClose={() => setInfoOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>About</DialogTitle>
+        <DialogTitle>
+          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+            <span>About</span>
+            <Chip
+              size="small"
+              variant="outlined"
+              label={appVersion ? `v${appVersion}` : 'Version unknown'}
+              sx={{ fontFamily: 'monospace' }}
+            />
+          </Stack>
+        </DialogTitle>
         <DialogContent>
-          <Box
-            component="img"
-            src={ltxImage}
-            alt="LTX"
-            sx={{ width: '100%', borderRadius: 2, mb: 2, display: 'block' }}
-          />
+          <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5, mb: 2 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+              Dependencies
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Chip
+                size="small"
+                variant="outlined"
+                label={ytdlpVersion ? `yt-dlp: ${ytdlpVersion}` : 'yt-dlp version unknown'}
+                sx={{ fontFamily: 'monospace' }}
+              />
+              <Chip
+                size="small"
+                variant="outlined"
+                label={ffmpegVersion ? `ffmpeg: ${ffmpegVersion}` : 'ffmpeg version unknown'}
+                sx={{ fontFamily: 'monospace' }}
+              />
+            </Stack>
+          </Box>
+          <DialogContentText sx={{ mb: 2 }}>
+            Sloth Archiver is under active construction -- features, behavior, and data
+            formats are all still subject to change.
+          </DialogContentText>
           <DialogContentText>
-            Alfa para uso exclusivo de LTX distribuir este software sin permiso resultarà en unos tablazos por qlo.
+            For news and bug reports visit:{' '}
+            <Link href={REPO_URL} target="_blank" rel="noopener noreferrer">
+              {REPO_URL}
+            </Link>
           </DialogContentText>
         </DialogContent>
         <DialogActions>

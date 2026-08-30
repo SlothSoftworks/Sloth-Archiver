@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeYtdlpUpdateProgressListener: () => ipcRenderer.removeAllListeners('ytdlpUpdateProgress'),
     quitApp: () => ipcRenderer.invoke('app:quit'),
     getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
+    getFfmpegVersion: () => ipcRenderer.invoke('system:getFfmpegVersion'),
     deleteVideoInfoCacheEntry: (url) => ipcRenderer.invoke('videoInfoCache:deleteEntry', url),
     getLibraryDir: () => ipcRenderer.invoke('settings:getLibraryDir'),
     setLibraryDir: (dir) => ipcRenderer.invoke('settings:setLibraryDir', dir),

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import MainPage from './MainPage';
 import { LibraryNotificationProvider, useLibraryNotification } from './hooks/useLibraryNotifications';
+import { YtdlpUpdaterProvider } from './hooks/useYtdlpUpdater';
 
 // Each tab's screen is a large, independently-tested component (its own
 // dedicated test file covers it) -- mocked out here so MainPage's tests stay
@@ -25,6 +26,9 @@ beforeEach(() => {
   window.electronAPI = {
     ...window.electronAPI,
     getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
+    getFfmpegVersion: vi.fn().mockResolvedValue('7.0.2'),
+    onYtdlpUpdateProgress: vi.fn(),
+    removeYtdlpUpdateProgressListener: vi.fn(),
   };
 });
 
@@ -39,10 +43,12 @@ function IncrementButton() {
 function renderMainPage() {
   return render(
     <MemoryRouter>
-      <LibraryNotificationProvider>
-        <IncrementButton />
-        <MainPage />
-      </LibraryNotificationProvider>
+      <YtdlpUpdaterProvider>
+        <LibraryNotificationProvider>
+          <IncrementButton />
+          <MainPage />
+        </LibraryNotificationProvider>
+      </YtdlpUpdaterProvider>
     </MemoryRouter>,
   );
 }
@@ -91,10 +97,15 @@ describe('MainPage', () => {
     renderMainPage();
 
     await user.click(screen.getByRole('button', { name: 'About' }));
-    expect(screen.getByText('About')).toBeInTheDocument();
-    expect(screen.getByAltText('LTX')).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('About')).toBeInTheDocument();
+    expect(within(dialog).getByText(/under active construction/)).toBeInTheDocument();
+    expect(within(dialog).getByText('v0.0.0')).toBeInTheDocument();
+    expect(within(dialog).getByText('Dependencies')).toBeInTheDocument();
+    expect(within(dialog).getByText('ffmpeg: 7.0.2')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: /github\.com/ })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(screen.queryByText('LTX', { selector: 'img' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/under active construction/)).not.toBeInTheDocument());
   });
 });

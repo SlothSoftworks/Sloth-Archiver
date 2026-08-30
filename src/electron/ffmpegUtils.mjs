@@ -141,6 +141,25 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
         }
     }
 
+    // ffmpeg's -version output starts with a single banner line like
+    // "ffmpeg version 7.0.2 Copyright (c) 2000-2024 the FFmpeg developers" --
+    // this pulls out just the version token, same idea as
+    // updater.mjs's getCurrentYtdlpVersion for the yt-dlp binary. Used by the
+    // About dialog (MainPage.tsx) so a bug report can name the exact bundled
+    // build, not just "ffmpeg" with no version.
+    function getFfmpegVersion() {
+        return new Promise((resolve) => {
+            const proc = spawn(ffmpegBinaryPath, ['-version']);
+            let stdout = '';
+            proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+            proc.on('error', () => resolve(null));
+            proc.on('close', () => {
+                const match = stdout.match(/^ffmpeg version (\S+)/m);
+                resolve(match ? match[1] : null);
+            });
+        });
+    }
+
     // Per-stream codec info (not just container/duration) -- used by
     // previewCache.mjs to decide whether a non-native file's video/audio
     // codecs are already Chromium-compatible (a fast remux suffices) or need
@@ -218,5 +237,5 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
         }
     }
 
-    return { getMediaDurationSeconds, probeMediaStreams, runFfmpegWithProgress, convertWithFallback, clipAndConvert };
+    return { getMediaDurationSeconds, getFfmpegVersion, probeMediaStreams, runFfmpegWithProgress, convertWithFallback, clipAndConvert };
 }

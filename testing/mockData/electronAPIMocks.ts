@@ -53,6 +53,7 @@ export const electronAPIMock = {
     removeYtdlpUpdateProgressListener: noop,
     quitApp: async () => {},
     getAppVersion: async () => '0.0.0',
+    getFfmpegVersion: async () => '0.0.0',
     deleteVideoInfoCacheEntry: async () => ({ success: true, existed: false }),
     getLibraryDir: async () => ({ libraryDir: '' }),
     setLibraryDir: async () => ({ success: true, libraryDir: '' }),

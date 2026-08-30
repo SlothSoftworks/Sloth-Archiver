@@ -60,6 +60,7 @@ declare global {
             removeYtdlpUpdateProgressListener: () => void
             quitApp: () => Promise<void>
             getAppVersion: () => Promise<string>
+            getFfmpegVersion: () => Promise<string | null>
             deleteVideoInfoCacheEntry: (url: string) => Promise<{ success: boolean; existed: boolean }>
             getLibraryDir: () => Promise<{ libraryDir: string }>
             setLibraryDir: (dir: string) => Promise<{ success: boolean; libraryDir: string }>

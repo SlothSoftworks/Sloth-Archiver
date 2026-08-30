@@ -116,7 +116,7 @@ const { ensureChannelIcon, ensureVideoThumbnail, ensurePlaylistThumbnail } = cre
     ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, onLog: log,
 });
 const ffmpegRunner = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath });
-const { getMediaDurationSeconds, runFfmpegWithProgress, convertWithFallback, clipAndConvert } = ffmpegRunner;
+const { getMediaDurationSeconds, getFfmpegVersion, runFfmpegWithProgress, convertWithFallback, clipAndConvert } = ffmpegRunner;
 
 // Registers app-video:// as a privileged scheme so the Library tab's player
 // can point <video>/<audio> at a downloaded file without loading it into
@@ -1614,6 +1614,12 @@ ipcMain.handle('app:quit', async () => {
 // alpha testers can report exactly which build they're on.
 ipcMain.handle('app:getVersion', async () => {
     return app.getVersion();
+});
+
+// Surfaced the same way as app:getVersion above, for the About dialog's
+// bundled-dependency versions (MainPage.tsx).
+ipcMain.handle('system:getFfmpegVersion', async () => {
+    return getFfmpegVersion();
 });
 
 ipcMain.handle('system:openFileInDirectory', async (e, filepath) => {
