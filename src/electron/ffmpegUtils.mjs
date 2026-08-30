@@ -141,6 +141,35 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
         }
     }
 
+    // Per-stream codec info (not just container/duration) -- used by
+    // previewCache.mjs to decide whether a non-native file's video/audio
+    // codecs are already Chromium-compatible (a fast remux suffices) or need
+    // a real re-encode to preview. Normalizes ffprobe's snake_case fields to
+    // this codebase's own camelCase convention, same as reshapeVideoInfo does
+    // for yt-dlp's raw JSON elsewhere.
+    function probeMediaStreams(filePath) {
+        return new Promise((resolve, reject) => {
+            const proc = spawn(ffprobeBinaryPath, ['-v', 'quiet', '-print_format', 'json', '-show_streams', filePath]);
+            let stdout = '';
+            let stderr = '';
+            proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+            proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+            proc.on('error', reject);
+            proc.on('close', (code) => {
+                if (code !== 0) {
+                    reject(new Error(stderr || `ffprobe exited with code ${code}`));
+                    return;
+                }
+                try {
+                    const streams = JSON.parse(stdout).streams || [];
+                    resolve(streams.map((s) => ({ codecType: s.codec_type, codecName: s.codec_name })));
+                } catch {
+                    reject(new Error('Failed to parse ffprobe stream output'));
+                }
+            });
+        });
+    }
+
     // Clip [start,end] and, optionally, convert format in one pass -- not a
     // trim then a separate convert (two ffmpeg invocations, two temp files).
     // 'source' (or falsy) keeps the source container: fast lossless -c copy
@@ -189,5 +218,5 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
         }
     }
 
-    return { getMediaDurationSeconds, runFfmpegWithProgress, convertWithFallback, clipAndConvert };
+    return { getMediaDurationSeconds, probeMediaStreams, runFfmpegWithProgress, convertWithFallback, clipAndConvert };
 }

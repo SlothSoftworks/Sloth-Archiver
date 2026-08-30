@@ -14,6 +14,7 @@ import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize,
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
+import { ensurePlayablePreview } from './previewCache.mjs';
 import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
 import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
 
@@ -111,7 +112,8 @@ const { readVideoInfoCache, writeVideoInfoCache } = createVideoInfoCache(videoIn
 const { ensureChannelIcon, ensureVideoThumbnail, ensurePlaylistThumbnail } = createThumbnailFetchers({
     ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, onLog: log,
 });
-const { getMediaDurationSeconds, runFfmpegWithProgress, convertWithFallback, clipAndConvert } = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath });
+const ffmpegRunner = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath });
+const { getMediaDurationSeconds, runFfmpegWithProgress, convertWithFallback, clipAndConvert } = ffmpegRunner;
 
 // Registers app-video:// as a privileged scheme so the Library tab's player
 // can point <video>/<audio> at a downloaded file without loading it into
@@ -1256,6 +1258,22 @@ function sendFfmpegUtilityProgress(msg) {
     BrowserWindow.getAllWindows()[0]?.webContents.send('ffmpegUtilityProgress', msg);
 }
 
+// A separate channel from ffmpegUtilityProgress above, not that same channel
+// with a discriminating `type` -- LibraryVideoDetail.tsx already keeps its
+// own always-on, whole-screen-lifetime listener on ffmpegUtilityProgress
+// (for the instrument panel's Convert/Extract-clip/etc. progress), cleaned
+// up via ipcRenderer.removeAllListeners. LibraryVideoPlayer itself needs its
+// own independent subscribe/unsubscribe lifecycle (mounted/unmounted per
+// player instance, not per screen) -- sharing one channel between the two
+// would mean either one's cleanup call silently kills the other's listener
+// too, exactly the bug TD-008 (reports/TechnicalDebt.md) already found and
+// fixed for a different channel. Safe as a single global "one at a time"
+// broadcast here for the same reason ffmpegUtilityProgress already is: only
+// one LibraryVideoPlayer is ever actually mounted at a time in this app.
+function sendPreviewGenerationProgress(percent) {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('previewGenerationProgress', { percent });
+}
+
 // Generic "export a derived file" save dialog -- distinct from
 // dialog:saveVideoFile (hardcoded to video-download filters and the
 // configured download dir) since these exports can be audio, a different
@@ -1287,6 +1305,21 @@ ipcMain.handle('library:extractMp3', async (e, { inputPath, outputPath }) => {
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
+});
+
+// Backs LibraryVideoPlayer's preview-compatibility layer: for a local file
+// whose container/codecs Chromium can't play natively (MKV and friends),
+// generates (or reuses a cached) playback-only .mp4 derivative -- see
+// previewCache.mjs for the remux-vs-reencode decision and cache/invalidation
+// rules. Never touches filePath itself. Progress goes over its own dedicated
+// channel (sendPreviewGenerationProgress above), not ffmpegUtilityProgress --
+// see that function's own comment for why sharing it isn't safe here.
+ipcMain.handle('library:ensurePlayablePreview', async (e, { filePath }) => {
+    return ensurePlayablePreview({
+        filePath,
+        ffmpegRunner,
+        onProgress: sendPreviewGenerationProgress,
+    });
 });
 
 ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, format, forceReencode = false }) => {

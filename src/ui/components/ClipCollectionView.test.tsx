@@ -43,6 +43,9 @@ beforeEach(() => {
   window.electronAPI = {
     ...window.electronAPI,
     deleteClip: vi.fn().mockResolvedValue({ success: true }),
+    ensurePlayablePreview: vi.fn().mockResolvedValue({ success: true, previewPath: '/mock/preview.mp4', generated: false }),
+    onPreviewGenerationProgress: vi.fn(),
+    removePreviewGenerationProgressListener: vi.fn(),
   };
 });
 
@@ -54,13 +57,17 @@ describe('ClipCollectionView', () => {
     expect(screen.getByText('WEBM')).toBeInTheDocument();
   });
 
-  it('renders every clip with title and formatted duration, and plays the first by default', () => {
+  it('renders every clip with title and formatted duration, and plays the first by default', async () => {
     const clips = [makeClip(), makeClip({ id: 'clip2', fileName: 'Clip Two.mp4', title: 'Clip Two', durationSeconds: 65 })];
     const { container } = renderView({ clips });
     expect(screen.getByText('Clip One')).toBeInTheDocument();
     expect(screen.getByText('Clip Two')).toBeInTheDocument();
     expect(screen.getByText(/00:01:05/)).toBeInTheDocument();
-    expect(container.querySelector('video')).toHaveAttribute('src', expect.stringContaining('Clip%20One.mp4'));
+    // Vidstack assigns the playable source asynchronously, as a <source>
+    // child rather than a `src` attribute directly on <video>.
+    await waitFor(() => {
+      expect(container.querySelector('video source')).toHaveAttribute('src', expect.stringContaining('Clip%20One.mp4'));
+    });
   });
 
   it('swaps the active clip on click', async () => {
@@ -68,7 +75,9 @@ describe('ClipCollectionView', () => {
     const clips = [makeClip(), makeClip({ id: 'clip2', fileName: 'Clip Two.mp4', title: 'Clip Two' })];
     const { container } = renderView({ clips });
     await user.click(screen.getByText('Clip Two'));
-    expect(container.querySelector('video')).toHaveAttribute('src', expect.stringContaining('Clip%20Two.mp4'));
+    await waitFor(() => {
+      expect(container.querySelector('video source')).toHaveAttribute('src', expect.stringContaining('Clip%20Two.mp4'));
+    });
   });
 
   it('deletes a clip via the confirm dialog and updates the list', async () => {

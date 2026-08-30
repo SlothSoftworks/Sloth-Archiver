@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { previewCachePathFor } from './previewCache.mjs';
 import {
   sanitizeForFilesystem,
   channelFolderName,
@@ -286,12 +287,20 @@ describe('deleteLocalFiles', () => {
     recordLibraryDownload({ videoDir: first.videoDir, epoch: firstEpoch, filePath: firstAudioFile, kind: 'audio' });
     recordLibraryDownload({ videoDir: first.videoDir, epoch: secondEpoch, filePath: secondVideoFile, resolution: '720', format: 'mp4' });
 
+    // A leftover preview-cache derivative (e.g. from a prior mkv preview)
+    // must not survive its source file being deleted -- see
+    // previewCachePathFor's own callers in deleteLocalFiles.
+    const firstVideoPreview = previewCachePathFor(firstVideoFile);
+    fs.mkdirSync(path.dirname(firstVideoPreview), { recursive: true });
+    fs.writeFileSync(firstVideoPreview, 'fake preview bytes');
+
     const result = deleteLocalFiles({ libraryDir, videoDir: first.videoDir });
 
     expect(result.filesDeleted).toBe(3);
     expect(fs.existsSync(firstVideoFile)).toBe(false);
     expect(fs.existsSync(firstAudioFile)).toBe(false);
     expect(fs.existsSync(secondVideoFile)).toBe(false);
+    expect(fs.existsSync(firstVideoPreview)).toBe(false);
     // Entries themselves (metadata.json, epoch folders) stay -- only the
     // media files and their metadata pointers are gone.
     expect(fs.existsSync(first.epochDir)).toBe(true);
@@ -352,18 +361,28 @@ describe('clips (recordClip / listClips / deleteClip)', () => {
     expect(listClips({ libraryDir, videoDir })).toEqual([]);
   });
 
-  it('deleteClip removes the file and the manifest entry', () => {
+  it('deleteClip removes the file, its preview-cache derivative, and the manifest entry', () => {
     const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
     const clipPath = buildClipFilePath(videoDir, 'My Clip', 'mp4');
     fs.mkdirSync(path.dirname(clipPath), { recursive: true });
     fs.writeFileSync(clipPath, 'fake clip bytes');
     const clip = recordClip({ libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 1 });
+    // A second, still-remaining clip so the clipsDir itself survives below --
+    // isolates this assertion to the single-file preview cleanup, distinct
+    // from the "whole folder removed" case covered separately below.
+    const otherClipPath = buildClipFilePath(videoDir, 'Other Clip', 'mp4');
+    fs.writeFileSync(otherClipPath, 'fake clip bytes');
+    recordClip({ libraryDir, videoDir, fileName: path.basename(otherClipPath), title: 'Other Clip', durationSeconds: 1 });
+    const clipPreview = previewCachePathFor(clipPath);
+    fs.mkdirSync(path.dirname(clipPreview), { recursive: true });
+    fs.writeFileSync(clipPreview, 'fake preview bytes');
 
     const result = deleteClip({ libraryDir, videoDir, clipId: clip.id });
 
     expect(result.success).toBe(true);
     expect(fs.existsSync(clipPath)).toBe(false);
-    expect(listClips({ libraryDir, videoDir })).toEqual([]);
+    expect(fs.existsSync(clipPreview)).toBe(false);
+    expect(listClips({ libraryDir, videoDir }).map((c) => c.id)).not.toContain(clip.id);
   });
 
   it('deleteClip removes the whole clips/ folder (and manifest) when it was the last clip', () => {

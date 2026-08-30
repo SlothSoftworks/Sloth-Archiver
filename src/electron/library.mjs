@@ -2,6 +2,7 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import { previewCachePathFor } from './previewCache.mjs';
 
 // Windows reserves these as device names -- CON, PRN.txt, con, etc. all refer
 // to the device, not an ordinary file/folder, regardless of case or extension.
@@ -186,6 +187,11 @@ export function deleteClip({ libraryDir, videoDir, clipId }) {
         return { success: false };
     }
     fs.rmSync(path.join(clipsDir, clip.fileName), { force: true });
+    // Orphaned otherwise if this clip ever needed a preview derivative (e.g.
+    // saved in its source format and that format wasn't natively playable) --
+    // the whole-clipsDir removal below already covers the "last clip"
+    // case, this covers deleting one of several.
+    fs.rmSync(previewCachePathFor(path.join(clipsDir, clip.fileName)), { force: true });
     const remaining = manifest.filter((c) => c.id !== clipId);
     if (remaining.length === 0) {
         // No clips left -- remove the whole clips/ folder (manifest included)
@@ -418,6 +424,10 @@ export function deleteLocalFiles({ libraryDir, videoDir }) {
         let changed = false;
         if (metadata.downloadedFilePath && fs.existsSync(metadata.downloadedFilePath)) {
             fs.rmSync(metadata.downloadedFilePath, { force: true });
+            // Orphaned otherwise: previewCache.mjs's cache-hit check only
+            // ever compares against a source file that, from here on, no
+            // longer exists to invalidate against.
+            fs.rmSync(previewCachePathFor(metadata.downloadedFilePath), { force: true });
             filesDeleted++;
         }
         if (metadata.downloadedFilePath) {

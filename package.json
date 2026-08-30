@@ -1,7 +1,7 @@
 {
   "name": "sloth-archiver",
   "private": true,
-  "version": "0.19.0",
+  "version": "0.20.0",
   "type": "module",
   "main": "dist/electron/main.mjs",
   "build": {
@@ -82,6 +82,7 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.3.11",
     "@mui/material": "^7.3.11",
+    "@vidstack/react": "^1.15.6",
     "dayjs": "^1.11.13",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
