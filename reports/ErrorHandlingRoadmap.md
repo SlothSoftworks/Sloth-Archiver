@@ -53,16 +53,62 @@ tree-kill path (`taskkill /T /F`) needs a tester to confirm no orphaned `ffmpeg`
   `onLog`, same pattern as `updater.mjs`).
 
 ## Phase 3 — YouTube bot-block strategy escalation
-**Status: not started**
+**Status: not started — scoped in more detail below after inspecting Arroxy's actual source**
 
 Deferred out of Phase 1/2 because it needs live adversarial testing against a moving
-target (YouTube's bot-protection), not just code review. Per `ErrorHandling.md`
-section 6: on a `botBlock` classification, escalate strategy rather than blind-retry
-— attempt with a fresh auth token, mint a new token and retry once if still blocked,
-then drop the token requirement entirely for a less-restricted fallback path. Also
-covers: bandwidth throttling on real downloads (not probes) as an anti-detection
-lever, and surfacing to the user whenever a degraded fallback path was used rather
-than silently accepting it.
+target (YouTube's bot-protection), not just code review.
+
+`ErrorHandling.md` section 6 describes this at the "auth token" level in the abstract.
+The original plan assumed our own equivalent lever would be simple: switch yt-dlp's
+`--extractor-args youtube:player_client=...` on a `botBlock` and retry. Having read
+Arroxy's actual source (a local clone, not just its own write-up of itself), the real
+mechanism is bigger than that assumption, and worth documenting precisely before
+deciding whether/how much of it to build:
+
+**What Arroxy actually does (not a login — an anonymous PoToken scrape):**
+- `TokenService`/`HiddenWindowTokenProvider` spawn a hidden (`show:false`) real
+  `BrowserWindow` pointed at `https://www.youtube.com` as an anonymous visitor — no
+  account, no credentials.
+- It polls that hidden page's own client-side JS for an obfuscated global YouTube
+  ships in its bundle (currently named `bevasrs.wpc` — their own code comments call a
+  missing find "the canary for the scrape just broke," since the real name changes
+  whenever YouTube reshuffles their JS), then calls into it via `executeJavaScript` to
+  mint a **PoToken (Proof-of-Origin Token)**, bound to the anonymous session's
+  `VISITOR_DATA` (also read straight off the page's `window.ytcfg`) or the target
+  video ID, with its own backoff loop for a `SDF:notready` transient state.
+- The minted token + visitor data get passed to yt-dlp as
+  `--extractor-args "youtube:po_token=web.gvs+<token>;visitor_data=<data>"`. Tokens
+  are cached for ~5 hours (within the token's real ~6h lifetime).
+- **The actual 3-step ladder** (`invokeWithRetry`, not the abstract description in
+  `ErrorHandling.md`): (0) mint-or-reuse-cached PoT, try. (1) if `botBlock`, force a
+  fresh mint (invalidate the cache first) and retry once. (2) if still `botBlock` (or
+  if the very first mint attempt threw outright — hidden window failed, scrape
+  broke), drop PoT entirely and use
+  `--extractor-args "youtube:player_client=default,-web,-web_safari"` — explicitly
+  excluding the client variants that require a PoT — as a final, unauthenticated,
+  possibly-lower-quality/availability attempt.
+- Gated per-site (only YouTube sets `needsPotToken: true`) and skipped for
+  playlist-enumeration probes specifically, because the accompanying `visitor_data`
+  param silently caps YouTube tab pagination at 100 entries regardless of
+  `--playlist-end` — a real tradeoff they hit and documented in their own code.
+- Also confirmed: bandwidth throttling (`--limit-rate`) is applied only to real media
+  downloads, never probes or subtitle sidecar pulls — matches `ErrorHandling.md`'s
+  lesson #7 as described.
+
+**Why this changes the scope of this phase:** the no-PoT player-client fallback (their
+final step) is a small, low-maintenance change — plausibly the same one we'd already
+sketched. The PoT scrape (their steps 0-1, and the actual payoff of the ladder) is a
+materially bigger and more fragile piece of engineering: it means reverse-engineering
+and continuously tracking an obfuscated YouTube global that can silently rename itself
+on any client-side deploy, plus running and maintaining a persistent hidden
+Electron window. That's a real, open-ended maintenance cost, not a one-time
+implementation.
+
+**Open decision, to resume from here:** build the full PoT-scrape mechanism (higher
+potential payoff, ongoing reverse-engineering maintenance burden), or ship just the
+no-PoT `player_client` fallback as a smaller, lower-risk first iteration and revisit
+the PoT scrape later only if that alone proves insufficient. Not yet decided —
+picking this up is the next conversation.
 
 ## Phase 4 — Backlog
 **Status: not started, no immediate driver**
