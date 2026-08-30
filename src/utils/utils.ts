@@ -98,5 +98,16 @@ function getBestDownloadedQuality(epochs: { metadata: LibraryVideoMetadata }[]):
   return null;
 }
 
-export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality };
+// Electron's ipcRenderer.invoke wraps any rejected IPC handler's error in a
+// generic "Error invoking remote method '<channel>': Error: <message>"
+// wrapper before it reaches the renderer -- an implementation detail of the
+// IPC bridge itself, not something worth showing the user (e.g. every
+// getVideoInfoPython failure was displaying that wrapper verbatim instead of
+// the actual classified message underneath). Strips it down to just the
+// real message; a no-op on any string that doesn't have that shape.
+function cleanElectronErrorMessage(message: string): string {
+  return message.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '');
+}
+
+export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, cleanElectronErrorMessage };
 

@@ -78,4 +78,5 @@ export const electronAPIPythonDownloadMock = {
     startDownloadPython: noop,
     onProgressUpdate: noop,
     removeProgressListener: noop,
+    cancelDownload: noop,
 }

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { spawn } from 'child_process';
 import { isYouTubeUrl } from './utils/youtube.mjs';
+import { ERROR_KINDS, classifyDownloadError } from './downloadErrors.mjs';
 
 // Matches runFfmpegWithProgress's own '-b:a 192k' for the MP3 extraction
 // pass -- the estimate has to agree with what really gets encoded.
@@ -103,30 +104,15 @@ export function isDeadVideoInfo(response) {
     return false;
 }
 
-// Matches yt-dlp's own real error strings for a genuinely dead video.
-// Deliberately distinct from a bot-check failure (e.g. "Sign in to confirm
-// you're not a bot"), which is a transient request-level block, not a fact
-// about the video itself.
-const DEAD_VIDEO_ERROR_PATTERNS = [
-    /private video/i,
-    /video (is |has been )?(unavailable|removed|deleted)/i,
-    /this video is no longer available/i,
-    /video does not exist/i,
-    /account associated with this video has been terminated/i,
-    /removed by the uploader/i,
-    /removed for violating/i,
-    /copyright grounds/i,
-    /content is not available/i,
-    /members-only|join this channel/i,
-];
-
 // getVideoInfoPython's main fetch always passes --ignore-no-formats-error,
 // which swallows yt-dlp's real error message entirely -- exit 0, empty
-// stderr, degraded JSON, whether the cause is a private/deleted video or a
-// bot-check block. This makes one extra, short-lived call *without* that
-// flag, purely to read yt-dlp's real error string -- only triggered on the
-// already-unusual "formats came back empty" path for a YouTube URL.
-function classifyDeadYouTubeVideo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs }) {
+// stderr, degraded JSON, whether the cause is a private/deleted video, an
+// age/geo/login restriction, or a bot-check block. This makes one extra,
+// short-lived call *without* that flag, purely to read yt-dlp's real error
+// string and run it through the same classifier the download path uses
+// (src/electron/downloadErrors.mjs) -- only triggered on the already-unusual
+// "formats came back empty" path for a YouTube URL.
+function classifyEmptyFormatsFailure(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs }) {
     return new Promise((resolve) => {
         const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url]);
         let stderrOutput = '';
@@ -138,7 +124,7 @@ function classifyDeadYouTubeVideo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRu
             if (settled) return;
             settled = true;
             script.kill();
-            resolve(false);
+            resolve({ kind: ERROR_KINDS.UNKNOWN, message: null });
         }, 20000);
         const finish = (value) => {
             if (settled) return;
@@ -146,16 +132,45 @@ function classifyDeadYouTubeVideo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRu
             clearTimeout(timeout);
             resolve(value);
         };
-        script.on('error', () => finish(false));
+        script.on('error', (err) => finish(classifyDownloadError({ spawnError: err })));
         script.stderr.on('data', (chunk) => { stderrOutput += chunk.toString(); });
         script.on('close', (code) => {
             if (code === 0) {
-                finish(false);
+                // The real call above already swallowed the failure via
+                // --ignore-no-formats-error -- this unsuppressed re-run
+                // succeeding instead just means the cause wasn't stable/
+                // reproducible (e.g. a transient hiccup), not that there's a
+                // clean error string to classify.
+                finish({ kind: ERROR_KINDS.UNKNOWN, message: null });
                 return;
             }
-            finish(DEAD_VIDEO_ERROR_PATTERNS.some((pattern) => pattern.test(stderrOutput)));
+            finish(classifyDownloadError({ stderr: stderrOutput, exitCode: code }));
         });
     });
+}
+
+// User-facing text per classified kind for the info-fetch (probe) stage --
+// deliberately friendlier/shorter than the raw yt-dlp message, and specific
+// to the actual cause instead of one generic "YouTube blocked this" catch-all
+// regardless of whether it was actually a bot-check, an age restriction, a
+// region lock, or something else.
+function describeEmptyFormatsFailure(kind) {
+    switch (kind) {
+        case ERROR_KINDS.UNAVAILABLE:
+            return 'This video is unavailable on YouTube -- it may be private, deleted, or removed by the uploader.';
+        case ERROR_KINDS.AGE_RESTRICTED:
+            return 'This video is age-restricted -- load a cookie from a signed-in account in Options and try again.';
+        case ERROR_KINDS.LOGIN_REQUIRED:
+            return 'This video requires being signed in to view -- load a cookie in Options and try again.';
+        case ERROR_KINDS.GEO_BLOCKED:
+            return 'This video is not available in your region.';
+        case ERROR_KINDS.RATE_LIMIT:
+            return 'YouTube is rate-limiting requests right now -- wait a bit and try again.';
+        case ERROR_KINDS.BOT_BLOCK:
+            return 'YouTube blocked this request (e.g. "Sign in to confirm you\'re not a bot") -- load a cookie or enable "cookies from browser" in Options and try again.';
+        default:
+            return 'yt-dlp could not retrieve any downloadable formats for this video.';
+    }
 }
 
 // A factory since the video-info cache needs a real on-disk path, injected
@@ -184,7 +199,7 @@ export function createVideoInfoCache(videoInfoCachePath) {
 // video classification -> reshape -> cache write. One function so main.mjs's
 // IPC handler stays a thin wrapper, same shape as updater.mjs's
 // performYtdlpUpdate.
-export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs }) {
+export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs, onLog = () => {} }) {
     const cache = readVideoInfoCache();
     const cached = cache[url];
     if (cached && Date.now() - cached.savedEpoch < cacheTtlMs) {
@@ -210,6 +225,7 @@ export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRunti
         let error = '';
 
         script.on('error', (err) => {
+            onLog(`[videoInfo] getVideoInfoPython failed to start yt-dlp for ${url}: ${err.message}`);
             reject(new Error(`Failed to start yt-dlp: ${err.message}`));
         });
 
@@ -222,7 +238,9 @@ export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRunti
 
         script.on('close', async (code) => {
             if (code !== 0) {
-                reject(new Error(error || `yt-dlp exited with code ${code}`));
+                const classified = classifyDownloadError({ stderr: error, exitCode: code });
+                onLog(`[videoInfo] getVideoInfoPython failed for ${url} -- kind=${classified.kind}: ${classified.message}`);
+                reject(new Error(classified.message));
             } else {
                 try {
                     const info = JSON.parse(data);
@@ -235,14 +253,14 @@ export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRunti
                     // always leaves formats non-empty, so this only catches
                     // genuine extraction failures.
                     if (!info.formats || info.formats.length === 0) {
-                        if (isYouTubeUrl(url) && await classifyDeadYouTubeVideo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs })) {
-                            reject(new Error('This video is unavailable on YouTube -- it may be private, deleted, or removed by the uploader.'));
+                        if (isYouTubeUrl(url)) {
+                            const classified = await classifyEmptyFormatsFailure(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs });
+                            onLog(`[videoInfo] empty formats for ${url} -- kind=${classified.kind}: ${classified.message}`);
+                            reject(new Error(describeEmptyFormatsFailure(classified.kind)));
                             return;
                         }
-                        const message = isYouTubeUrl(url)
-                            ? 'yt-dlp could not retrieve any downloadable formats for this video. This usually means YouTube blocked the request (e.g. "Sign in to confirm you\'re not a bot") -- load a cookie or enable "cookies from browser" in Options and try again.'
-                            : 'yt-dlp could not retrieve any downloadable formats for this URL.';
-                        reject(new Error(message));
+                        onLog(`[videoInfo] empty formats for ${url} (non-YouTube, not re-classified)`);
+                        reject(new Error('yt-dlp could not retrieve any downloadable formats for this URL.'));
                         return;
                     }
                     const response = reshapeVideoInfo(info);

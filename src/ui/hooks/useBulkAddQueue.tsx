@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import useDownloadVideo from './useDownloadVideo.tsx';
 import { MAX_SIMULTANEOUS_DOWNLOADS_CEILING } from '../../utils/constants.ts';
+import { cleanElectronErrorMessage } from '../../utils/utils.ts';
 
 export type BulkAddStatus = 'pending' | 'fetching' | 'downloading' | 'done' | 'skipped' | 'failed' | 'cancelled';
 
@@ -39,6 +40,10 @@ export type BulkAddItem = {
   // meaningful while status is 'downloading', not read/reset otherwise.
   downloadProgress?: number;
   postprocessProgress?: number;
+  // True while a transient failure is auto-retrying in the main process
+  // (see src/electron/downloadErrors.mjs) -- status stays 'downloading'
+  // throughout, this is purely a UI hint ("Retrying...").
+  isRetrying?: boolean;
 };
 
 // playlistId is set only when this batch came from a single playlist link
@@ -87,6 +92,16 @@ function pickClosestResolution(resolutions: { resolution: string }[], target: st
   return String(best);
 }
 
+// Best-effort extraction of the classified error message threaded through
+// from main.mjs's downloadErrors.mjs (see useDownloadVideo.tsx's
+// 'error' case) -- falls back to a generic message for the pre-existing
+// non-download failure paths (fetch/add-to-library) that never went through
+// that classifier.
+function extractDownloadErrorMessage(downloadError: unknown): string {
+  const message = (downloadError as { payload?: { message?: string } } | null)?.payload?.message;
+  return message || 'Download failed.';
+}
+
 // One concurrent "download worker" -- wraps a single useDownloadVideo()
 // instance and reports back through onDone whenever THIS instance's own
 // isDone/isError flips, tagged with its own slot index. onDone/onProgress
@@ -94,18 +109,21 @@ function pickClosestResolution(resolutions: { resolution: string }[], target: st
 // every parent re-render.
 function useDownloadSlot(
   slotIndex: number,
-  onDone: (slotIndex: number, result: { isError: boolean; finalFilePath: string }) => void,
+  onDone: (slotIndex: number, result: { isError: boolean; finalFilePath: string; downloadError: unknown }) => void,
   onProgress: (slotIndex: number, progress: { downloadProgress: number; postprocessProgress: number }) => void,
+  onRetrying: (slotIndex: number, isRetrying: boolean) => void,
 ) {
-  const { finalFilePath, isDone, isError, downloadProgress, postprocessProgress, startDownload } = useDownloadVideo();
+  const { finalFilePath, isDone, isError, downloadError, isRetrying, downloadProgress, postprocessProgress, startDownload, cancelDownload } = useDownloadVideo();
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
   const onProgressRef = useRef(onProgress);
   onProgressRef.current = onProgress;
+  const onRetryingRef = useRef(onRetrying);
+  onRetryingRef.current = onRetrying;
 
   useEffect(() => {
     if (!isDone && !isError) return;
-    onDoneRef.current(slotIndex, { isError, finalFilePath });
+    onDoneRef.current(slotIndex, { isError, finalFilePath, downloadError });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDone, isError]);
 
@@ -114,7 +132,12 @@ function useDownloadSlot(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [downloadProgress, postprocessProgress]);
 
-  return { startDownload };
+  useEffect(() => {
+    onRetryingRef.current(slotIndex, isRetrying);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRetrying]);
+
+  return { startDownload, cancelDownload };
 }
 
 // Renderer-side queue, not a main-process job manager -- see
@@ -294,7 +317,7 @@ function useBulkAddQueueState() {
 
       beginDownload(item, slot, added.videoDir, added.epoch, resolution, isMp3 ? 'audio' : 'video');
     } catch (err) {
-      updateItem(item.id, { status: 'failed', error: err instanceof Error ? err.message : String(err) });
+      updateItem(item.id, { status: 'failed', error: err instanceof Error ? cleanElectronErrorMessage(err.message) : String(err) });
       await sleep(ITEM_DELAY_MS);
       freeSlot(slot);
     }
@@ -303,13 +326,22 @@ function useBulkAddQueueState() {
   // Fired by whichever download slot's own isDone/isError just flipped (see
   // useDownloadSlot above) -- finishes recording that one item, independent
   // of the other slots.
-  const handleSlotDone = async (slot: number, result: { isError: boolean; finalFilePath: string }) => {
+  const handleSlotDone = async (slot: number, result: { isError: boolean; finalFilePath: string; downloadError: unknown }) => {
     const itemId = slotItemRef.current[slot];
     const meta = slotDownloadMetaRef.current[slot];
     if (!itemId || !meta) return;
     slotDownloadMetaRef.current[slot] = null;
     if (result.isError) {
-      updateItem(itemId, { status: 'failed', error: 'Download failed.' });
+      const kind = (result.downloadError as { payload?: { kind?: string } } | null)?.payload?.kind;
+      // A cancellation already reads clearly from the 'Cancelled' status chip
+      // alone -- an additional red error caption (and the generic "Download
+      // failed." fallback extractDownloadErrorMessage would produce here)
+      // would misleadingly imply something went wrong.
+      if (kind === 'cancelled') {
+        updateItem(itemId, { status: 'cancelled', error: undefined });
+      } else {
+        updateItem(itemId, { status: 'failed', error: extractDownloadErrorMessage(result.downloadError) });
+      }
     } else {
       // recordLibraryDownload can reject -- an uncaught rejection here used
       // to skip freeSlot below and leave this slot permanently busy, wedging
@@ -324,7 +356,7 @@ function useBulkAddQueueState() {
         });
         updateItem(itemId, { status: 'done' });
       } catch (err) {
-        updateItem(itemId, { status: 'failed', error: err instanceof Error ? err.message : String(err) });
+        updateItem(itemId, { status: 'failed', error: err instanceof Error ? cleanElectronErrorMessage(err.message) : String(err) });
       }
     }
     await sleep(ITEM_DELAY_MS);
@@ -340,15 +372,30 @@ function useBulkAddQueueState() {
     updateItem(itemId, progress);
   };
 
+  const handleSlotRetrying = (slot: number, isRetrying: boolean) => {
+    const itemId = slotItemRef.current[slot];
+    if (!itemId) return;
+    updateItem(itemId, { isRetrying });
+  };
+
   // Five literal hook calls, not a loop over MAX_DOWNLOAD_SLOTS -- rules of
   // hooks require a fixed, static call count every render.
   const downloadSlots = [
-    useDownloadSlot(0, handleSlotDone, handleSlotProgress),
-    useDownloadSlot(1, handleSlotDone, handleSlotProgress),
-    useDownloadSlot(2, handleSlotDone, handleSlotProgress),
-    useDownloadSlot(3, handleSlotDone, handleSlotProgress),
-    useDownloadSlot(4, handleSlotDone, handleSlotProgress),
+    useDownloadSlot(0, handleSlotDone, handleSlotProgress, handleSlotRetrying),
+    useDownloadSlot(1, handleSlotDone, handleSlotProgress, handleSlotRetrying),
+    useDownloadSlot(2, handleSlotDone, handleSlotProgress, handleSlotRetrying),
+    useDownloadSlot(3, handleSlotDone, handleSlotProgress, handleSlotRetrying),
+    useDownloadSlot(4, handleSlotDone, handleSlotProgress, handleSlotRetrying),
   ];
+
+  // Cancels whichever slot is currently running this item, if any -- a no-op
+  // for an item that isn't actively downloading (e.g. still 'pending' or
+  // already finished), since there's no live process to cancel yet.
+  const cancelItem = (id: string) => {
+    const slot = slotItemRef.current.findIndex((itemId) => itemId === id);
+    if (slot === -1) return;
+    downloadSlots[slot].cancelDownload();
+  };
 
   // Appends rather than replaces, so pasting a second batch while the first
   // is still running queues up after it instead of losing it.
@@ -437,7 +484,7 @@ function useBulkAddQueueState() {
     setItems(itemsRef.current);
   };
 
-  return { items, isRunning, stopRequested, panelOpen, setPanelOpen, start, stop, resume, cancelAllPending, retryItem, removeItem, clearFinished };
+  return { items, isRunning, stopRequested, panelOpen, setPanelOpen, start, stop, resume, cancelAllPending, cancelItem, retryItem, removeItem, clearFinished };
 }
 
 type BulkAddQueueContextValue = ReturnType<typeof useBulkAddQueueState>;

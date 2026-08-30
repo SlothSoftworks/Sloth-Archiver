@@ -15,6 +15,7 @@ import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscap
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
 import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
+import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
 
 // Re-exported so main.test.mjs (and anything else importing these from
 // './main.mjs') keeps working unchanged -- these now live in cookies.mjs/
@@ -823,7 +824,7 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options)
 })
 
 ipcMain.handle('getVideoInfoPython', async (event, url) => fetchVideoInfo(url, {
-    ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS,
+    ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS, onLog: log,
 }));
 
 export function needsDirectFfmpegPass({ format, resolution }) {
@@ -954,6 +955,65 @@ export function findRawDownloadedFile(rawDir) {
 // under a process that's actively using it.
 let activeDownloadCount = 0;
 
+// requestId -> in-flight yt-dlp ChildProcess. Populated for the lifetime of
+// each attempt (including across auto-retries) so cancelDownload and the
+// stall-timeout sweep below can both reach the right process without either
+// one needing its own separate tracking. Keyed by requestId (not pid), since
+// that's the only handle the renderer has.
+const activeDownloadProcesses = new Map();
+
+// requestIds a cancelDownload call has already killed -- the killed process's
+// own 'close' event still fires afterward with a non-zero exit code, and
+// without this set it would be misclassified as a normal (and possibly
+// auto-retried) failure instead of a deliberate cancellation.
+const cancelledDownloadRequestIds = new Set();
+
+// requestId -> a canceller for a download that's currently *waiting* between
+// auto-retry attempts (no ChildProcess exists yet during that wait, so
+// activeDownloadProcesses alone can't be cancelled during it) -- without
+// this, hitting Cancel while the UI reads "Retrying in 30s..." would
+// silently do nothing until the next attempt actually started.
+const pendingRetryCancellers = new Map();
+
+// No progress line (download OR postprocess) for this long is treated as a
+// stall and killed -- deliberately not a fixed total-duration cap, since this
+// app's own differentiator is handling very long downloads (9+ hour videos
+// per the README); only *silence* is suspicious, not overall length.
+const STALL_TIMEOUT_MS = 5 * 60 * 1000;
+const STALL_CHECK_INTERVAL_MS = 30 * 1000;
+
+// yt-dlp spawns ffmpeg as its own child process for merging/remuxing, so a
+// plain child.kill() can orphan it (reports/ErrorHandling.md section 3).
+// detached:true (POSIX only) puts the child in its own process group so
+// -pid kills the whole group; Windows has no such group concept, so
+// taskkill's /T (tree) flag does the equivalent there instead.
+function killDownloadProcessTree(child) {
+    if (!child || child.killed) return;
+    try {
+        if (process.platform === 'win32') {
+            spawn('taskkill', ['/pid', String(child.pid), '/T', '/F']);
+        } else {
+            process.kill(-child.pid, 'SIGKILL');
+        }
+    } catch {
+        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    }
+}
+
+ipcMain.handle('cancelDownload', (event, requestId) => {
+    const pendingRetry = pendingRetryCancellers.get(requestId);
+    if (pendingRetry) {
+        pendingRetryCancellers.delete(requestId);
+        pendingRetry();
+        return { cancelled: true };
+    }
+    const child = activeDownloadProcesses.get(requestId);
+    if (!child) return { cancelled: false };
+    cancelledDownloadRequestIds.add(requestId);
+    killDownloadProcessTree(child);
+    return { cancelled: true };
+});
+
 ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     activeDownloadCount++;
     // requestId is echoed onto every message on this shared/unscoped
@@ -991,114 +1051,198 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
         downloadArgs = buildDownloadArgs(options);
     }
 
-    const script = spawn(ytdlpPath, downloadArgs);
-
-    let error = '';
-
-    script.on('error', (err) => {
+    // Only actually decrements/untracks once -- called from whichever branch
+    // (success, or a failure that's giving up rather than retrying) turns out
+    // to be this download's true end.
+    function finishDownload() {
         activeDownloadCount--;
-        if (rawDir) fs.rmSync(rawDir, { recursive: true, force: true });
-        send({ type: 'error', payload: { message: `Failed to start yt-dlp: ${err.message}` } });
-    });
-
-    function parseLine(line) {
-        if (line.startsWith('PROGRESS|')) {
-            const [, status, downloadedBytes, totalBytes, percent, eta, speed] = line.split('|');
-            if (status === 'downloading') {
-                send({
-                    type: 'progress',
-                    payload: {
-                        downloadedBytes: Number(downloadedBytes) || null,
-                        totalBytes: Number(totalBytes) || null,
-                        percent: percent.trim(),
-                        eta: eta === 'NA' ? null : Number(eta),
-                        speed: speed.trim(),
-                    },
-                });
-            } else if (status === 'finished') {
-                send({ type: 'downloadDone', payload: {} });
-            }
-        } else if (line.startsWith('POSTPROCESS|')) {
-            const [, status, processor] = line.split('|');
-            send({
-                type: 'postprocessing',
-                payload: { stage: status === 'started' ? 'start' : status, processor },
-            });
-        }
+        activeDownloadProcesses.delete(options.requestId);
     }
 
-    // yt-dlp writes download progress and --print output to stdout, but
-    // postprocess progress-template lines to stderr, so both streams need parsing.
-    function makeLineReader(onLine) {
-        let buffer = '';
-        return (chunk) => {
-            buffer += chunk.toString();
-            let lines = buffer.split('\n');
-            buffer = lines.pop();
-            lines.forEach(onLine);
-        };
-    }
-
-    script.stdout.on('data', makeLineReader(parseLine));
-
-    script.stderr.on('data', makeLineReader((line) => {
-        if (line.startsWith('PROGRESS|') || line.startsWith('POSTPROCESS|')) {
-            parseLine(line);
-        } else {
-            error += line + '\n';
-            console.error('yt-dlp stderr:', line);
-        }
-    }));
-
-    script.on('close', async (code) => {
-        if (code !== 0) {
-            activeDownloadCount--;
+    // Classification is per-attempt (stderr/spawnError are attempt-local),
+    // but the retry decision spans the whole logical download -- an
+    // auto-retryable failure re-invokes attemptDownload instead of finishing.
+    // A retry reuses the same downloadArgs/rawDir as the first attempt, so it
+    // resumes from whatever yt-dlp already partially wrote rather than
+    // restarting from zero (reports/ErrorHandling.md section 4).
+    async function handleFailure({ kind, message }, attempt) {
+        if (kind === ERROR_KINDS.CANCELLED) {
+            finishDownload();
             if (rawDir) fs.rmSync(rawDir, { recursive: true, force: true });
-            send({ type: 'error', payload: { message: error || `Download failed with code ${code}` } });
+            send({ type: 'error', payload: { message, kind, retryable: false } });
             return;
         }
-
-        if (!postprocess) {
-            activeDownloadCount--;
-            send({ type: 'done', payload: { filename: findFinalFile(options.outputPath) } });
-            return;
-        }
-
-        try {
-            const rawFile = findRawDownloadedFile(rawDir);
-            const duration = await getMediaDurationSeconds(rawFile);
-            const onFfmpegProgress = (postprocessPercent) => send({
-                type: 'postprocessing',
-                payload: { stage: 'progress', processor: 'ffmpeg', postprocessPercent },
+        if (isAutoRetryable(kind) && attempt < MAX_AUTO_RETRIES) {
+            const nextAttemptInMs = getBackoffMs(attempt);
+            send({ type: 'retrying', payload: { attempt: attempt + 1, kind, message, nextAttemptInMs } });
+            const timer = setTimeout(() => {
+                pendingRetryCancellers.delete(options.requestId);
+                attemptDownload(attempt + 1);
+            }, nextAttemptInMs);
+            pendingRetryCancellers.set(options.requestId, () => {
+                clearTimeout(timer);
+                handleFailure({ kind: ERROR_KINDS.CANCELLED, message: 'Cancelled.' }, attempt);
             });
+            return;
+        }
+        finishDownload();
+        if (rawDir) fs.rmSync(rawDir, { recursive: true, force: true });
+        send({ type: 'error', payload: { message, kind, retryable: false } });
+    }
 
-            if (options.resolution && options.resolution.toLowerCase() === 'mp3') {
-                await runFfmpegWithProgress({
-                    inputPath: rawFile,
-                    outputPath: postprocessOutputPath,
-                    codecArgs: ['-vn', '-c:a', 'libmp3lame', '-b:a', '192k'],
-                    totalDurationSeconds: duration,
-                    onProgress: onFfmpegProgress,
-                });
-            } else {
-                await convertWithFallback({
-                    inputPath: rawFile,
-                    outputPath: postprocessOutputPath,
-                    format: options.format,
-                    totalDurationSeconds: duration,
-                    onProgress: onFfmpegProgress,
+    function attemptDownload(attempt) {
+        // detached only on POSIX -- see killDownloadProcessTree above.
+        const script = spawn(ytdlpPath, downloadArgs, { detached: process.platform !== 'win32' });
+        activeDownloadProcesses.set(options.requestId, script);
+
+        let error = '';
+        let lastActivity = Date.now();
+        // Guards against the stall sweep and the process's own
+        // error/close events both trying to resolve this same attempt --
+        // whichever happens first wins, the other is a no-op.
+        let settled = false;
+        const touch = () => { lastActivity = Date.now(); };
+
+        const stallCheck = setInterval(() => {
+            if (settled || Date.now() - lastActivity < STALL_TIMEOUT_MS) return;
+            settled = true;
+            clearInterval(stallCheck);
+            killDownloadProcessTree(script);
+            handleFailure({ kind: ERROR_KINDS.STALLED, message: 'No progress for several minutes -- the connection may have dropped.' }, attempt);
+        }, STALL_CHECK_INTERVAL_MS);
+
+        script.on('error', (err) => {
+            if (settled) return;
+            settled = true;
+            clearInterval(stallCheck);
+            activeDownloadProcesses.delete(options.requestId);
+            const classified = classifyDownloadError({ spawnError: err });
+            handleFailure(classified, attempt);
+        });
+
+        function parseLine(line) {
+            touch();
+            if (line.startsWith('PROGRESS|')) {
+                const [, status, downloadedBytes, totalBytes, percent, eta, speed] = line.split('|');
+                if (status === 'downloading') {
+                    send({
+                        type: 'progress',
+                        payload: {
+                            downloadedBytes: Number(downloadedBytes) || null,
+                            totalBytes: Number(totalBytes) || null,
+                            percent: percent.trim(),
+                            eta: eta === 'NA' ? null : Number(eta),
+                            speed: speed.trim(),
+                        },
+                    });
+                } else if (status === 'finished') {
+                    send({ type: 'downloadDone', payload: {} });
+                }
+            } else if (line.startsWith('POSTPROCESS|')) {
+                const [, status, processor] = line.split('|');
+                send({
+                    type: 'postprocessing',
+                    payload: { stage: status === 'started' ? 'start' : status, processor },
                 });
             }
-
-            fs.rmSync(rawDir, { recursive: true, force: true });
-            activeDownloadCount--;
-            send({ type: 'done', payload: { filename: postprocessOutputPath } });
-        } catch (err) {
-            activeDownloadCount--;
-            send({ type: 'error', payload: { message: err instanceof Error ? err.message : String(err) } });
         }
-    })
 
+        // yt-dlp writes download progress and --print output to stdout, but
+        // postprocess progress-template lines to stderr, so both streams need parsing.
+        function makeLineReader(onLine) {
+            let buffer = '';
+            return (chunk) => {
+                buffer += chunk.toString();
+                let lines = buffer.split('\n');
+                buffer = lines.pop();
+                lines.forEach(onLine);
+            };
+        }
+
+        script.stdout.on('data', makeLineReader(parseLine));
+
+        script.stderr.on('data', makeLineReader((line) => {
+            touch();
+            if (line.startsWith('PROGRESS|') || line.startsWith('POSTPROCESS|')) {
+                parseLine(line);
+            } else {
+                error += line + '\n';
+                console.error('yt-dlp stderr:', line);
+            }
+        }));
+
+        script.on('close', async (code) => {
+            if (settled) return;
+            settled = true;
+            clearInterval(stallCheck);
+            activeDownloadProcesses.delete(options.requestId);
+
+            if (cancelledDownloadRequestIds.delete(options.requestId)) {
+                handleFailure({ kind: ERROR_KINDS.CANCELLED, message: 'Cancelled.' }, attempt);
+                return;
+            }
+
+            if (code !== 0) {
+                let classified = classifyDownloadError({ stderr: error, exitCode: code });
+                classified.kind = await recheckDiskSpaceIfAmbiguous(classified.kind, options.outputPath);
+                handleFailure(classified, attempt);
+                return;
+            }
+
+            if (!postprocess) {
+                finishDownload();
+                send({ type: 'done', payload: { filename: findFinalFile(options.outputPath) } });
+                return;
+            }
+
+            try {
+                const rawFile = findRawDownloadedFile(rawDir);
+                const duration = await getMediaDurationSeconds(rawFile);
+                const onFfmpegProgress = (postprocessPercent) => send({
+                    type: 'postprocessing',
+                    payload: { stage: 'progress', processor: 'ffmpeg', postprocessPercent },
+                });
+
+                if (options.resolution && options.resolution.toLowerCase() === 'mp3') {
+                    await runFfmpegWithProgress({
+                        inputPath: rawFile,
+                        outputPath: postprocessOutputPath,
+                        codecArgs: ['-vn', '-c:a', 'libmp3lame', '-b:a', '192k'],
+                        totalDurationSeconds: duration,
+                        onProgress: onFfmpegProgress,
+                    });
+                } else {
+                    await convertWithFallback({
+                        inputPath: rawFile,
+                        outputPath: postprocessOutputPath,
+                        format: options.format,
+                        totalDurationSeconds: duration,
+                        onProgress: onFfmpegProgress,
+                    });
+                }
+
+                fs.rmSync(rawDir, { recursive: true, force: true });
+                finishDownload();
+                send({ type: 'done', payload: { filename: postprocessOutputPath } });
+            } catch (err) {
+                // Our own direct ffmpeg pass, not yt-dlp -- still worth the
+                // same "don't trust the wrapped error" disk-space recheck
+                // (reports/ErrorHandling.md section 2's flagship example is
+                // exactly this: postprocessing masking a full disk). Not
+                // routed into the auto-retry ladder above: unlike a network
+                // hiccup, a postprocess failure is usually a deterministic
+                // cause (corrupt intermediate file, unsupported codec) that
+                // retrying won't fix.
+                const rawMessage = err instanceof Error ? err.message : String(err);
+                const kind = await recheckDiskSpaceIfAmbiguous(ERROR_KINDS.UNKNOWN, options.outputPath);
+                finishDownload();
+                if (rawDir) fs.rmSync(rawDir, { recursive: true, force: true });
+                send({ type: 'error', payload: { message: rawMessage, kind, retryable: false } });
+            }
+        });
+    }
+
+    attemptDownload(0);
 });
 
 // --- Library view: ffmpeg utilities (extract MP3, convert format, extract

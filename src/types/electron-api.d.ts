@@ -110,6 +110,7 @@ declare global {
             // removeProgressListener to remove just this one (see preload.mjs).
             onProgressUpdate: (callback: (data: T) => void) => T;
             removeProgressListener: (listener: T) => void;
+            cancelDownload: (requestId: string) => Promise<{ cancelled: boolean }>;
         }
     }
 }

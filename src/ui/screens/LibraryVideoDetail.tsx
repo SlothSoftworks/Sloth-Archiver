@@ -26,7 +26,7 @@ import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, cleanElectronErrorMessage } from '../../utils/utils.ts';
 import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
@@ -156,7 +156,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     return () => window.electronAPI.removeFfmpegUtilityProgressListener();
   }, []);
 
-  const { downloadProgress, postprocessProgress, downloadStatus, finalFilePath, isDone, isError, startDownload } = useDownloadVideo();
+  const { downloadProgress, postprocessProgress, downloadStatus, finalFilePath, isDone, isError, downloadErrorKind, isRetrying, startDownload, cancelDownload } = useDownloadVideo();
 
   // A genuinely different video was selected (not just a data refresh of the
   // same one, e.g. after a download/swap/version-add) -- jump to its latest.
@@ -228,7 +228,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
         await window.electronAPI.deleteLibraryEntry(video.videoDir, createdEpoch);
         await onVersionsChanged();
       }
-      setCreateVersionError(err instanceof Error ? err.message : 'Failed to create a new version.');
+      setCreateVersionError(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to create a new version.');
     } finally {
       setCreatingVersion(false);
     }
@@ -262,7 +262,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
       setMetadata(refreshed.metadata);
       await onVersionsChanged();
     } catch (err) {
-      setRefreshMetadataError(err instanceof Error ? err.message : 'Failed to refresh this version from YouTube.');
+      setRefreshMetadataError(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to refresh this version from YouTube.');
     } finally {
       setRefreshingMetadata(false);
     }
@@ -783,6 +783,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 onFormatChange={setSelectedFormat}
                 selectedResolution={selectedResolution}
                 isError={isError}
+                downloadErrorKind={downloadErrorKind}
                 downloadStatus={downloadStatus}
                 downloadProgress={downloadProgress}
                 postprocessProgress={postprocessProgress}
@@ -804,6 +805,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 ffmpegAction={ffmpegAction}
                 ffmpegProgress={ffmpegProgress}
                 onExtractAudioToLibrary={handleExtractAudioToLibrary}
+                isRetrying={isRetrying}
+                onCancelDownload={cancelDownload}
               />
 
               <FfmpegUtilitiesPanel

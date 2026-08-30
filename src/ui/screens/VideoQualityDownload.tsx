@@ -19,6 +19,7 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import DownloadDoneIcon from '@mui/icons-material/DownloadDone';
 import AudiotrackIcon from '@mui/icons-material/Audiotrack';
+import CancelIcon from '@mui/icons-material/Cancel';
 import { buildAppVideoUrl, formatEpochLabel } from '../../utils/utils.ts';
 import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
 import type { LibraryVideoMetadata, Resolution } from '../../types';
@@ -36,19 +37,23 @@ type LibraryVideo = {
 // -- excludeResolution blocks re-picking whatever's already downloaded
 // rather than hiding it, so it's clear why one button is greyed out instead
 // of silently missing.
-function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFormat, onFormatChange, isError, disabled }: {
+function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFormat, onFormatChange, isError, errorKind, disabled }: {
   resolutions: Resolution[];
   excludeResolution?: string | null;
   onSelect: (resolution: string) => void;
   selectedFormat: string;
   onFormatChange: (format: string) => void;
   isError: boolean;
+  errorKind: string | null;
   disabled?: boolean;
 }) {
   return (
     <>
-      {isError &&
-        <Typography color="error" variant="body2" sx={{ mb: 1 }}>Download failed -- try again.</Typography>}
+      {isError && errorKind === 'cancelled' ? (
+        <Typography color="warning.main" variant="body2" fontWeight="bold" sx={{ mb: 1 }}>Cancelled.</Typography>
+      ) : isError && (
+        <Typography color="error" variant="body2" sx={{ mb: 1 }}>Download failed -- try again.</Typography>
+      )}
       <Grid container spacing={1} columns={{ xs: 2, sm: 9, md: 12 }}>
         {resolutions.map((res, idx) => (
           <Grid size={{ xs: 1, sm: 3 }} key={idx}>
@@ -87,6 +92,24 @@ function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFo
   );
 }
 
+// Shared by the three "a download is currently running" blocks below (video,
+// quality swap, audio) -- they all read from the same single
+// useDownloadVideo() instance, so cancel/retrying behave identically in all
+// three.
+function DownloadCancelControls({ isRetrying, onCancelDownload }: { isRetrying: boolean; onCancelDownload: () => void }) {
+  return (
+    <>
+      <Button size="small" color="error" startIcon={<CancelIcon fontSize="small" />} onClick={onCancelDownload} sx={{ alignSelf: 'center' }}>
+        Cancel
+      </Button>
+      {isRetrying &&
+        <Typography variant="caption" color="warning.main" textAlign="center">
+          Retrying after a download error...
+        </Typography>}
+    </>
+  );
+}
+
 // The version selector + video quality download/swap controls + MP3 audio
 // sub-section -- everything in the instrument panel above the FFMPEG
 // utilities divider. All state stays owned by LibraryVideoDetail (the
@@ -106,6 +129,7 @@ export default function VideoQualityDownload({
   onFormatChange,
   selectedResolution,
   isError,
+  downloadErrorKind,
   downloadStatus,
   downloadProgress,
   postprocessProgress,
@@ -127,6 +151,8 @@ export default function VideoQualityDownload({
   ffmpegAction,
   ffmpegProgress,
   onExtractAudioToLibrary,
+  isRetrying,
+  onCancelDownload,
 }: {
   video: LibraryVideo;
   metadata: LibraryVideoMetadata;
@@ -138,6 +164,7 @@ export default function VideoQualityDownload({
   onFormatChange: (format: string) => void;
   selectedResolution: string;
   isError: boolean;
+  downloadErrorKind: string | null;
   downloadStatus: string;
   downloadProgress: number;
   postprocessProgress: number;
@@ -159,6 +186,12 @@ export default function VideoQualityDownload({
   ffmpegAction: 'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | 'extractClipMp3' | 'convertClip' | null;
   ffmpegProgress: number;
   onExtractAudioToLibrary: () => void;
+  // Shared with LibraryVideoDetail's single useDownloadVideo() instance
+  // (same as isDownloading/downloadStatus/etc above) -- applies to whichever
+  // of the three downloading blocks below (video, quality swap, audio) is
+  // currently showing, since only one can be active at a time.
+  isRetrying: boolean;
+  onCancelDownload: () => void;
 }) {
   return (
     <>
@@ -203,6 +236,7 @@ export default function VideoQualityDownload({
               {selectedResolution && ` (${selectedResolution}${selectedResolution.toLowerCase() === 'mp3' ? '' : 'p'})`}
             </Typography>
             <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
+            <DownloadCancelControls isRetrying={isRetrying} onCancelDownload={onCancelDownload} />
           </Stack>
         ) : (
           <>
@@ -213,6 +247,7 @@ export default function VideoQualityDownload({
               selectedFormat={selectedFormat}
               onFormatChange={onFormatChange}
               isError={isError}
+              errorKind={downloadErrorKind}
               disabled={isAudioActionActive}
             />
             <Button size="small" onClick={onCancelQualitySwap} sx={{ mt: 1 }}>
@@ -236,6 +271,7 @@ export default function VideoQualityDownload({
             {selectedResolution && ` (${selectedResolution}p)`}
           </Typography>
           <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
+          <DownloadCancelControls isRetrying={isRetrying} onCancelDownload={onCancelDownload} />
         </Stack>
       ) : videoResolutions.length === 0 ? (
         <Typography variant="body2" color="text.secondary" sx={{ p: 1 }}>
@@ -249,6 +285,7 @@ export default function VideoQualityDownload({
           selectedFormat={selectedFormat}
           onFormatChange={onFormatChange}
           isError={isError}
+          errorKind={downloadErrorKind}
           disabled={isAudioActionActive}
         />
       )}
@@ -270,6 +307,7 @@ export default function VideoQualityDownload({
                   {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : 'Downloading'} (MP3)
                 </Typography>
                 <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
+                <DownloadCancelControls isRetrying={isRetrying} onCancelDownload={onCancelDownload} />
               </Stack>
             ) : metadata.downloadedAudioFilePath ? (
               // Replaces the download button in place -- the player lives

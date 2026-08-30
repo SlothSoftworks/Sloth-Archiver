@@ -54,6 +54,7 @@ beforeEach(() => {
     startDownloadPython: vi.fn(),
     onProgressUpdate: vi.fn(),
     removeProgressListener: vi.fn(),
+    cancelDownload: vi.fn(),
   } as unknown as typeof window.electronAPIPythonDownload;
 });
 

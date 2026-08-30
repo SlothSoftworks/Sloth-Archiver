@@ -89,6 +89,7 @@ beforeEach(() => {
     startDownloadPython: vi.fn(),
     onProgressUpdate: vi.fn((cb: (msg: DownloadProgressMessage) => void) => { registeredCallback = cb; }),
     removeProgressListener: vi.fn(),
+    cancelDownload: vi.fn(),
   } as unknown as typeof window.electronAPIPythonDownload;
 });
 

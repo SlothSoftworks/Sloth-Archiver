@@ -29,6 +29,7 @@ import InfoOutlineIcon from '@mui/icons-material/InfoOutline';
 import FileOpenIcon from '@mui/icons-material/FileOpen';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import CancelIcon from '@mui/icons-material/Cancel';
 
 import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
 import { formatComment } from '../components/componentUtils';
@@ -69,7 +70,7 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
   const [overwriteDialogOpen, setOverwriteDialogOpen] = useState(false);
   const [pendingDownload, setPendingDownload] = useState<{ outputPath: string; resolution: string } | null>(null);
 
-  const { finalFilePath, downloadStatus, downloadProgress, postprocessProgress, isDone, isError, downloadError, startDownload } = useDownloadVideo();
+  const { finalFilePath, downloadStatus, downloadProgress, postprocessProgress, isDone, isError, downloadError, downloadErrorKind, isRetrying, startDownload, cancelDownload } = useDownloadVideo();
 
   const beginDownload = (outputPath: string, resolution: string, overwriteMode?: DownloadVideoParams['overwriteMode']) => {
     setSelectedResolution(resolution);
@@ -180,16 +181,29 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
                         <FileOpenIcon fontSize="small"/>
                       </IconButton>
                     </Tooltip>}
+                  {!isDone &&
+                    <Tooltip title="Cancel this download">
+                      <IconButton size="small" onClick={cancelDownload} color="error">
+                        <CancelIcon fontSize="small"/>
+                      </IconButton>
+                    </Tooltip>}
                 </Stack>
+                {isRetrying &&
+                  <Typography variant="caption" color="warning.main" textAlign="center">
+                    Retrying after a download error...
+                  </Typography>}
                 <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
               </Stack>
             ) : (
               <>
-                {isError &&
+                {isError && downloadErrorKind === 'cancelled' ? (
+                  <Typography color="warning.main" variant="subtitle2" fontWeight="bold" sx={{ mb: 1 }}>Cancelled</Typography>
+                ) : isError && (
                   <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1 }}>
                     <Typography color="error" variant="subtitle2">Download failed</Typography>
                     <Button size="small" onClick={() => setOpenBugDialog(true)} color="error" variant="outlined">Details<BugReportIcon fontSize="small"/></Button>
-                  </Stack>}
+                  </Stack>
+                )}
                 <Grid container
                 spacing={{xs:1, sm:1 }}
                 columns={{xs: 2, sm: 9,md: 12}}>

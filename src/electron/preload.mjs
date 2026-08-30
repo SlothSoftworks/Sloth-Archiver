@@ -74,6 +74,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
 contextBridge.exposeInMainWorld('electronAPIPythonDownload', {
     startDownloadPython: (options) => ipcRenderer.invoke('downloadVideoWithProgressUpdates', options),
+    cancelDownload: (requestId) => ipcRenderer.invoke('cancelDownload', requestId),
     // Returns the actual listener function that got attached so
     // removeProgressListener can remove just this one -- multiple
     // useDownloadVideo() instances can be mounted at once (manual download,

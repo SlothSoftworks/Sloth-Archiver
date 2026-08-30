@@ -118,6 +118,16 @@ export type DownloadProgressMessage = {
       stage?: string;
       processor?: string;
       postprocessPercent?: number;
+      // 'error'/'retrying' fields (see src/electron/downloadErrors.mjs) --
+      // message/kind are the classified failure; retryable is false once an
+      // 'error' is actually sent (a retryable failure sends 'retrying'
+      // instead and never reaches 'error' until retries are exhausted).
+      // attempt/nextAttemptInMs are 'retrying'-only.
+      message?: string;
+      kind?: string;
+      retryable?: boolean;
+      attempt?: number;
+      nextAttemptInMs?: number;
     }
   }
 

@@ -40,6 +40,7 @@ beforeEach(() => {
     removeProgressListener: vi.fn((cb: (msg: DownloadProgressMessage) => void) => {
       registeredDownloadCallbacks = registeredDownloadCallbacks.filter((l) => l !== cb);
     }),
+    cancelDownload: vi.fn(),
   } as unknown as typeof window.electronAPIPythonDownload;
 });
 

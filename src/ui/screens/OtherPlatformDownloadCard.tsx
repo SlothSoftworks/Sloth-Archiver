@@ -26,6 +26,7 @@ import FileOpenIcon from '@mui/icons-material/FileOpen';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import DownloadIcon from '@mui/icons-material/Download';
 import LabelOutlinedIcon from '@mui/icons-material/LabelOutlined';
+import CancelIcon from '@mui/icons-material/Cancel';
 import type { DownloadVideoParams } from '../../types';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import { getPlatformLabel } from '../../utils/utils.ts';
@@ -67,7 +68,7 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
   const [embedError, setEmbedError] = useState<string | null>(null);
   const [embedSuccessOpen, setEmbedSuccessOpen] = useState(false);
 
-  const { finalFilePath, downloadProgress, postprocessProgress, downloadStatus, isDone, isError, downloadError, startDownload } = useDownloadVideo();
+  const { finalFilePath, downloadProgress, postprocessProgress, downloadStatus, isDone, isError, downloadError, downloadErrorKind, isRetrying, startDownload, cancelDownload } = useDownloadVideo();
 
   const platformLabel = getPlatformLabel(videoMetaData.originalUrl);
   // SoundCloud is audio-only, so this always extracts a real MP3 (the same
@@ -180,7 +181,17 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
                           <FileOpenIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>}
+                    {!isDone &&
+                      <Tooltip title="Cancel this download">
+                        <IconButton size="small" onClick={cancelDownload} color="error">
+                          <CancelIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>}
                   </Stack>
+                  {isRetrying &&
+                    <Typography variant="caption" color="warning.main">
+                      Retrying after a download error...
+                    </Typography>}
                   <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
                   {isDone && isSoundCloud &&
                     <Stack direction="row" spacing={1.5} alignItems="center">
@@ -198,13 +209,16 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
                 </Stack>
               ) : (
                 <>
-                  {isError &&
+                  {isError && downloadErrorKind === 'cancelled' ? (
+                    <Typography color="warning.main" variant="subtitle2" fontWeight="bold" sx={{ mb: 1 }}>Cancelled</Typography>
+                  ) : isError && (
                     <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1 }}>
                       <Typography color="error" variant="subtitle2">Download failed</Typography>
                       <Button size="small" onClick={() => setOpenBugDialog(true)} color="error" variant="outlined">
                         Details<BugReportIcon fontSize="small" />
                       </Button>
-                    </Stack>}
+                    </Stack>
+                  )}
                   {isDailymotion && resolutions.length > 0 ? (
                     <Grid container spacing={1} columns={{ xs: 2, sm: 6 }}>
                       {resolutions.map((res, idx) => (

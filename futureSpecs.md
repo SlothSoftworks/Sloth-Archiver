@@ -36,3 +36,10 @@ you point it here.
 
 
 ### Bugs found
+1. When entering a playlist link into the downloader search bar it fails it should stripg the playlist part instead
+2. When entering a playlist + a youtube url in the bulk add feature the app treats the playlist as a single videoinstead of as a playlist + the video or videos additional to it. Test if this is viable or if we should separate playlist and video list instead.
+   - Example :
+   ````
+   https://www.youtube.com/watch?v=RrmWFjnAP2E&list=PLqpXH39_hez2BikTrYs-vDVY0zUkvG9de
+   https://www.youtube.com/watch?v=oiuyhxp4w9I&rco=1
+   ```

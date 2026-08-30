@@ -9,6 +9,17 @@ function useDownloadVideo() {
   const [isDone, setIsDone] = useState(false);
   const [isError, setIsError] = useState(false);
   const [downloadError, setDownloadError] = useState<object | null> ();
+  // Clean, single-purpose readout of the classified failure kind (see
+  // src/electron/downloadErrors.mjs) -- 'cancelled' specifically lets
+  // consumers show "Cancelled" instead of a generic "Download failed" for a
+  // deliberate user action. downloadError above stays as-is for existing
+  // consumers that read the raw message off it.
+  const [downloadErrorKind, setDownloadErrorKind] = useState<string | null>(null);
+  // Set while a retryable failure is auto-retrying in the main process (see
+  // src/electron/downloadErrors.mjs) -- distinct from isError, which is only
+  // set once retries are exhausted or the failure kind isn't retryable at all.
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [retryInfo, setRetryInfo] = useState<{ attempt: number; kind: string; nextAttemptInMs: number } | null>(null);
   // 'progressUpdate' is one shared broadcast channel, not scoped
   // per-download (TD-008) -- this hook can be mounted several times at
   // once, so every message must be checked against this instance's own
@@ -30,8 +41,19 @@ function useDownloadVideo() {
         setIsDone(false);
         setIsError(false);
         setDownloadError(null);
+        setDownloadErrorKind(null);
+        setIsRetrying(false);
+        setRetryInfo(null);
 
         window.electronAPIPythonDownload.startDownloadPython({ videoUrl, outputPath, format, resolution, overwriteMode, additionalOptions, requestId })
+    }
+
+    // Only meaningful while this hook's own download is in flight -- the main
+    // process looks up the process by requestId, so calling this for any
+    // other/already-finished download is just a harmless no-op there.
+    const cancelDownload = () => {
+        if (!requestIdRef.current) return;
+        window.electronAPIPythonDownload.cancelDownload(requestIdRef.current);
     }
 
     useEffect(() => {
@@ -39,6 +61,10 @@ function useDownloadVideo() {
         if (msg.requestId !== requestIdRef.current) return;
         const { type, payload } = msg;
         let accumErr = msg;
+        // A retry that starts making progress again (or finishes) is no
+        // longer "retrying" -- only the 'retrying' case itself should leave
+        // this true.
+        if (type !== 'retrying') setIsRetrying(false);
         switch(type) {
           case 'progress': {
             // yt-dlp reports progress per-stream, not for the whole download
@@ -72,9 +98,16 @@ function useDownloadVideo() {
               setPostprocessProgress(payload.stage === 'start' ? 50 : 100);
             }
             break;
+          case 'retrying':
+            setIsRetrying(true);
+            setDownloadStatus('Retrying...');
+            setRetryInfo({ attempt: payload.attempt ?? 0, kind: payload.kind ?? 'unknown', nextAttemptInMs: payload.nextAttemptInMs ?? 0 });
+            break;
           case 'error':
             console.error('Download error', msg)
             setIsError(true);
+            setIsRetrying(false);
+            setDownloadErrorKind(payload.kind ?? null);
             if (downloadError != null) {
               accumErr = JSON.stringify(downloadError) + '\n' + JSON.stringify(msg);
             }
@@ -108,7 +141,11 @@ function useDownloadVideo() {
     isDone,
     isError,
     downloadError,
-    startDownload
+    downloadErrorKind,
+    isRetrying,
+    retryInfo,
+    startDownload,
+    cancelDownload,
   };
 }
 

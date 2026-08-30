@@ -23,7 +23,7 @@ import './screens.css'
 import TextField from '@mui/material/TextField';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import { isValidUrl, isYouTubeUrl } from '../../utils/utils.ts';
+import { isValidUrl, isYouTubeUrl, cleanElectronErrorMessage } from '../../utils/utils.ts';
 import VideoDetailCard from './VideoDetailCard';
 import OtherPlatformDownloadCard from './OtherPlatformDownloadCard';
 
@@ -94,7 +94,7 @@ export default function DownloaderScreen() {
     } catch (err) {
       console.error('Failed to add to library', err);
       setLibraryAddStatus('error');
-      setLibraryErrorMessage(err instanceof Error ? err.message : 'Failed to add video to the library.');
+      setLibraryErrorMessage(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to add video to the library.');
     }
   };
 
@@ -114,7 +114,7 @@ export default function DownloaderScreen() {
     } catch (err) {
       console.error('Failed to check the library for this video', err);
       setLibraryAddStatus('error');
-      setLibraryErrorMessage(err instanceof Error ? err.message : 'Failed to add video to the library.');
+      setLibraryErrorMessage(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to add video to the library.');
     }
   };
 
@@ -140,7 +140,7 @@ export default function DownloaderScreen() {
     } catch (err) {
       console.error('Failed to override library entry', err);
       setLibraryAddStatus('error');
-      setLibraryErrorMessage(err instanceof Error ? err.message : 'Failed to add video to the library.');
+      setLibraryErrorMessage(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to add video to the library.');
     }
   };
 
@@ -165,7 +165,7 @@ export default function DownloaderScreen() {
     } catch (err) {
       console.error('Failed to add library version', err);
       setLibraryAddStatus('error');
-      setLibraryErrorMessage(err instanceof Error ? err.message : 'Failed to add video to the library.');
+      setLibraryErrorMessage(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to add video to the library.');
     }
   };
 
@@ -189,7 +189,7 @@ export default function DownloaderScreen() {
       }
     } catch (err) {
       setVideoInfo(null);
-      setVideoInfoError(err instanceof Error ? err.message : 'Failed to load video information.');
+      setVideoInfoError(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to load video information.');
     } finally {
       setLoadingVideoData(false);
     }

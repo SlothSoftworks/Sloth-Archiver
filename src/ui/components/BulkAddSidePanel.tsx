@@ -37,7 +37,7 @@ const STATUS_COLOR: Record<BulkAddStatus, 'default' | 'info' | 'success' | 'warn
   done: 'success',
   skipped: 'warning',
   failed: 'error',
-  cancelled: 'default',
+  cancelled: 'warning',
 };
 
 const STATUS_LABEL: Record<BulkAddStatus, string> = {
@@ -89,7 +89,7 @@ function BulkAddProgressBar({ downloadProgress, postprocessProgress }: { downloa
   );
 }
 
-function BulkAddListItem({ item, stopping, onRetry, onRemove }: { item: BulkAddItem; stopping: boolean; onRetry: () => void; onRemove: () => void }) {
+function BulkAddListItem({ item, stopping, onRetry, onRemove, onCancel }: { item: BulkAddItem; stopping: boolean; onRetry: () => void; onRemove: () => void; onCancel: () => void }) {
   const isActive = item.status === 'fetching' || item.status === 'downloading';
   // Once an item is done (or cancelled) there's nothing left to clean up
   // individually -- "Clear done" (below) is the affordance for that now, so
@@ -118,6 +118,12 @@ function BulkAddListItem({ item, stopping, onRetry, onRemove }: { item: BulkAddI
             <Tooltip title={retryLabel}>
               <IconButton size="small" onClick={onRetry} aria-label={retryLabel}>
                 <ReplayIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>}
+          {item.status === 'downloading' &&
+            <Tooltip title="Cancel this download">
+              <IconButton size="small" onClick={onCancel} aria-label="Cancel this download">
+                <CancelIcon fontSize="small" />
               </IconButton>
             </Tooltip>}
           {showDelete &&
@@ -161,6 +167,10 @@ function BulkAddListItem({ item, stopping, onRetry, onRemove }: { item: BulkAddI
                 downloadProgress={item.downloadProgress ?? 0}
                 postprocessProgress={item.postprocessProgress ?? 0}
               />}
+            {item.isRetrying &&
+              <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 0.5 }}>
+                Retrying after a download error...
+              </Typography>}
             {item.error && <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>{item.error}</Typography>}
             {stopping &&
               <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 0.5 }}>
@@ -176,7 +186,7 @@ function BulkAddListItem({ item, stopping, onRetry, onRemove }: { item: BulkAddI
 }
 
 export default function BulkAddSidePanel() {
-  const { items, isRunning, stopRequested, panelOpen, setPanelOpen, stop, resume, cancelAllPending, retryItem, removeItem, clearFinished } = useBulkAddQueue();
+  const { items, isRunning, stopRequested, panelOpen, setPanelOpen, stop, resume, cancelAllPending, cancelItem, retryItem, removeItem, clearFinished } = useBulkAddQueue();
   const [dialogOpen, setDialogOpen] = useState(false);
   const hasFinished = items.some((it) => it.status === 'done' || it.status === 'skipped' || it.status === 'cancelled');
   // Only meaningful once stopped -- while running, whatever's still
@@ -243,6 +253,7 @@ export default function BulkAddSidePanel() {
                   stopping={stopRequested && (item.status === 'fetching' || item.status === 'downloading')}
                   onRetry={() => retryItem(item.id)}
                   onRemove={() => removeItem(item.id)}
+                  onCancel={() => cancelItem(item.id)}
                 />
               ))}
             </List>
