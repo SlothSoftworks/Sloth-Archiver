@@ -5,7 +5,12 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['dist'] },
+  // .venv-build is the Python venv build-ytdlp-bin.mjs creates locally (pip-
+  // installed packages, including vendored/minified JS files from yt-dlp's
+  // own JS-challenge solver and urllib3) -- never source this repo owns, and
+  // not present in a fresh checkout, but picked up by the **/*.{js,mjs} glob
+  // below whenever it exists on disk.
+  { ignores: ['dist', '.venv-build', 'build'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],

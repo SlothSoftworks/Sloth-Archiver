@@ -122,7 +122,7 @@ export function BasicTabs() {
   // like any other tab: back to its own start.
   const [libraryResetKey, setLibraryResetKey] = useState(0);
 
-  const handleChange = (event: React.SyntheticEvent, newValue: number) => {
+  const handleChange = (_event: React.SyntheticEvent, newValue: number) => {
     navigate(TAB_PATHS[newValue]);
     if (newValue === LIBRARY_TAB_INDEX) {
       resetLibraryNotifications();

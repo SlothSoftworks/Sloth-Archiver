@@ -40,8 +40,8 @@ function useYtdlpUpdaterState() {
   const [updateError, setUpdateError] = useState<string | null>(null);
 
   useEffect(() => {
-    window.electronAPI.onYtdlpUpdateProgress(({ stage }: { stage: YtdlpUpdateStage }) => {
-      setStage(stage);
+    window.electronAPI.onYtdlpUpdateProgress(({ stage }: { stage: string }) => {
+      setStage(stage as YtdlpUpdateStage);
     });
     return () => {
       window.electronAPI.removeYtdlpUpdateProgressListener();

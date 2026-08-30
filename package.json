@@ -28,13 +28,6 @@
         ]
       },
       {
-        "from": "dist/deno/",
-        "to": "deno",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
         "from": "src/python/",
         "to": "python-src",
         "filter": [
@@ -68,8 +61,7 @@
     "build:copy:electron": "node scripts/copy-electron.mjs",
     "build:ytdlp:bin": "node scripts/build-ytdlp-bin.mjs",
     "build:copy:ffmpeg": "node scripts/copy-ffmpeg.mjs",
-    "build:copy:deno": "node scripts/copy-deno.mjs",
-    "build:electron": "npm run build:copy:electron && npm run build:ytdlp:bin && npm run build:copy:ffmpeg && npm run build:copy:deno",
+    "build:electron": "npm run build:copy:electron && npm run build:ytdlp:bin && npm run build:copy:ffmpeg",
     "build:all": "npm run build:renderer && npm run build:electron",
     "clean:venv": "node scripts/clean-venv.mjs",
     "build:all:deep": "npm run clean:venv && npm run build:all",
@@ -97,7 +89,6 @@
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^6.0.5",
     "@vitest/coverage-v8": "^4.1.10",
-    "deno": "^2.9.5",
     "electron": "^43.2.0",
     "electron-builder": "^26.0.12",
     "electron-devtools-installer": "^4.0.0",

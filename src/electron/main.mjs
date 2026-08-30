@@ -60,16 +60,6 @@ const ffprobeBinaryName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprob
 const ffmpegBinaryPath = path.join(ffmpegDir, ffmpegBinaryName);
 const ffprobeBinaryPath = path.join(ffmpegDir, ffprobeBinaryName);
 
-// Bundled the same way as ffmpeg/ffprobe above -- yt-dlp needs a real JS
-// runtime to solve YouTube's nsig signature challenge (TD-010, reports/
-// TechnicalDebt.md); without one, every real video/audio format silently
-// disappears once a request is authenticated, leaving only storyboard
-// formats. Bundled rather than relying on the user having Node/Deno
-// installed, matching this app's zero-external-dependency approach.
-const denoDir = isDev ? path.resolve(__dirname, '../deno') : path.join(process.resourcesPath, 'deno');
-const denoBinaryName = process.platform === 'win32' ? 'deno.exe' : 'deno';
-const denoBinaryPath = path.join(denoDir, denoBinaryName);
-
 // extraResources (Contents/Resources on mac, the resources dir on Windows)
 // isn't reliably writable without elevation, so the updater could never swap
 // a fresh binary in there. Relocate to userData (always per-user-writable)
@@ -98,19 +88,32 @@ const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const videoInfoCachePath = path.join(app.getPath('userData'), 'videoInfoCache.json');
 const VIDEO_INFO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Points yt-dlp at the bundled deno binary rather than letting it search the
-// system PATH (which the "js-runtimes" default probe does on its own, but
-// only for a runtime it happens to find -- not guaranteed on a real user's
-// machine). See denoBinaryPath's own comment (TD-010) for why this exists.
+// yt-dlp needs a real JS runtime to solve YouTube's nsig signature challenge
+// (TD-010, reports/TechnicalDebt.md); without one, every real video/audio
+// format silently disappears once a request is authenticated, leaving only
+// storyboard formats. Rather than bundling a standalone JS runtime binary
+// (previously Deno, ~96MB), this points yt-dlp's "node" provider at the
+// Electron binary itself -- Electron already embeds a full Node.js runtime,
+// and running it with ELECTRON_RUN_AS_NODE=1 (see ytdlpSpawnEnv below) makes
+// it behave as a plain `node` executable for yt-dlp's purposes, at zero
+// extra bundled bytes.
 export function jsRuntimeArgs() {
-    return ['--js-runtimes', `deno:${denoBinaryPath}`];
+    return ['--js-runtimes', `node:${process.execPath}`];
+}
+
+// Every yt-dlp child process needs this env so that the Electron-binary-as-
+// node trick above actually works -- yt-dlp spawns process.execPath itself
+// as a nested child, which inherits whatever env yt-dlp was spawned with.
+// Harmless for yt-dlp's own (Python) process, which never checks this var.
+export function ytdlpSpawnEnv() {
+    return { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
 }
 
 const { readSettings, writeSettings } = createSettingsStore(settingsPath);
 export const cookiesArgs = makeCookiesArgs(readSettings, cookiesPath);
 const { readVideoInfoCache, writeVideoInfoCache } = createVideoInfoCache(videoInfoCachePath);
 const { ensureChannelIcon, ensureVideoThumbnail, ensurePlaylistThumbnail } = createThumbnailFetchers({
-    ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, onLog: log,
+    ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, onLog: log,
 });
 const ffmpegRunner = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath });
 const { getMediaDurationSeconds, runFfmpegWithProgress, convertWithFallback, clipAndConvert } = ffmpegRunner;
@@ -471,7 +474,7 @@ function fetchPlaylistEntries(playlistUrl) {
         const script = spawn(ytdlpPath, [
             '-J', '--no-warnings', '--flat-playlist',
             '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), playlistUrl,
-        ]);
+        ], { env: ytdlpSpawnEnv() });
         let data = '';
         let error = '';
         script.on('error', (err) => reject(new Error(`Failed to start yt-dlp: ${err.message}`)));
@@ -826,7 +829,7 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options)
 })
 
 ipcMain.handle('getVideoInfoPython', async (event, url) => fetchVideoInfo(url, {
-    ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS, onLog: log,
+    ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS, onLog: log,
 }));
 
 export function needsDirectFfmpegPass({ format, resolution }) {
@@ -1094,7 +1097,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
 
     function attemptDownload(attempt) {
         // detached only on POSIX -- see killDownloadProcessTree above.
-        const script = spawn(ytdlpPath, downloadArgs, { detached: process.platform !== 'win32' });
+        const script = spawn(ytdlpPath, downloadArgs, { detached: process.platform !== 'win32', env: ytdlpSpawnEnv() });
         activeDownloadProcesses.set(options.requestId, script);
 
         let error = '';

@@ -60,7 +60,7 @@ function useDownloadVideo() {
       const listener = window.electronAPIPythonDownload.onProgressUpdate((msg: DownloadProgressMessage) => {
         if (msg.requestId !== requestIdRef.current) return;
         const { type, payload } = msg;
-        let accumErr = msg;
+        let accumErr: object = msg;
         // A retry that starts making progress again (or finishes) is no
         // longer "retrying" -- only the 'retrying' case itself should leave
         // this true.
@@ -109,7 +109,7 @@ function useDownloadVideo() {
             setIsRetrying(false);
             setDownloadErrorKind(payload.kind ?? null);
             if (downloadError != null) {
-              accumErr = JSON.stringify(downloadError) + '\n' + JSON.stringify(msg);
+              accumErr = { previous: downloadError, current: msg };
             }
             setDownloadError(accumErr);
             break;

@@ -1,6 +1,9 @@
 export interface Resolution {
     resolution: string;
-    filesizeMb: string;
+    // videoInfo.mjs's buildResolutions computes this as a rounded number (or
+    // null when neither filesize/filesize_approx nor tbr+duration are
+    // available) -- never a string.
+    filesizeMb: number | null;
 }
 
 // Mirrors the shape returned by window.electronAPI.getLibraryIndex() et al.

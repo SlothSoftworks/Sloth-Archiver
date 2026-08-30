@@ -26,6 +26,7 @@ type LibraryIndex = {
             latestEpoch: string | null;
             metadata: LibraryVideoMetadata;
             epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
+            thumbnailPath: string | null;
             clipCount: number;
         }[];
     }[];
@@ -33,6 +34,11 @@ type LibraryIndex = {
 
 declare global {
     interface Window {
+        // Set by App.tsx only in the dev-mock fallback path (no real preload
+        // attached) -- read back by testing/mockData/electronAPIMocks.ts to
+        // decide whether DownloaderScreen should seed itself with mock video
+        // info.
+        mockingElectron?: string;
         electronAPI: {
             pickFolder: (options: T) => Promise <OpenFolderResult>;
             saveVideoFile: (defaultName?: string) => Promise <FolderPickerResult>;

@@ -112,9 +112,9 @@ export function isDeadVideoInfo(response) {
 // string and run it through the same classifier the download path uses
 // (src/electron/downloadErrors.mjs) -- only triggered on the already-unusual
 // "formats came back empty" path for a YouTube URL.
-function classifyEmptyFormatsFailure(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs }) {
+function classifyEmptyFormatsFailure(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv }) {
     return new Promise((resolve) => {
-        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url]);
+        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url], { env: ytdlpSpawnEnv() });
         let stderrOutput = '';
         let settled = false;
         // Only runs on a path that already failed once, so a real dead-video
@@ -199,7 +199,7 @@ export function createVideoInfoCache(videoInfoCachePath) {
 // video classification -> reshape -> cache write. One function so main.mjs's
 // IPC handler stays a thin wrapper, same shape as updater.mjs's
 // performYtdlpUpdate.
-export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs, onLog = () => {} }) {
+export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs, onLog = () => {} }) {
     const cache = readVideoInfoCache();
     const cached = cache[url];
     if (cached && Date.now() - cached.savedEpoch < cacheTtlMs) {
@@ -226,7 +226,7 @@ export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRunti
         // the *playlist* here, not the video -- this call is only ever used
         // for single-video lookups (playlists have their own dedicated
         // --flat-playlist fetch in main.mjs's fetchPlaylistEntries).
-        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ignore-no-formats-error', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url]);
+        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ignore-no-formats-error', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url], { env: ytdlpSpawnEnv() });
         let data = '';
         let error = '';
 
@@ -260,7 +260,7 @@ export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRunti
                     // genuine extraction failures.
                     if (!info.formats || info.formats.length === 0) {
                         if (isYouTubeUrl(url)) {
-                            const classified = await classifyEmptyFormatsFailure(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs });
+                            const classified = await classifyEmptyFormatsFailure(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv });
                             onLog(`[videoInfo] empty formats for ${url} -- kind=${classified.kind}: ${classified.message}`);
                             reject(new Error(describeEmptyFormatsFailure(classified.kind)));
                             return;

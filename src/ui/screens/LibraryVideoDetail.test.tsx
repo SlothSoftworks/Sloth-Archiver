@@ -22,9 +22,9 @@ function baseMetadata(overrides: Record<string, unknown> = {}) {
     uploadDate: '20260115',
     addedEpoch: 0,
     resolutions: [
-      { resolution: '720', filesizeMb: '10' },
-      { resolution: '480', filesizeMb: '5' },
-      { resolution: 'MP3', filesizeMb: '3' },
+      { resolution: '720', filesizeMb: 10 },
+      { resolution: '480', filesizeMb: 5 },
+      { resolution: 'MP3', filesizeMb: 3 },
     ],
     downloadedFilePath: null,
     downloadedResolution: null,

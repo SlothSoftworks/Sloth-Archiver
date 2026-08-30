@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
 // recalculates height to match automatically -- so the ratio can never be
 // broken by the resize handle itself, only "both" (independently draggable
 // height) could do that.
-const baseSx = {
+const baseSx: SxProps<Theme> = {
   width: '100%',
   maxWidth: '100%',
   minWidth: 240,
@@ -19,5 +19,10 @@ const baseSx = {
 };
 
 export default function ResizableMediaContainer({ children, sx }: { children: ReactNode; sx?: SxProps<Theme> }) {
-  return <Box sx={{ ...baseSx, ...sx }}>{children}</Box>;
+  // sx can be an object, an array of objects, or a theme-fn -- MUI's own
+  // documented way to merge a caller-supplied sx with a base one is an sx
+  // array (see https://mui.com/system/getting-started/the-sx-prop/#passing-sx-prop),
+  // not an object spread (which silently breaks the moment sx is anything
+  // but a plain object).
+  return <Box sx={[baseSx, ...(Array.isArray(sx) ? sx : sx ? [sx] : [])]}>{children}</Box>;
 }
