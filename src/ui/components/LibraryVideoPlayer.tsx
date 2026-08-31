@@ -25,6 +25,24 @@ export type LibraryVideoPlayerHandle = {
   pause: () => void;
 };
 
+// Embeds the clip Start/End/Clip/Clear controls (LibraryVideoPlayerControls.tsx)
+// directly in the player chrome, driven entirely by LibraryVideoDetail.tsx's own
+// clipStart/clipEnd state -- undefined here means "don't render these at all",
+// which is how ClipCollectionView's player (clip creation doesn't apply to a clip)
+// stays completely unaffected without needing any changes of its own.
+export type ClipMarkersControl = {
+  startSeconds: number | null;
+  endSeconds: number | null;
+  onSetStart: () => void;
+  onSetEnd: () => void;
+  onStartSecondsChange: (seconds: number) => void;
+  onEndSecondsChange: (seconds: number) => void;
+  onSave: () => void;
+  saveDisabled: boolean;
+  onClear: () => void;
+  clearDisabled: boolean;
+};
+
 // Only mp4/webm play reliably in Chromium's <video> element -- MKV is a
 // container-parsing limitation no delivery mechanism can work around, and
 // could still land here from a download made before buildDownloadArgs
@@ -95,7 +113,10 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // (unlike the normal video path) never falls back to a YouTube embed, since
   // a clip has no meaningful remote-video identity to embed.
   overrideFilePath?: string;
-}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath }, ref) {
+  // Only ever passed by the main video detail view -- ClipCollectionView never
+  // sets this, so its player never renders the embedded clip controls.
+  clipMarkers?: ClipMarkersControl;
+}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers }, ref) {
   const { thumbnail, videoId } = metadata;
   const filePath = overrideFilePath ?? metadata.downloadedFilePath;
   const [state, setState] = useState<PlaybackState>(() => computeInitialState(filePath));
@@ -199,7 +220,24 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             onPlay={() => setHasStartedPlayback(true)}
           >
             <MediaProvider />
-            <LibraryVideoPlayerControls />
+            {/* Click-anywhere-on-the-video-to-toggle, like every other
+                player. Deliberately NOT Vidstack's own <Gesture> primitive:
+                for any non-"dbl"-prefixed event it unconditionally waits
+                250ms before firing (source: vidstack's Gesture#acceptEvent),
+                purely to disambiguate from a double-tap gesture -- overhead
+                that buys nothing here since this player has no double-tap
+                gesture registered. A plain onClick calling the player
+                directly has zero such delay. Placed before the controls in
+                DOM order so a real control click still lands on the
+                control, not this. */}
+            <Box
+              onClick={() => {
+                if (playerRef.current?.paused) safePlay();
+                else safePause();
+              }}
+              sx={{ position: 'absolute', inset: 0, cursor: 'pointer' }}
+            />
+            <LibraryVideoPlayerControls clipMarkers={clipMarkers} />
           </MediaPlayer>
           {/* Vidstack's own <Poster> component hard-rejects any src scheme
               outside http/https/data/blob -- our custom app-video:// scheme

@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import LibraryVideoPlayer from './LibraryVideoPlayer';
+import LibraryVideoPlayer, { type ClipMarkersControl } from './LibraryVideoPlayer';
 import type { LibraryVideoMetadata } from '../../types';
 
 function baseMetadata(overrides: Partial<LibraryVideoMetadata> = {}): LibraryVideoMetadata {
@@ -161,5 +161,80 @@ describe('LibraryVideoPlayer', () => {
     );
     expect(container.querySelector('iframe')).toBeNull();
     expect(container.querySelector('video')).toBeNull();
+  });
+
+  describe('clipMarkers', () => {
+    function noopClipMarkers(overrides: Partial<ClipMarkersControl> = {}): ClipMarkersControl {
+      return {
+        startSeconds: null,
+        endSeconds: null,
+        onSetStart: vi.fn(),
+        onSetEnd: vi.fn(),
+        onStartSecondsChange: vi.fn(),
+        onEndSecondsChange: vi.fn(),
+        onSave: vi.fn(),
+        saveDisabled: true,
+        onClear: vi.fn(),
+        clearDisabled: true,
+        ...overrides,
+      };
+    }
+
+    it('does not render the embedded clip controls when clipMarkers is not passed (e.g. Clip Collection)', async () => {
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} />,
+      );
+      await findSourceEl(container);
+      expect(screen.queryByRole('button', { name: 'Set clip start' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Set clip end' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Save clip' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Clear clip selection' })).not.toBeInTheDocument();
+    });
+
+    it('wires Set Start/Set End clicks straight through to the given callbacks', async () => {
+      const user = userEvent.setup();
+      const clipMarkers = noopClipMarkers();
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} clipMarkers={clipMarkers} />,
+      );
+      await findSourceEl(container);
+
+      await user.click(screen.getByRole('button', { name: 'Set clip start' }));
+      expect(clipMarkers.onSetStart).toHaveBeenCalledTimes(1);
+
+      await user.click(screen.getByRole('button', { name: 'Set clip end' }));
+      expect(clipMarkers.onSetEnd).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables Save/Clear per their own props, and wires clicks through once enabled', async () => {
+      const user = userEvent.setup();
+      const clipMarkers = noopClipMarkers({ startSeconds: 5, endSeconds: 10, saveDisabled: false, clearDisabled: false });
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} clipMarkers={clipMarkers} />,
+      );
+      await findSourceEl(container);
+
+      const saveButton = screen.getByRole('button', { name: 'Save clip' });
+      expect(saveButton).toBeEnabled();
+      await user.click(saveButton);
+      expect(clipMarkers.onSave).toHaveBeenCalledTimes(1);
+
+      const clearButton = screen.getByRole('button', { name: 'Clear clip selection' });
+      expect(clearButton).toBeEnabled();
+      await user.click(clearButton);
+      expect(clipMarkers.onClear).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables Save and Clear when their respective props say so', async () => {
+      const { container } = render(
+        <LibraryVideoPlayer
+          metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+          clipMarkers={noopClipMarkers({ saveDisabled: true, clearDisabled: true })}
+        />,
+      );
+      await findSourceEl(container);
+      expect(screen.getByRole('button', { name: 'Save clip' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Clear clip selection' })).toBeDisabled();
+    });
   });
 });

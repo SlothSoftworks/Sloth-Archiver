@@ -1350,14 +1350,26 @@ ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, forma
 // only an I/O cost. -c copy snaps to the nearest keyframe rather than an
 // exact frame, a documented tradeoff; frame-accurate re-encoded cuts are a
 // deliberately separate, not-yet-offered option.
-ipcMain.handle('library:extractClip', async (e, { inputPath, outputPath, start, end }) => {
+// Arbitrary-output-path clip export: unlike library:createClip below, this
+// never touches clips.json and writes wherever the caller (a save dialog)
+// picked, for player instances with no "library video entry" to attach a
+// clip to (e.g. LibraryVideoPlayerWithTools's standaloneClipping mode, or
+// its "also save as a file" checkbox). Shares clipAndConvert with
+// library:createClip so format/forceReencode behave identically either way.
+ipcMain.handle('library:extractClip', async (e, { inputPath, outputPath, start, end, format, forceReencode = false }) => {
     try {
-        await runFfmpegWithProgress({
+        const targetFormat = format && format !== 'source' ? format : null;
+        const startSeconds = parseClipTimestampSeconds(start);
+        const endSeconds = parseClipTimestampSeconds(end);
+        await clipAndConvert({
             inputPath,
             outputPath,
-            codecArgs: ['-ss', start, '-to', end, '-c', 'copy'],
-            totalDurationSeconds: 0,
+            start,
+            end,
+            format: targetFormat,
+            totalDurationSeconds: Math.max(0, endSeconds - startSeconds),
             onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
+            forceReencode,
         });
         return { success: true, outputPath };
     } catch (err) {

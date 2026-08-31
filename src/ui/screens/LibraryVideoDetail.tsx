@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Box,
@@ -30,11 +30,10 @@ import { convertYYYYMMDDStringToDate, cleanElectronErrorMessage } from '../../ut
 import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
-import LibraryVideoPlayer, { type LibraryVideoPlayerHandle } from '../components/LibraryVideoPlayer';
 import VideoQualityDownload from './VideoQualityDownload';
-import FfmpegUtilitiesPanel, { OTHER_FORMAT_VALUE, formatSecondsAsClipTimestamp } from './FfmpegUtilitiesPanel';
+import FfmpegUtilitiesPanel, { OTHER_FORMAT_VALUE } from './FfmpegUtilitiesPanel';
 import ClipCollectionView from '../components/ClipCollectionView';
-import SaveClipDialog from '../components/SaveClipDialog';
+import LibraryVideoPlayerWithTools from '../components/LibraryVideoPlayerWithTools';
 import type { LibraryVideoMetadata, LibraryClip } from '../../types';
 
 type LibraryVideo = {
@@ -99,12 +98,6 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // would silently keep a mismatched codec (e.g. AV1 remuxed into ".webm"
   // instead of real VP9), not a default-on safety net.
   const [forceReencode, setForceReencode] = useState(false);
-  const [clipStart, setClipStart] = useState('');
-  const [clipEnd, setClipEnd] = useState('');
-  // Backs the clip fields' "pick from player" buttons -- LibraryVideoPlayer
-  // exposes the <video> element's currentTime through this handle, since the
-  // element lives inside that component, not here.
-  const playerRef = useRef<LibraryVideoPlayerHandle>(null);
   // User-added muxers from Options, on top of the popular default set --
   // fetched once on mount, no live-update need within a session.
   const [customConvertFormats, setCustomConvertFormats] = useState<string[]>([]);
@@ -137,9 +130,6 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const [activeView, setActiveView] = useState<'video' | 'clips'>('video');
   const [clips, setClips] = useState<LibraryClip[]>([]);
   const [clipsLoaded, setClipsLoaded] = useState(false);
-  const [saveClipDialogOpen, setSaveClipDialogOpen] = useState(false);
-  const [savingClip, setSavingClip] = useState(false);
-  const [saveClipError, setSaveClipError] = useState<string | null>(null);
 
   useEffect(() => {
     if (activeView === 'clips' && !clipsLoaded) {
@@ -471,60 +461,6 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setFfmpegAction(null);
   };
 
-  // "Pick timestamp" -- grabs wherever the player's playback currently sits
-  // and drops it into the clip field, rounded down to a whole second since
-  // the clip fields are whole-second precision. A silent no-op with no
-  // active video element to read from -- ffmpegControlsDisabled already
-  // keeps the buttons disabled in that case.
-  const handleSetClipStartFromPlayer = () => {
-    const time = playerRef.current?.getCurrentTime();
-    if (time == null) return;
-    setClipStart(formatSecondsAsClipTimestamp(Math.floor(time)));
-  };
-
-  const handleSetClipEndFromPlayer = () => {
-    const time = playerRef.current?.getCurrentTime();
-    if (time == null) return;
-    setClipEnd(formatSecondsAsClipTimestamp(Math.floor(time)));
-  };
-
-  // The clip-range-invalid case is already caught by FfmpegUtilitiesPanel
-  // disabling its Extract Clip button (see its own clipRangeInvalid) -- this
-  // handler is only ever reachable through that button. Opens SaveClipDialog
-  // instead of the old save-file dialog -- clips are saved permanently into
-  // the library's clips/ folder, not exported to an arbitrary location.
-  const handleOpenSaveClipDialog = () => {
-    if (!metadata.downloadedFilePath || !clipStart.trim() || !clipEnd.trim()) return;
-    setSaveClipError(null);
-    setSaveClipDialogOpen(true);
-  };
-
-  const handleSubmitSaveClip = async (
-    { clipName, start, end, format, forceReencode }: { clipName: string; start: string; end: string; format: string; forceReencode: boolean },
-  ) => {
-    if (!metadata.downloadedFilePath) return;
-    setSavingClip(true);
-    setSaveClipError(null);
-    setFfmpegProgress(0);
-    const res = await window.electronAPI.createClip({
-      videoDir: video.videoDir,
-      inputPath: metadata.downloadedFilePath,
-      start,
-      end,
-      format,
-      clipName,
-      forceReencode,
-    });
-    setSavingClip(false);
-    if (!res.success || !res.clip) {
-      setSaveClipError(res.message || 'Failed to save clip.');
-      return;
-    }
-    setClips((prev) => [...prev, res.clip!]);
-    setSaveClipDialogOpen(false);
-    await onVersionsChanged(); // refreshes the parent's index so the grid's clipCount updates
-  };
-
   // Local ffmpeg extraction from the already-downloaded video file, landing
   // directly in this version's own audio slot -- unlike handleExtractMp3
   // above (exports a copy to a user-picked location), this saves and plays
@@ -755,7 +691,18 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           between local-file and YouTube-embed branches on version switch. */
       <Stack key={selectedEpoch || 'no-epoch'} direction={{ xs: 'column', md: 'row' }} spacing={2}>
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '70%' } }}>
-          <LibraryVideoPlayer ref={playerRef} metadata={metadata} thumbnailPath={video.thumbnailPath} cacheBustKey={cacheBustKey} />
+          <LibraryVideoPlayerWithTools
+            metadata={metadata}
+            thumbnailPath={video.thumbnailPath}
+            cacheBustKey={cacheBustKey}
+            videoDir={video.videoDir}
+            existingClipTitles={clips.map((c) => c.title)}
+            convertFormatOptions={convertFormatOptions}
+            onClipCreated={(clip) => {
+              setClips((prev) => [...prev, clip]);
+              onVersionsChanged();
+            }}
+          />
 
           {/* Bounded + scrollable rather than letting a long description
               push the instrument panel below the fold. */}
@@ -822,15 +769,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 setOtherFormatInput={setOtherFormatInput}
                 forceReencode={forceReencode}
                 setForceReencode={setForceReencode}
-                clipStart={clipStart}
-                setClipStart={setClipStart}
-                clipEnd={clipEnd}
-                setClipEnd={setClipEnd}
-                onSetClipStartFromPlayer={handleSetClipStartFromPlayer}
-                onSetClipEndFromPlayer={handleSetClipEndFromPlayer}
                 onExtractMp3={handleExtractMp3}
                 onConvertFormat={handleConvertFormat}
-                onExtractClip={handleOpenSaveClipDialog}
                 onEmbedMetadata={handleEmbedMetadata}
               />
             </Stack>
@@ -838,19 +778,6 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
         </Stack>
       </Stack>
       )}
-
-      <SaveClipDialog
-        open={saveClipDialogOpen}
-        onClose={() => setSaveClipDialogOpen(false)}
-        defaultClipStart={clipStart}
-        defaultClipEnd={clipEnd}
-        convertFormatOptions={convertFormatOptions}
-        existingClipTitles={clips.map((c) => c.title)}
-        submitting={savingClip}
-        progress={ffmpegProgress}
-        error={saveClipError}
-        onSubmit={handleSubmitSaveClip}
-      />
 
       <Dialog open={deleteDialogOpen} onClose={() => !deleting && setDeleteDialogOpen(false)}>
         <DialogTitle>Delete this video?</DialogTitle>

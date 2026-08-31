@@ -1,11 +1,17 @@
-import { Box } from '@mui/material';
+import { useRef } from 'react';
+import { Box, IconButton, Tooltip } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
-import { PlayButton, MuteButton, FullscreenButton, Time, TimeSlider, VolumeSlider, useMediaState } from '@vidstack/react';
+import StartIcon from '@mui/icons-material/Start';
+import ContentCutIcon from '@mui/icons-material/ContentCut';
+import ClearIcon from '@mui/icons-material/Clear';
+import { PlayButton, MuteButton, FullscreenButton, Time, TimeSlider, VolumeSlider, useMediaState, useMediaRemote } from '@vidstack/react';
+import type { ClipMarkersControl } from './LibraryVideoPlayer';
 
 // Every control below is one of Vidstack's headless primitives (real,
 // correctly-ARIA'd DOM elements with built-in click/drag/keyboard behavior
@@ -82,11 +88,121 @@ const sliderThumbSx = {
   transform: 'translate(-50%, -50%)',
 };
 
-export default function LibraryVideoPlayerControls() {
+const clipButtonSx = {
+  padding: 0.5,
+  color: 'inherit',
+  '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.15)' },
+  '&.Mui-disabled': { color: 'rgba(255, 255, 255, 0.3)' },
+};
+
+// Pure, geometry-in-geometry-out conversion -- deliberately not inlined in a
+// pointer-event handler so it can be unit-tested by feeding it a plain object
+// shaped like a DOMRect, without rendering anything. That's required, not
+// just tidy: jsdom's real getBoundingClientRect() always returns a
+// zero-size rect (no layout engine), so this math could never be verified
+// through a rendered tree in a test environment anyway.
+export function secondsFromPointerX(clientX: number, trackRect: { left: number; width: number }, duration: number): number {
+  if (trackRect.width <= 0 || duration <= 0) return 0;
+  const pct = Math.min(1, Math.max(0, (clientX - trackRect.left) / trackRect.width));
+  return pct * duration;
+}
+
+export function clipMarkerPercent(seconds: number | null, duration: number): number | null {
+  if (seconds == null || !(duration > 0)) return null;
+  return Math.min(1, Math.max(0, seconds / duration)) * 100;
+}
+
+// One draggable marker -- used for both the clip start and end positions.
+// Drag itself never seeks (avoids seek-spam on every pointer-move); only the
+// final position on release does, via Vidstack's own remote control, so the
+// user gets a one-shot visual confirmation of exactly where they landed.
+//
+// Shaped like a bracket -- "[" for start (top/bottom arms extend right, away
+// from the clipped-out region), "]" for end (arms extend left) -- so which
+// marker is which is legible at a glance, not just inferable from position.
+// The end marker also sits on a higher z-index: when start and end land only
+// a pixel or two apart (a real case -- a short clip near the start of a long
+// video), their thin hit-areas overlap almost exactly, and without an
+// explicit stacking order a drag meant for one could silently grab whichever
+// happened to be later in the DOM. Making end win is deliberate, not
+// incidental, and matches "you're most often fine-tuning the end after
+// already placing the start" being the more common next action.
+function ClipMarker({
+  seconds, duration, variant, trackRef, onSecondsChange,
+}: {
+  seconds: number | null;
+  duration: number;
+  variant: 'start' | 'end';
+  trackRef: React.RefObject<HTMLElement | null>;
+  onSecondsChange: (seconds: number) => void;
+}) {
+  const remote = useMediaRemote();
+  const pct = clipMarkerPercent(seconds, duration);
+  if (pct == null) return null;
+
+  const armSide = variant === 'start' ? 'left' : 'right';
+
+  const computeSeconds = (clientX: number): number | null => {
+    const track = trackRef.current;
+    if (!track) return null;
+    return secondsFromPointerX(clientX, track.getBoundingClientRect(), duration);
+  };
+
+  return (
+    <Box
+      role="slider"
+      aria-label={variant === 'start' ? 'Clip start' : 'Clip end'}
+      aria-valuenow={seconds ?? 0}
+      tabIndex={0}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        e.currentTarget.setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (!e.buttons) return;
+        const next = computeSeconds(e.clientX);
+        if (next != null) onSecondsChange(next);
+      }}
+      onPointerUp={(e) => {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+        const next = computeSeconds(e.clientX);
+        if (next != null) remote.seek(next);
+      }}
+      sx={{
+        position: 'absolute', top: -4, bottom: -4, left: `${pct}%`,
+        // warning.main (not primary.main, already used for the playback
+        // fill/thumb just below) so a clip marker never gets confused for
+        // current position, while still following the theme rather than a
+        // hardcoded hex -- keeps this in step with whatever palette a future
+        // reskin/expansion of this player ends up using.
+        width: 3, backgroundColor: 'warning.main', cursor: 'ew-resize',
+        transform: 'translateX(-50%)', touchAction: 'none',
+        zIndex: variant === 'end' ? 2 : 1,
+        '&::before, &::after': {
+          content: '""',
+          position: 'absolute',
+          height: 2,
+          width: 6,
+          backgroundColor: 'warning.main',
+          [armSide]: 0,
+        },
+        '&::before': { top: 0 },
+        '&::after': { bottom: 0 },
+      }}
+    />
+  );
+}
+
+export default function LibraryVideoPlayerControls({ clipMarkers }: { clipMarkers?: ClipMarkersControl }) {
   const paused = useMediaState('paused');
   const muted = useMediaState('muted');
   const fullscreen = useMediaState('fullscreen');
   const canFullscreen = useMediaState('canFullscreen');
+  const duration = useMediaState('duration');
+  const trackRef = useRef<HTMLElement | null>(null);
+
+  const startPct = clipMarkers ? clipMarkerPercent(clipMarkers.startSeconds, duration) : null;
+  const endPct = clipMarkers ? clipMarkerPercent(clipMarkers.endSeconds, duration) : null;
 
   return (
     <Box
@@ -105,10 +221,35 @@ export default function LibraryVideoPlayerControls() {
       <Box component={Time} type="current" sx={timeTextSx} />
 
       <Box component={TimeSlider.Root} aria-label="Seek" sx={{ ...sliderRootSx, flex: 1 }}>
-        <Box component={TimeSlider.Track} sx={sliderTrackSx}>
+        <Box ref={trackRef} component={TimeSlider.Track} sx={sliderTrackSx}>
           <Box component={TimeSlider.TrackFill} sx={sliderTrackFillSx} />
+          {clipMarkers && startPct != null && endPct != null &&
+            <Box
+              sx={{
+                position: 'absolute', height: '100%',
+                left: `${Math.min(startPct, endPct)}%`,
+                width: `${Math.abs(endPct - startPct)}%`,
+                backgroundColor: (theme) => alpha(theme.palette.warning.main, 0.35),
+              }}
+            />}
         </Box>
         <Box component={TimeSlider.Thumb} sx={sliderThumbSx} />
+        {clipMarkers &&
+          <ClipMarker
+            seconds={clipMarkers.startSeconds}
+            duration={duration}
+            variant="start"
+            trackRef={trackRef}
+            onSecondsChange={clipMarkers.onStartSecondsChange}
+          />}
+        {clipMarkers &&
+          <ClipMarker
+            seconds={clipMarkers.endSeconds}
+            duration={duration}
+            variant="end"
+            trackRef={trackRef}
+            onSecondsChange={clipMarkers.onEndSecondsChange}
+          />}
       </Box>
 
       <Box component={Time} type="duration" sx={timeTextSx} />
@@ -123,6 +264,36 @@ export default function LibraryVideoPlayerControls() {
         </Box>
         <Box component={VolumeSlider.Thumb} sx={sliderThumbSx} />
       </Box>
+
+      {clipMarkers &&
+        <>
+          <Tooltip title="Set clip start here">
+            <IconButton aria-label="Set clip start" onClick={clipMarkers.onSetStart} sx={clipButtonSx}>
+              <StartIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Set clip end here">
+            <IconButton aria-label="Set clip end" onClick={clipMarkers.onSetEnd} sx={clipButtonSx}>
+              {/* Same icon as Set Start, mirrored -- reads as "the other end"
+                  of the same action rather than a visually unrelated icon. */}
+              <StartIcon fontSize="small" sx={{ transform: 'scaleX(-1)' }} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Save clip">
+            <span>
+              <IconButton aria-label="Save clip" onClick={clipMarkers.onSave} disabled={clipMarkers.saveDisabled} sx={clipButtonSx}>
+                <ContentCutIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="Clear clip selection">
+            <span>
+              <IconButton aria-label="Clear clip selection" onClick={clipMarkers.onClear} disabled={clipMarkers.clearDisabled} sx={clipButtonSx}>
+                <ClearIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        </>}
 
       {canFullscreen &&
         <Box component={FullscreenButton} aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} sx={resetButtonSx}>

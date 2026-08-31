@@ -76,7 +76,26 @@ describe('SaveClipDialog', () => {
     await user.click(screen.getByRole('option', { name: 'MP4' }));
     await user.click(screen.getByRole('button', { name: 'Save clip' }));
 
-    expect(onSubmit).toHaveBeenCalledWith({ clipName: 'New Clip', start: '00:00:10', end: '00:00:20', format: 'mp4', forceReencode: false });
+    expect(onSubmit).toHaveBeenCalledWith({
+      clipName: 'New Clip', start: '00:00:10', end: '00:00:20', format: 'mp4', forceReencode: false, saveAsFile: false,
+    });
+  });
+
+  it('hides the "Save as file" checkbox by default', () => {
+    renderDialog();
+    expect(screen.queryByText('Save as file')).not.toBeInTheDocument();
+  });
+
+  it('shows the "Save as file" checkbox when offerSaveAsFile is set, and includes it in the submit payload', async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderDialog({ offerSaveAsFile: true });
+    await user.type(screen.getByLabelText('Clip name'), 'New Clip');
+    await user.click(screen.getByRole('checkbox', { name: 'Save as file' }));
+    await user.click(screen.getByRole('button', { name: 'Save clip' }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      clipName: 'New Clip', start: '00:00:10', end: '00:00:20', format: 'source', forceReencode: false, saveAsFile: true,
+    });
   });
 
   it('shows a progress bar while submitting', () => {
