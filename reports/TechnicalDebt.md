@@ -196,7 +196,7 @@ This is worse than one dead video: `main.js`'s `getVideoInfoPython` handler only
 
 ---
 
-## TD-011 — 2026-08-12 — No way to produce a Linux dist from this (macOS) dev machine
+## TD-011 — [RESOLVED] — 2026-08-12 — No way to produce a Linux dist from this (macOS) dev machine
 
 **Where:** `package.json`'s `build` config (no `linux` target block exists, only `mac`/`win`), and the three scripts that populate the binaries `electron-builder` packages: `scripts/build-ytdlp-bin.mjs` (PyInstaller freeze), `scripts/copy-ffmpeg.mjs` (`ffmpeg-static`/`ffprobe-static`), `scripts/copy-deno.mjs` (the `deno` npm package).
 
@@ -218,6 +218,8 @@ A naive `electron-builder --linux` run on this machine today would happily finis
 - Also needs a `linux` block added to `package.json`'s `build` config (target/category/etc.) — currently absent entirely, so even a correctly-Linux-built set of binaries has nothing telling `electron-builder` what Linux package type to produce.
 
 Assessed as low-medium difficulty: every build step already exists as a working npm script and needs zero modification to run inside a container — the only genuinely new work is the Dockerfile and the one driver script.
+
+**Resolved — 2026-08-31:** Fixed by a different route than the Docker driver script suggested above — CI (`.github/workflows/build.yml`) now runs the Linux build on a real `ubuntu-latest` GitHub-hosted runner instead of trying to produce one from this Mac at all. Every bundled binary (`ffmpeg-static`/`ffprobe-static`'s postinstall, the PyInstaller yt-dlp freeze) resolves natively on that runner, so this sidesteps the cross-compilation problem entirely rather than solving it locally. A `linux` block (`target: AppImage`) was added to `package.json`'s `build` config, which this entry correctly flagged as a second, independent gap beyond the binary problem. See `docs/RELEASING.md` for the full build/release pipeline this is now part of. Note the original "three/four macOS executables" language above is stale (`deno` was removed from the app entirely, unrelated to this fix) — left as originally written per this log's own no-rewrite convention.
 
 ---
 
