@@ -68,10 +68,10 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
         });
     }
 
-    // Bypasses yt-dlp's own postprocessing entirely (TD-004): its
-    // postprocessing subprocess only reads output after the process exits,
-    // so it can never report real progress; spawning ffmpeg ourselves with
-    // -progress pipe:1 gives a genuine, continuous percentage.
+    // Bypasses yt-dlp's own postprocessing entirely: its postprocessing
+    // subprocess only reads output after the process exits, so it can never
+    // report real progress; spawning ffmpeg ourselves with -progress pipe:1
+    // gives a genuine, continuous percentage.
     function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress, extraInputArgs = [], preInputArgs = [] }) {
         return new Promise((resolve, reject) => {
             const args = [...preInputArgs, '-i', inputPath, ...extraInputArgs, ...codecArgs, '-progress', 'pipe:1', '-y', outputPath];

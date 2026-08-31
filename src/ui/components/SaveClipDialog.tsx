@@ -23,11 +23,8 @@ import LinearProgressWithLabel from './LinearProgressWithLabel';
 // pointless re-encode into the same container.
 const SOURCE_FORMAT_VALUE = 'source';
 
-// Replaces the old save-file-dialog flow for Extract Clip: instead of
-// picking an arbitrary disk location, this collects a name (permanent
-// library storage, <videoDir>/clips/<name>.<ext>) plus a further-tunable
-// start/end and an optional format conversion. Modeled on
-// BulkDownloadQualityDialog.tsx's structure.
+// Collects a name (permanent library storage, <videoDir>/clips/<name>.<ext>)
+// plus a further-tunable start/end and an optional format conversion.
 export default function SaveClipDialog({
   open, onClose, title = 'Save clip', defaultClipStart, defaultClipEnd, convertFormatOptions, existingClipTitles, submitting, progress, error, offerSaveAsFile, onSubmit,
 }: {
@@ -44,10 +41,9 @@ export default function SaveClipDialog({
   submitting: boolean;
   progress: number;
   error: string | null;
-  // Shows a "Save as file" checkbox -- for callers (currently just
-  // LibraryVideoPlayerWithTools) whose normal save has a permanent home
-  // (library clips.json) but that also want to offer diverting this
-  // particular save to an arbitrary disk location instead.
+  // Shows a "Save as file" checkbox -- for callers whose normal save has a
+  // permanent home (library clips.json) but that also want to offer
+  // diverting this particular save to an arbitrary disk location instead.
   offerSaveAsFile?: boolean;
   onSubmit: (payload: { clipName: string; start: string; end: string; format: string; forceReencode: boolean; saveAsFile: boolean }) => void;
 }) {

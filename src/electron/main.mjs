@@ -19,9 +19,7 @@ import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCac
 import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
 
 // Re-exported so main.test.mjs (and anything else importing these from
-// './main.mjs') keeps working unchanged -- these now live in cookies.mjs/
-// videoInfo.mjs, but main.mjs is still where the rest of the codebase looks
-// for them.
+// './main.mjs') keeps working -- these are defined in cookies.mjs/videoInfo.mjs.
 export { looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, buildResolutions, reshapeVideoInfo, isDeadVideoInfo };
 
 const logFile = path.join(app.getPath("userData"), "main.log");
@@ -54,7 +52,7 @@ const ffmpegDir = isDev ? path.resolve(__dirname, '../ffmpeg') : path.join(proce
 // separate video+audio streams) it still handles internally -- only MP3
 // extraction/format recode move to spawning these binaries directly (see
 // runFfmpegWithProgress), since those are the slow, re-encode-y operations
-// where yt-dlp's own postprocessing can never report real progress (TD-004).
+// where yt-dlp's own postprocessing can never report real progress.
 const ffmpegBinaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
 const ffprobeBinaryName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
 const ffmpegBinaryPath = path.join(ffmpegDir, ffmpegBinaryName);
@@ -88,15 +86,14 @@ const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const videoInfoCachePath = path.join(app.getPath('userData'), 'videoInfoCache.json');
 const VIDEO_INFO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-// yt-dlp needs a real JS runtime to solve YouTube's nsig signature challenge
-// (TD-010, reports/TechnicalDebt.md); without one, every real video/audio
-// format silently disappears once a request is authenticated, leaving only
-// storyboard formats. Rather than bundling a standalone JS runtime binary
-// (previously Deno, ~96MB), this points yt-dlp's "node" provider at the
-// Electron binary itself -- Electron already embeds a full Node.js runtime,
-// and running it with ELECTRON_RUN_AS_NODE=1 (see ytdlpSpawnEnv below) makes
-// it behave as a plain `node` executable for yt-dlp's purposes, at zero
-// extra bundled bytes.
+// yt-dlp needs a real JS runtime to solve YouTube's nsig signature challenge;
+// without one, every real video/audio format silently disappears once a
+// request is authenticated, leaving only storyboard formats. Rather than
+// bundling a standalone JS runtime binary, this points yt-dlp's "node"
+// provider at the Electron binary itself -- Electron already embeds a full
+// Node.js runtime, and running it with ELECTRON_RUN_AS_NODE=1 (see
+// ytdlpSpawnEnv below) makes it behave as a plain `node` executable for
+// yt-dlp's purposes, at zero extra bundled bytes.
 export function jsRuntimeArgs() {
     return ['--js-runtimes', `node:${process.execPath}`];
 }
@@ -142,10 +139,8 @@ export function mimeTypeForPath(filePath) {
 // (standard/secure: true) does NOT work here: Chromium's Referer-generation
 // gate checks the document's scheme against a hardcoded http(s) allowlist,
 // separate from the privileged-scheme flags, so custom schemes never
-// produce a Referer (confirmed both by precedent -- Tauri hits the same
-// issue -- and empirically via a captured Network request). A missing
-// Referer is what breaks the YouTube iframe embed elsewhere in the app
-// (required since late 2025); only a genuine http:// origin clears that
+// produce a Referer. A missing Referer is what breaks the YouTube iframe
+// embed elsewhere in the app; only a genuine http:// origin clears that
 // gate. 127.0.0.1-only (not 0.0.0.0) and port 0 (an OS-picked ephemeral
 // port) keep this unreachable from the network.
 function startRendererServer() {
@@ -179,10 +174,9 @@ function startRendererServer() {
 // defense in depth, since the renderer only ever constructs these URLs from
 // data it already has.
 //
-// Uses net.fetch() against a file:// URL as the byte-stream source (fixed an
-// earlier "AbortError" bug from hand-rolling a Node fs.ReadStream-to-Response
-// conversion), but does NOT trust net.fetch's own status/headers for the
-// response handed back. Chromium treats a protocol.handle response as a
+// Uses net.fetch() against a file:// URL as the byte-stream source, but does
+// NOT trust net.fetch's own status/headers for the response handed back.
+// Chromium treats a protocol.handle response as a
 // genuine network response, not the trusted path a real file:// navigation
 // gets -- it needs Accept-Ranges/Content-Range/206 spelled out explicitly on
 // every response, including the first un-ranged one, or
@@ -863,7 +857,7 @@ export function withTargetExtension(outputPath, ext) {
 // yt-dlp itself only downloads (and merges video+audio streams, when both
 // are selected) -- MP3 extraction and format recode are handled by our own
 // direct ffmpeg pass afterward (see runFfmpegWithProgress), since yt-dlp's
-// own postprocessing can never report real progress for those (TD-004).
+// own postprocessing can never report real progress for those.
 // outputPath is either the user's final chosen path or a raw intermediate
 // temp path -- the caller decides which, this function downloads to
 // whatever it's given.
@@ -889,10 +883,8 @@ export function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteM
     ];
 
     if (resolution && resolution.toLowerCase() === 'mp3') {
-        // Audio only -- the old bestvideo[height<=144]+bestaudio selector downloaded
-        // a throwaway low-res video track purely to feed yt-dlp's own extract-audio
-        // postprocessor. Now that we extract audio ourselves, there's no reason to
-        // download video at all.
+        // Audio only -- no reason to download a video track when we extract
+        // audio ourselves afterward.
         args.push('-f', 'bestaudio/best');
     } else {
         // 'best' (not a number) is the Downloader tab's simplified
@@ -988,8 +980,8 @@ const STALL_TIMEOUT_MS = 5 * 60 * 1000;
 const STALL_CHECK_INTERVAL_MS = 30 * 1000;
 
 // yt-dlp spawns ffmpeg as its own child process for merging/remuxing, so a
-// plain child.kill() can orphan it (reports/ErrorHandling.md section 3).
-// detached:true (POSIX only) puts the child in its own process group so
+// plain child.kill() can orphan it. detached:true (POSIX only) puts the
+// child in its own process group so
 // -pid kills the whole group; Windows has no such group concept, so
 // taskkill's /T (tree) flag does the equivalent there instead.
 function killDownloadProcessTree(child) {
@@ -1022,14 +1014,13 @@ ipcMain.handle('cancelDownload', (event, requestId) => {
 ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     activeDownloadCount++;
     // requestId is echoed onto every message on this shared/unscoped
-    // broadcast channel (TD-008) -- generated renderer-side, so every
-    // consumer of this handler can filter to just its own in-flight
-    // download.
+    // broadcast channel -- generated renderer-side, so every consumer of
+    // this handler can filter to just its own in-flight download.
     const send = (msg) => BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', { ...msg, requestId: options.requestId });
 
-    // MP3 extraction and format recode need our own ffmpeg pass afterward
-    // (TD-004), so yt-dlp downloads to a raw intermediate file in a
-    // dedicated temp dir -- deliberately outside the final directory so it
+    // MP3 extraction and format recode need our own ffmpeg pass afterward,
+    // so yt-dlp downloads to a raw intermediate file in a dedicated temp
+    // dir -- deliberately outside the final directory so it
     // can never spuriously match findFinalFile's prefix-based lookups.
     const postprocess = needsDirectFfmpegPass(options);
     // Only used in place of options.outputPath inside the postprocess branch
@@ -1043,7 +1034,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     if (postprocess) {
         // Derived from outputPath (not a random UUID) so retrying the same
         // download reuses the same raw dir -- otherwise every retry would
-        // restart yt-dlp's download from scratch, losing TD-001's resume
+        // restart yt-dlp's download from scratch, losing the resume
         // behavior even when a partial raw file already existed.
         const rawDirId = crypto.createHash('sha1').update(options.outputPath).digest('hex').slice(0, 16);
         rawDir = path.join(app.getPath('temp'), 'sloth-archiver-raw', rawDirId);
@@ -1069,7 +1060,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     // auto-retryable failure re-invokes attemptDownload instead of finishing.
     // A retry reuses the same downloadArgs/rawDir as the first attempt, so it
     // resumes from whatever yt-dlp already partially wrote rather than
-    // restarting from zero (reports/ErrorHandling.md section 4).
+    // restarting from zero.
     async function handleFailure({ kind, message }, attempt) {
         if (kind === ERROR_KINDS.CANCELLED) {
             finishDownload();
@@ -1231,13 +1222,11 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                 send({ type: 'done', payload: { filename: postprocessOutputPath } });
             } catch (err) {
                 // Our own direct ffmpeg pass, not yt-dlp -- still worth the
-                // same "don't trust the wrapped error" disk-space recheck
-                // (reports/ErrorHandling.md section 2's flagship example is
-                // exactly this: postprocessing masking a full disk). Not
-                // routed into the auto-retry ladder above: unlike a network
-                // hiccup, a postprocess failure is usually a deterministic
-                // cause (corrupt intermediate file, unsupported codec) that
-                // retrying won't fix.
+                // same "don't trust the wrapped error" disk-space recheck.
+                // Not routed into the auto-retry ladder above: unlike a
+                // network hiccup, a postprocess failure is usually a
+                // deterministic cause (corrupt intermediate file, unsupported
+                // codec) that retrying won't fix.
                 const rawMessage = err instanceof Error ? err.message : String(err);
                 const kind = await recheckDiskSpaceIfAmbiguous(ERROR_KINDS.UNKNOWN, options.outputPath);
                 finishDownload();
@@ -1256,7 +1245,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
 // file, so they're kept separate from downloadVideoWithProgressUpdates/
 // 'progressUpdate' above rather than overloading that pipeline's meaning --
 // one shared broadcast channel here, same "one at a time" assumption as
-// elsewhere in this app (see TD-008, reports/TechnicalDebt.md).
+// elsewhere in this app.
 function sendFfmpegUtilityProgress(msg) {
     BrowserWindow.getAllWindows()[0]?.webContents.send('ffmpegUtilityProgress', msg);
 }
@@ -1269,10 +1258,9 @@ function sendFfmpegUtilityProgress(msg) {
 // own independent subscribe/unsubscribe lifecycle (mounted/unmounted per
 // player instance, not per screen) -- sharing one channel between the two
 // would mean either one's cleanup call silently kills the other's listener
-// too, exactly the bug TD-008 (reports/TechnicalDebt.md) already found and
-// fixed for a different channel. Safe as a single global "one at a time"
-// broadcast here for the same reason ffmpegUtilityProgress already is: only
-// one LibraryVideoPlayer is ever actually mounted at a time in this app.
+// too. Safe as a single global "one at a time" broadcast here for the same
+// reason ffmpegUtilityProgress already is: only one LibraryVideoPlayer is
+// ever actually mounted at a time in this app.
 function sendPreviewGenerationProgress(percent) {
     BrowserWindow.getAllWindows()[0]?.webContents.send('previewGenerationProgress', { percent });
 }
@@ -1623,9 +1611,8 @@ ipcMain.handle('app:quit', async () => {
     app.quit();
 });
 
-// app.getVersion() already reads package.json's "version" field (Electron's
-// own behavior, no extra bookkeeping needed) -- surfaced to the renderer so
-// alpha testers can report exactly which build they're on.
+// app.getVersion() already reads package.json's "version" field -- surfaced
+// to the renderer so users can report exactly which build they're on.
 ipcMain.handle('app:getVersion', async () => {
     return app.getVersion();
 });

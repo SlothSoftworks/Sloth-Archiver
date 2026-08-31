@@ -5,26 +5,16 @@ import SaveClipDialog from './SaveClipDialog';
 import { formatSecondsAsClipTimestamp } from '../screens/FfmpegUtilitiesPanel';
 import type { LibraryVideoMetadata, LibraryClip } from '../../types';
 
-// A "smart" wrapper around the basic LibraryVideoPlayer: owns the entire
-// clip-creation flow (start/end state, the embedded player buttons' wiring,
-// SaveClipDialog, the actual createClip/extractClipFromFile IPC calls)
-// internally, so a caller just drops this in and gets clipping for free --
-// no clipStart/clipEnd state, no manually-constructed clipMarkers prop, no
-// SaveClipDialog of its own. Used both by LibraryVideoDetail.tsx (library
-// mode, the main video) and ClipCollectionView.tsx (standaloneClipping,
-// clipping a clip). "Tools" (not "WithClipping") on purpose: this is meant
-// to be the future home for whatever other per-video ffmpeg utilities
-// eventually want the same "self-contained, drop in anywhere" treatment
-// (Extract MP3, Convert, Embed metadata currently still live as ad-hoc
-// wiring in LibraryVideoDetail.tsx/FfmpegUtilitiesPanel.tsx) -- not a
-// promise that they're all here yet.
+// Self-contained wrapper around LibraryVideoPlayer: owns the entire
+// clip-creation flow (start/end state, SaveClipDialog, the
+// createClip/extractClipFromFile IPC calls) so a caller just drops this in
+// and gets clipping for free with no state of its own to wire up.
 export type LibraryVideoPlayerWithToolsProps = {
   metadata: LibraryVideoMetadata;
   thumbnailPath?: string | null;
   cacheBustKey?: number;
   // Takes priority over metadata.downloadedFilePath for both playback and
-  // as the clip's input file -- e.g. ClipCollectionView pointing this at a
-  // clip's own file rather than the parent video's.
+  // as the clip's input file.
   overrideFilePath?: string;
   // Library mode (default, standaloneClipping false/unset): clips are saved
   // permanently into this video's own clips/ folder + clips.json manifest.
@@ -32,23 +22,17 @@ export type LibraryVideoPlayerWithToolsProps = {
   videoDir?: string;
   existingClipTitles?: string[];
   convertFormatOptions: string[];
-  // Fire-and-forget from this component's own point of view -- the parent
-  // still owns the real clips list (it's part of the library index, not
-  // player state), this is just the notification that a new one landed.
   // Unused in standaloneClipping mode (there's no LibraryClip record).
   onClipCreated?: (clip: LibraryClip) => void;
   // When true, clip creation never touches the library at all -- no
   // videoDir, no clips.json -- and instead always prompts for a save
-  // location via a native file dialog. For future player mounts with no
-  // "library video entry" to attach a clip to. The dialog's own "Save as
-  // file" checkbox achieves the same per-save, in library mode.
+  // location via a native file dialog.
   standaloneClipping?: boolean;
   onClipSavedToFile?: (outputPath: string) => void;
 };
 
-// Extension (no dot) to suggest for a given clip format choice -- "source"
-// means keep the input file's own extension, mirroring the same fallback
-// library:createClip's backend already applies.
+// "source" means keep the input file's own extension, mirroring the same
+// fallback library:createClip's backend already applies.
 function extensionForFormat(format: string, inputPath: string): string {
   if (format && format !== 'source') return format;
   const match = /\.([^./\\]+)$/.exec(inputPath);
@@ -104,9 +88,7 @@ export default function LibraryVideoPlayerWithTools({
 
     // standaloneClipping means every save takes this path; the dialog's own
     // "Save as file" checkbox lets a normal library-mode save opt into it
-    // for one clip at a time -- same mechanics either way, so one branch
-    // covers both: prompt for a location, export there, and never touch
-    // clips.json.
+    // for one clip at a time.
     if (standaloneClipping || saveAsFile) {
       const ext = extensionForFormat(format, inputPath);
       const picked = await window.electronAPI.saveExportedFile({
@@ -182,13 +164,11 @@ export default function LibraryVideoPlayerWithTools({
         submitting={savingClip}
         // createClip's progress reports over the same shared
         // ffmpegUtilityProgress channel LibraryVideoDetail.tsx's own listener
-        // already owns for its instrument panel -- that bridge only supports
-        // one live subscriber at a time (removeFfmpegUtilityProgressListener
-        // is a blunt removeAllListeners, exactly the TD-008 pattern this
-        // project already hit once for a different channel). Standing up a
-        // second listener here would silently kill that one. Deferred until
-        // this component is the *only* thing using the channel -- fine for
-        // now since this is a parallel, not-yet-load-bearing instance.
+        // already owns; that bridge only supports one live subscriber at a
+        // time (removeFfmpegUtilityProgressListener is a blunt
+        // removeAllListeners), so standing up a second listener here would
+        // silently kill that one. Deferred until this component is the
+        // *only* thing using the channel.
         progress={0}
         error={saveClipError}
         onSubmit={handleSubmitSaveClip}

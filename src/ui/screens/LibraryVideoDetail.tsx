@@ -78,9 +78,9 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const [downloadMode, setDownloadMode] = useState<'initial' | 'swap'>('initial');
   // Video and audio (MP3) downloads coexist as separate files but share this
   // one useDownloadVideo() instance -- its progress events aren't tagged
-  // per-download (TD-008), so two running at once would cross-talk.
-  // downloadTarget says which one owns the in-flight download; the UI
-  // disables the *other* target's controls while one is active.
+  // per-download, so two running at once would cross-talk. downloadTarget
+  // says which one owns the in-flight download; the UI disables the *other*
+  // target's controls while one is active.
   const [downloadTarget, setDownloadTarget] = useState<'video' | 'audio'>('video');
   // Bumped after a successful quality swap and threaded into the player's
   // src URL -- a swap can land on the same file path+extension, and without

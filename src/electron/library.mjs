@@ -79,8 +79,8 @@ export function channelFolderName(channel) {
 
 // Keyed on videoId, not title -- YouTube titles can change after upload, and
 // videoId is stable and already unique on its own. Also shrinks the Windows
-// MAX_PATH=260 worst case (TD-005, reports/TechnicalDebt.md), though
-// channel-folder length and libraryDir depth remain unbounded.
+// MAX_PATH=260 worst case, though channel-folder length and libraryDir depth
+// remain unbounded.
 export function videoFolderName(videoId) {
     return sanitizeForFilesystem(videoId);
 }
@@ -794,17 +794,16 @@ export function listPlaylistSnapshots({ libraryDir }) {
 //
 // localFiles is recomputed fresh against the current library index on every
 // read, rather than trusting what was last written to disk -- it's a cheap
-// local lookup (findVideoInIndex), and disk staleness was a real bug: a
-// video bulk-added after this playlist was first saved had no "go to
-// library" link until an explicit "Refresh from YouTube".
+// local lookup (findVideoInIndex), and stale disk data would leave a video
+// bulk-added after this playlist was saved with no "go to library" link
+// until an explicit "Refresh from YouTube".
 //
 // When no index is handed in, this forces a genuine refreshLibraryIndex()
 // rescan rather than reusing getLibraryIndex()'s cache, which is only
-// invalidated by mutations this process itself knows about -- a second,
-// similar bug surfaced entries a playlist *refresh* had just discovered,
-// whose video already existed in the library, still showing no link. A
-// playlist detail view is opened rarely enough that a full rescan here is
-// cheap insurance against that failure mode.
+// invalidated by mutations this process itself knows about -- an entry a
+// playlist *refresh* just discovered, whose video already existed in the
+// library, could otherwise still show no link. A playlist detail view is
+// opened rarely enough that a full rescan here is cheap insurance.
 export async function getPlaylistSnapshot({ libraryDir, playlistId, index }) {
     const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
     const epochDir = resolvePlaylistEpochDir(playlistDir);

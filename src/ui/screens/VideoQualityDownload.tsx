@@ -292,8 +292,8 @@ export default function VideoQualityDownload({
 
       {/* Audio (MP3) -- a separate, always-available download, independent
           of video quality. Shares the single download hook with the video
-          controls above (downloadTarget/TD-008), so it's disabled rather
-          than hidden during a video download/swap. */}
+          controls above, so it's disabled rather than hidden during a video
+          download/swap. */}
       {mp3Resolution &&
         <>
           <Divider sx={{ my: 1.5 }} />

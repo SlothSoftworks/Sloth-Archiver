@@ -85,7 +85,7 @@ contextBridge.exposeInMainWorld('electronAPIPythonDownload', {
     // Library-view download, the always-mounted bulk-add queue), all on this
     // same shared 'progressUpdate' channel, and removeAllListeners would
     // silently kill every other instance's listener too the moment any one
-    // of them unmounts (the actual bug this fixes -- see TD-008).
+    // of them unmounts.
     onProgressUpdate: (callback) => {
         const listener = (_event, data) => callback(data);
         ipcRenderer.on('progressUpdate', listener);

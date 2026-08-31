@@ -62,17 +62,11 @@ interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
   value: number;
-  // Opt-in for a screen that needs a definite height to lay its own content
-  // out against -- e.g. LibraryScreen's bottom options bar, which has to
-  // stay pinned at the tab's bottom regardless of content length rather than
-  // just being the last thing before .tabContainer's own scrollbar kicks in.
-  // Deliberately unpadded (unlike the plain p:3 Box below) so a full-bleed
-  // bottom bar can span the tab's actual width, the same way the top tab bar
-  // above .tabContainer isn't padded either -- the screen itself is
-  // responsible for padding whichever inner region needs it (its own
-  // scrollable content, not the bar). Downloader/Options don't need any of
-  // this and keep the plain auto-height, padded Box, scrolled via
-  // .tabContainer as before.
+  // Opt-in for a screen that needs a definite height to lay content out
+  // against, e.g. a bottom bar that must stay pinned at the tab's bottom.
+  // Deliberately unpadded so a full-bleed bar can span the tab's actual
+  // width -- the screen itself is responsible for padding whichever inner
+  // region needs it.
   fill?: boolean;
 }
 
@@ -108,18 +102,13 @@ export function BasicTabs() {
   const navigate = useNavigate();
   const value = pathToTabIndex(location.pathname);
   const [infoOpen, setInfoOpen] = useState(false);
-  // Statically shown in the top bar for the duration of alpha testing --
-  // makes it trivial for a tester to say exactly which build they're
-  // reporting a bug against. Options also shows this (OptionsScreen.tsx)
-  // for after alpha, once this top-bar copy is removed.
   const [appVersion, setAppVersion] = useState('');
   useEffect(() => {
     window.electronAPI.getAppVersion().then(setAppVersion);
   }, []);
   // ffmpeg has no separate "check for update" flow (it's only ever replaced
-  // by rebuilding the app itself), so this is fetched directly rather than
-  // through useYtdlpUpdater's update-check machinery -- just for display in
-  // the About dialog below.
+  // by rebuilding the app itself), so this is fetched directly for display
+  // rather than through useYtdlpUpdater's update-check machinery.
   const [ffmpegVersion, setFfmpegVersion] = useState<string | null>(null);
   useEffect(() => {
     window.electronAPI.getFfmpegVersion().then(setFfmpegVersion);

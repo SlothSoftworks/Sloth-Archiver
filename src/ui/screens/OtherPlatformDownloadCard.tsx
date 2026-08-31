@@ -90,9 +90,9 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
 
   // Reuses the same generic embedFileMetadata IPC LibraryVideoDetail.tsx's
   // "Embed metadata" tool calls -- it only needs a file path plus tag
-  // values, never actually library-specific despite the "library:" prefix,
-  // so this works with zero backend changes. Offered for SoundCloud for
-  // now, since downloaded audio files rarely carry real ID3 tags otherwise.
+  // values, never actually library-specific despite the "library:" prefix.
+  // Offered for SoundCloud since downloaded audio files rarely carry real
+  // ID3 tags otherwise.
   const handleEmbedMetadata = async () => {
     if (!currentDownloadFinalPath) return;
     setEmbedding(true);

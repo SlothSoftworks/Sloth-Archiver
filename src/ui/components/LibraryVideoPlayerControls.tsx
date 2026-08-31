@@ -16,12 +16,9 @@ import type { ClipMarkersControl } from './LibraryVideoPlayer';
 // Every control below is one of Vidstack's headless primitives (real,
 // correctly-ARIA'd DOM elements with built-in click/drag/keyboard behavior
 // already wired to the nearest ancestor <MediaPlayer>) rendered via MUI's
-// `Box component={...}` -- the exact same "render as a different element but
-// keep MUI's sx styling" pattern LibraryVideoPlayer.tsx itself already uses
-// for `Box component="video"`. This keeps every pixel of paint coming from
-// this app's own theme (no Vidstack CSS imported beyond the layout-critical
-// base.css) while reusing Vidstack's accessible interaction logic, which is
-// the entire reason a player library was adopted over hand-rolling controls.
+// `Box component={...}`. This keeps every pixel of paint coming from this
+// app's own theme (no Vidstack CSS imported beyond the layout-critical
+// base.css) while reusing Vidstack's accessible interaction logic.
 const resetButtonSx = {
   border: 0,
   background: 'none',
@@ -46,7 +43,6 @@ const timeTextSx = {
   userSelect: 'none',
 };
 
-// Shared slider track/fill/thumb look between the time and volume sliders --
 // --slider-fill is a Vidstack-managed CSS custom property (a percentage
 // string) reflecting current position/volume, kept in sync during drag
 // without this component reading or computing it itself.
@@ -96,11 +92,10 @@ const clipButtonSx = {
 };
 
 // Pure, geometry-in-geometry-out conversion -- deliberately not inlined in a
-// pointer-event handler so it can be unit-tested by feeding it a plain object
-// shaped like a DOMRect, without rendering anything. That's required, not
-// just tidy: jsdom's real getBoundingClientRect() always returns a
-// zero-size rect (no layout engine), so this math could never be verified
-// through a rendered tree in a test environment anyway.
+// pointer-event handler so it can be unit-tested with a plain object shaped
+// like a DOMRect. That's required, not just tidy: jsdom's real
+// getBoundingClientRect() always returns a zero-size rect (no layout
+// engine), so this math could never be verified through a rendered tree.
 export function secondsFromPointerX(clientX: number, trackRect: { left: number; width: number }, duration: number): number {
   if (trackRect.width <= 0 || duration <= 0) return 0;
   const pct = Math.min(1, Math.max(0, (clientX - trackRect.left) / trackRect.width));
@@ -114,19 +109,15 @@ export function clipMarkerPercent(seconds: number | null, duration: number): num
 
 // One draggable marker -- used for both the clip start and end positions.
 // Drag itself never seeks (avoids seek-spam on every pointer-move); only the
-// final position on release does, via Vidstack's own remote control, so the
-// user gets a one-shot visual confirmation of exactly where they landed.
+// final position on release does, via Vidstack's own remote control.
 //
-// Shaped like a bracket -- "[" for start (top/bottom arms extend right, away
-// from the clipped-out region), "]" for end (arms extend left) -- so which
-// marker is which is legible at a glance, not just inferable from position.
-// The end marker also sits on a higher z-index: when start and end land only
-// a pixel or two apart (a real case -- a short clip near the start of a long
-// video), their thin hit-areas overlap almost exactly, and without an
-// explicit stacking order a drag meant for one could silently grab whichever
-// happened to be later in the DOM. Making end win is deliberate, not
-// incidental, and matches "you're most often fine-tuning the end after
-// already placing the start" being the more common next action.
+// Shaped like a bracket -- "[" for start, "]" for end -- so which marker is
+// which is legible at a glance. The end marker sits on a higher z-index:
+// when start and end land only a pixel or two apart, their thin hit-areas
+// overlap almost exactly, and without an explicit stacking order a drag
+// meant for one could silently grab whichever happened to be later in the
+// DOM. Making end win matches "fine-tuning the end after placing the start"
+// being the more common next action.
 function ClipMarker({
   seconds, duration, variant, trackRef, onSecondsChange,
 }: {
@@ -170,11 +161,8 @@ function ClipMarker({
       }}
       sx={{
         position: 'absolute', top: -4, bottom: -4, left: `${pct}%`,
-        // warning.main (not primary.main, already used for the playback
-        // fill/thumb just below) so a clip marker never gets confused for
-        // current position, while still following the theme rather than a
-        // hardcoded hex -- keeps this in step with whatever palette a future
-        // reskin/expansion of this player ends up using.
+        // warning.main, not primary.main (already used for the playback
+        // fill/thumb), so a clip marker never gets confused for current position.
         width: 3, backgroundColor: 'warning.main', cursor: 'ew-resize',
         transform: 'translateX(-50%)', touchAction: 'none',
         zIndex: variant === 'end' ? 2 : 1,
@@ -274,8 +262,7 @@ export default function LibraryVideoPlayerControls({ clipMarkers }: { clipMarker
           </Tooltip>
           <Tooltip title="Set clip end here">
             <IconButton aria-label="Set clip end" onClick={clipMarkers.onSetEnd} sx={clipButtonSx}>
-              {/* Same icon as Set Start, mirrored -- reads as "the other end"
-                  of the same action rather than a visually unrelated icon. */}
+              {/* Same icon as Set Start, mirrored -- reads as "the other end" of the same action. */}
               <StartIcon fontSize="small" sx={{ transform: 'scaleX(-1)' }} />
             </IconButton>
           </Tooltip>

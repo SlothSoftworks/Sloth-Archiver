@@ -45,9 +45,8 @@ export function buildResolutions(info) {
         });
     }
 
-    // A real, audio-only estimate -- not a leftover clone of the smallest
-    // video resolution's (video-track) byte count, which is what this used
-    // to be and had nothing to do with an actual MP3's size.
+    // A real, audio-only estimate, computed independently of the video
+    // resolutions above.
     if (resolutions.length > 0) {
         const mp3Size = info.duration ? (MP3_BITRATE_KBPS * 1000 * info.duration) / 8 : null;
         resolutions.push({

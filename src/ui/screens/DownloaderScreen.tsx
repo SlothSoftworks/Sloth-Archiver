@@ -54,8 +54,7 @@ export default function DownloaderScreen() {
   const [duplicateMatch, setDuplicateMatch] = useState<{ channelDisplayName: string | null; videoDir: string } | null>(null);
   // Drives both which card renders below (VideoDetailCard vs. the simplified
   // OtherPlatformDownloadCard) and whether "add to library" can activate --
-  // multi-platform downloads are Downloader-tab-only and download-only for
-  // v1, see OtherPlatformDownloadCard.tsx.
+  // multi-platform downloads are Downloader-tab-only and download-only.
   const isYouTube = isYouTubeUrl(debouncedVideoUrl);
 
 
@@ -81,9 +80,8 @@ export default function DownloaderScreen() {
   }, [debouncedVideoUrl])
 
 
-  // Bare-bones for now: tracks the video (folder + metadata.json) without
-  // downloading its file -- adding to the library and downloading are
-  // separate actions, matching how the library is meant to work overall.
+  // Tracks the video (folder + metadata.json) without downloading its file --
+  // adding to the library and downloading are separate actions.
   const performAddToLibrary = async () => {
     if (!videoInfo) return;
     setLibraryAddStatus('saving');
@@ -92,8 +90,6 @@ export default function DownloaderScreen() {
       incrementLibraryNotifications();
       setLastAddedVideoId(videoInfo.id);
       setLibrarySuccessSnackbarOpen(true);
-      // Clear the search result now that it's been added -- a placeholder for
-      // a more refined post-add flow later.
       setVideoUrl('');
       setVideoInfo(null);
       setVideoInfoError(null);

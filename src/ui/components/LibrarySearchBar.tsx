@@ -2,10 +2,7 @@ import { IconButton, InputAdornment, TextField } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
 
-// Shared by every search bar in the Library tab -- a plain controlled input
-// (the debounce itself lives in useLibrarySearch, not here) so this stays a
-// dumb, reusable piece of UI. The clear button only appears once there's
-// something to clear.
+// Plain controlled input -- debounce lives in useLibrarySearch, not here.
 export default function LibrarySearchBar({ value, onChange, onClear, placeholder = 'Search titles...' }: {
   value: string;
   onChange: (value: string) => void;

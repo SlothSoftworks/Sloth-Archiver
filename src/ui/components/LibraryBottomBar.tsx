@@ -9,15 +9,10 @@ export const THUMBNAIL_SIZE_MIN = 160;
 export const THUMBNAIL_SIZE_MAX = 360;
 export const THUMBNAIL_SIZE_STEP = 10;
 
-// Persistent bottom bar for the Library tab -- a container for display/
-// customization controls, not a single-purpose slider widget. Ships with
-// thumbnail size (video grids only) and bulk-select actions (video grids and
-// the Playlists view); the left region was reserved for exactly this kind of
-// addition without restructuring the component. Purely presentational/
-// controlled, same pattern as LibraryViewModeToggle -- the caller owns the
-// state and any settings IPC round-trip. Thumbnail-size props are optional:
-// the Playlists view has no thumbnail grid to size, so omitting them hides
-// that section entirely rather than showing an irrelevant control.
+// Purely presentational/controlled -- the caller owns the state and any
+// settings IPC round-trip. Thumbnail-size props are optional: the Playlists
+// view has no thumbnail grid to size, so omitting them hides that section
+// entirely rather than showing an irrelevant control.
 export default function LibraryBottomBar({
   thumbnailSize, onThumbnailSizeChange, onThumbnailSizeCommit,
   selectedCount, canBulkDownload, onDownloadSelected,
@@ -34,12 +29,10 @@ export default function LibraryBottomBar({
   onDeleteFromLibrary: () => void;
 }) {
   return (
-    // A flex sibling of LibraryScreen's own scrollable content region (see
-    // LibraryScreen.tsx's return, enabled by CustomTabPanel's `fill` prop in
-    // MainPage.tsx) -- not an in-flow scrolling element, so it stays pinned
-    // at the tab's bottom regardless of how much content is above it, the
-    // same way the top tab bar stays pinned above .tabContainer's scroll
-    // region. flexShrink:0 keeps it from being squeezed by a tall grid.
+    // A flex sibling of the scrollable content region, not an in-flow
+    // scrolling element, so it stays pinned at the tab's bottom regardless of
+    // how much content is above it. flexShrink:0 keeps it from being
+    // squeezed by a tall grid.
     <Paper
       variant="outlined"
       sx={{
