@@ -1,5 +1,9 @@
 # SlothArchiver
 
+[![Latest Release](https://img.shields.io/github/v/release/lltrash94/Sloth-Archiver)](https://github.com/lltrash94/Sloth-Archiver/releases/latest)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational)](#download)
+
 **Your own personal, offline video archive — for people too lazy to fight with
 Docker, servers, or a complicated setup to get one.**
 
