@@ -35,7 +35,10 @@ function stubSpawn({ keyframeTimes = [], streams = [] } = {}) {
   spawnMock.mockImplementation((bin, args) => {
     const proc = fakeProcess();
     if (bin === FFPROBE_BIN && args.includes('-read_intervals')) {
-      respondAsync(proc, { stdout: keyframeTimes.map((t) => `${t}\n`).join('') });
+      // Packet-level csv=p=0 output shape: "pts_time,flags" per line, "K_"
+      // for a keyframe packet -- see findLastKeyframeAtOrBefore's own
+      // comment for why this is packet-, not frame-, level.
+      respondAsync(proc, { stdout: keyframeTimes.map((t) => `${t},K_\n`).join('') });
     } else if (bin === FFPROBE_BIN && args.includes('-show_streams')) {
       respondAsync(proc, { stdout: JSON.stringify({ streams: streams.map((s) => ({ codec_type: s.codecType, codec_name: s.codecName })) }) });
     } else {
@@ -137,6 +140,46 @@ describe('clipAndConvert', () => {
     });
 
     expect(spawnMock.mock.calls.some(([bin, args]) => bin === FFPROBE_BIN && args.includes('-read_intervals'))).toBe(false);
+    expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c', 'copy']));
+  });
+
+  // Regression test for a real hang: a keyframe lookup that scans from the
+  // start of the file (a plain "%<atSeconds>" read_intervals with an
+  // implicit start of 0) forces a full decode of everything up to atSeconds
+  // whenever a file's frame-level metadata can't be trusted to skip
+  // non-keyframes (confirmed against a real ~67-minute library file where
+  // -show_frames's own key_frame field reported false for every frame, and
+  // -skip_frame nokey silently skipped nothing) -- for a clip an hour into a
+  // long recording, that's a multi-minute-or-longer freeze before ffmpeg
+  // itself ever even starts. The fix bounds the probe to a fixed window
+  // immediately before the requested point (a real seek, not a scan from
+  // zero) using packet-level flags instead of frame-level metadata.
+  it('bounds the keyframe probe to a fixed window before the requested point, not a scan from the start of the file', async () => {
+    stubSpawn({ keyframeTimes: [3536.5], streams: [{ codecType: 'video', codecName: 'av1' }] });
+    const { clipAndConvert } = createFfmpegRunner({ ffmpegBinaryPath: FFMPEG_BIN, ffprobeBinaryPath: FFPROBE_BIN });
+
+    // An hour into a long file -- the exact shape of the real bug report.
+    await clipAndConvert({
+      inputPath: '/in.mp4', outputPath: '/out.mp4', start: '00:58:57', startSeconds: 3537,
+      format: 'source', totalDurationSeconds: 44,
+    });
+
+    const probeCall = spawnMock.mock.calls.find(([bin, args]) => bin === FFPROBE_BIN && args.includes('-read_intervals'));
+    expect(probeCall).toBeDefined();
+    const [, probeArgs] = probeCall;
+    // Uses packet-level flags, not frame-level metadata (see this test's own
+    // comment for why the latter can't be trusted).
+    expect(probeArgs).toEqual(expect.arrayContaining(['-show_packets']));
+    expect(probeArgs).not.toEqual(expect.arrayContaining(['-show_frames', '-skip_frame']));
+    // The interval's start must not be 0/omitted (a scan from the beginning
+    // of the file) -- it has to be a bounded window ending at the requested
+    // point, close to it, regardless of how deep into the file that point is.
+    const interval = probeArgs[probeArgs.indexOf('-read_intervals') + 1];
+    const [intervalStart, intervalEnd] = interval.split('%').map(Number);
+    expect(intervalEnd).toBe(3537);
+    expect(intervalStart).toBeGreaterThan(3000);
+    // Negligible real offset (3537 - 3536.5 = 0.5s) -- stays on the fast copy
+    // path, exactly as it should once the probe itself is fast and correct.
     expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c', 'copy']));
   });
 });

@@ -19,6 +19,18 @@ on:
     tags:
       - 'v*.*.*'
 
+# Guards against two overlapping runs for the same ref (a manual re-run
+# while one's still in flight, or two pushes landing close together) both
+# racing to publish -- electron-builder's GitHub publish only reuses an
+# existing release if it can already see one, so two runs starting close
+# enough together can each create their own separate draft release instead
+# of one being reused, with the .exe/.exe.blockmap split across them
+# depending on which run got further before finishing/being interrupted.
+# Cancelling the older run in favor of the newer one prevents that outright.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 # Required so electron-builder's GitHub publish step can create/update a
 # release and upload artifacts using the workflow's own GITHUB_TOKEN --
 # needs "Read and write permissions" enabled under Settings > Actions >

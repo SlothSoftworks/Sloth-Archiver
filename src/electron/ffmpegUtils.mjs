@@ -189,34 +189,71 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
         });
     }
 
+    // How far before the requested point to look for a keyframe. Bounds the
+    // probe to a fixed-size window regardless of how deep into the file
+    // `atSeconds` is -- see this function's own comment for why that matters.
+    // Real downloaded content's actual keyframe intervals, confirmed via
+    // packet-level inspection of real library files, run anywhere from ~2s up
+    // past 10s; this is a deliberately generous multiple of that.
+    const KEYFRAME_SEARCH_WINDOW_SECONDS = 30;
+
     // Finds the last keyframe at or before `atSeconds` -- -ss before -i (see
     // clipAndConvert's own comment) can only ever start a stream-copied clip
-    // there, never exactly on the requested timestamp. -skip_frame nokey
-    // means ffprobe only decodes/reports actual keyframes (cheap -- no full
-    // decode of the frames in between), and -read_intervals "%<atSeconds>"
-    // limits reading to [0, atSeconds] so this stays fast even deep into a
-    // long file. Resolves 0 (not a rejection) if none are found (e.g.
-    // atSeconds is before the first keyframe, or something in the probe
-    // output didn't parse) -- callers treat that as "assume worst case", not
-    // "assume no risk".
+    // there, never exactly on the requested timestamp.
+    //
+    // Uses -show_packets (container-level packet flags), not -show_frames --
+    // confirmed directly against a real library file where -show_frames's own
+    // key_frame field reported false for every single frame (including ones
+    // -show_packets correctly flagged as keyframes at the exact same
+    // timestamp), and -skip_frame nokey silently failed to skip anything
+    // alongside it. The practical effect: what was meant to be a cheap
+    // keyframe-only scan instead force-decoded every single frame from
+    // wherever it started, undetected until this bug -- a real, working
+    // MP4 file, one hour into which was catastrophically slow to probe this
+    // way (still hadn't finished a small fraction of the way through after
+    // two minutes). Packet-level flags need no decoding at all (confirmed:
+    // ~0.1s for a bounded window on that same file, ~1.25s to scan its
+    // entire ~944-keyframe, 67-minute length), and reflect what the demuxer
+    // itself will actually use to seek, unlike frame-level metadata that can
+    // apparently misreport for a given file/stream.
+    //
+    // -read_intervals bounds the read to [atSeconds - KEYFRAME_SEARCH_WINDOW_SECONDS,
+    // atSeconds] -- a real seek to the window's start (not a scan from the
+    // start of the file), so this stays fast and O(window size), not
+    // O(how deep into the file atSeconds is). Resolves the window's own
+    // start (not 0) when no keyframe is found in it or the probe errors --
+    // callers treat that as "at least this much offset," a safe
+    // underestimate-never, not "assume no risk."
     function findLastKeyframeAtOrBefore(inputPath, atSeconds) {
         return new Promise((resolve) => {
+            const windowStart = Math.max(0, atSeconds - KEYFRAME_SEARCH_WINDOW_SECONDS);
             const proc = spawn(ffprobeBinaryPath, [
                 '-v', 'error',
                 '-select_streams', 'v:0',
-                '-skip_frame', 'nokey',
-                '-show_entries', 'frame=pkt_pts_time',
-                '-read_intervals', `%${atSeconds}`,
+                '-show_packets',
+                '-show_entries', 'packet=pts_time,flags',
+                '-read_intervals', `${windowStart}%${atSeconds}`,
                 '-of', 'csv=p=0',
                 inputPath,
             ]);
             let stdout = '';
             proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-            proc.on('error', () => resolve(0));
+            // Drained and discarded, never left unread -- an unread stderr
+            // pipe fills and blocks the child process from making further
+            // progress at all once full (a real Node child_process footgun),
+            // not just a leak. -v error should keep this stream near-empty
+            // regardless, but that's not a reason to skip draining it.
+            proc.stderr.on('data', () => {});
+            proc.on('error', () => resolve(windowStart));
             proc.on('close', () => {
-                const lines = stdout.trim().split('\n').filter(Boolean);
-                const last = lines.length ? parseFloat(lines[lines.length - 1]) : NaN;
-                resolve(Number.isFinite(last) ? last : 0);
+                let last = NaN;
+                for (const line of stdout.trim().split('\n')) {
+                    const [ptsTimeStr, flags] = line.split(',');
+                    if (!flags || !flags.startsWith('K')) continue;
+                    const t = parseFloat(ptsTimeStr);
+                    if (Number.isFinite(t)) last = t;
+                }
+                resolve(Number.isFinite(last) ? last : windowStart);
             });
         });
     }
