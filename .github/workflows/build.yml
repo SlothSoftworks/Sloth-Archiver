@@ -4,15 +4,21 @@ name: Build
 #   - Push to master (i.e. a PR just got merged) -- only master's HEAD
 #     actually moving triggers this, not commits on the PR's own branch
 #     while it's still open. Whether this actually builds anything depends
-#     on whether package.json's version was bumped in that merge (see
-#     "Determine release tag" below, the very first real step): no bump
-#     means the job exits immediately after that check, before Node/Python
-#     setup or any dependency install, so a merge that doesn't touch the
-#     version costs nothing. A version bump builds and releases for real.
-#   - A version tag pushed directly (e.g. v0.24.0) -- same real
+#     on whether package.json's version was bumped in that merge (see the
+#     "plan" job below): no bump means the whole build job is skipped
+#     entirely, so a merge that doesn't touch the version costs nothing
+#     beyond the cheap plan job itself. A version bump builds and releases
+#     for real.
+#   - A version tag pushed directly (e.g. v0.25.0) -- same real
 #     build+release path, for cutting/re-cutting a release without going
 #     through a merge:
-#       git tag v0.24.0 && git push origin v0.24.0
+#       git tag v0.25.0 && git push origin v0.25.0
+#
+# Platform-selector version suffix: append -w/-m/-l (any combination) to
+# the version to build only specific platforms, e.g. "0.25.1-w" builds
+# Windows only, "0.25.1-wl" builds Windows+Linux. No suffix (the normal
+# case) builds everything. Meant for a platform-specific fix that doesn't
+# need every OS rebuilt -- see the "plan" job's own step for the parsing.
 on:
   push:
     branches:
@@ -21,91 +27,176 @@ on:
       - 'v*.*.*'
     # Skips a build entirely when a push only touches docs/meta files -- e.g.
     # a futureSpecs.md edit or a README tweak has no reason to spend a full
-    # Windows build. Applies to both the branches and tags triggers above
-    # (GitHub doesn't support scoping path filters to just one of them
-    # within a single `push:` block); in practice this only matters for the
-    # branches path, since a real release tag always accompanies a
-    # package.json version bump, which this filter doesn't touch.
+    # build. Applies to both the branches and tags triggers above (GitHub
+    # doesn't support scoping path filters to just one of them within a
+    # single `push:` block); in practice this only matters for the branches
+    # path, since a real release tag always accompanies a package.json
+    # version bump, which this filter doesn't touch.
     paths-ignore:
       - '**/*.md'
       - 'LICENSE'
 
 # Guards against two overlapping runs for the same ref (a manual re-run
-# while one's still in flight, or two pushes landing close together) both
-# racing to publish -- electron-builder's GitHub publish only reuses an
-# existing release if it can already see one, so two runs starting close
-# enough together can each create their own separate draft release instead
-# of one being reused, with the .exe/.exe.blockmap split across them
-# depending on which run got further before finishing/being interrupted.
-# Cancelling the older run in favor of the newer one prevents that outright.
+# while one's still in flight, or two pushes landing close together) --
+# cancels the older run's still-running jobs in favor of the newer one.
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
-# Required so electron-builder's GitHub publish step can create/update a
-# release and upload artifacts using the workflow's own GITHUB_TOKEN --
-# needs "Read and write permissions" enabled under Settings > Actions >
-# General > Workflow permissions for that default token to actually have
-# this scope, in addition to declaring it here.
+# Required so the plan job's tag push and the build job's release upload
+# can both write using the workflow's own GITHUB_TOKEN -- needs "Read and
+# write permissions" enabled under Settings > Actions > General > Workflow
+# permissions for that default token to actually have this scope, in
+# addition to declaring it here.
 permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      # One platform's build failing shouldn't cancel the other -- each
-      # produces an independent installer for an independent OS.
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
-        # macOS commented out for now -- macOS runners cost 10x the Linux
-        # minutes multiplier, and this is still being iterated on. Re-add
-        # once the workflow itself is confirmed working via Windows.
-        # os: [macos-latest, windows-latest]
-        # Linux commented out for now to save CI minutes -- also needs a
-        # "linux" target added to package.json's build config (only "mac"
-        # and "win" exist today) before this would actually work.
-        # os: [macos-latest, windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+  # Cheap, Node/Python-free, runs on Linux regardless of what's actually
+  # being built -- figures out whether this run should build anything at
+  # all, and if so, which platforms and under which tag, before any real
+  # (expensive) work starts. Also owns creating the tag and the draft
+  # release itself exactly once, so the build job's per-platform runs never
+  # race each other trying to create the same release object (the failure
+  # mode a single-job version of this workflow hit earlier: two nearly
+  # simultaneous "does this release exist yet" checks both saying no).
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.plan.outputs.should_release }}
+      tag: ${{ steps.plan.outputs.tag }}
+      build_windows: ${{ steps.plan.outputs.build_windows }}
+      build_mac: ${{ steps.plan.outputs.build_mac }}
+      build_linux: ${{ steps.plan.outputs.build_linux }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # fetch-tags isn't needed here -- the version-bump check below
-          # queries the remote directly (git ls-remote), not local history.
           fetch-depth: 0
 
-      # The very first real step, deliberately before Node/Python setup or
-      # any dependency install: a master push whose package.json version
-      # isn't new bails out right here, so a merge that doesn't bump the
-      # version costs nothing beyond a checkout. Uses grep/sed instead of
-      # `node -p require(...)` specifically so this check doesn't need Node
-      # set up yet -- setup-node happens further down, gated on this step's
-      # own result.
-      #
-      # A tag push already names its own release -- nothing to decide here.
-      # Note this deliberately does NOT push the tag and rely on that
-      # re-triggering the tag path above: a tag pushed with the default
-      # GITHUB_TOKEN from inside a workflow run does not trigger further
-      # workflow runs (GitHub's own loop-prevention), so the release has to
-      # happen in this same run instead.
-      - name: Determine release tag
-        if: github.ref_type == 'branch'
-        id: release_check
+      - name: Plan this run
+        id: plan
         shell: bash
         run: |
-          VERSION=$(grep -m1 '"version"' package.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')
-          TAG="v$VERSION"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "$TAG already exists -- this merge didn't bump the version, skipping the build entirely."
+          set -e
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # A tag push already names its own release -- nothing to decide.
+            TAG="${{ github.ref_name }}"
+            SHOULD_RELEASE=true
           else
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "$TAG is new -- this merge bumped the version, will build and release."
+            # A master push only becomes a release if this commit's
+            # package.json version isn't tagged yet (i.e. this merge bumped
+            # it). Deliberately does NOT push the tag and rely on that
+            # re-triggering the tag path above: a tag pushed with the
+            # default GITHUB_TOKEN from inside a workflow run does not
+            # trigger further workflow runs (GitHub's own loop-prevention),
+            # so the release has to happen in this same run instead.
+            VERSION=$(grep -m1 '"version"' package.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')
+            TAG="v$VERSION"
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
+              SHOULD_RELEASE=false
+              echo "$TAG already exists -- this merge didn't bump the version, skipping the build entirely."
+            else
+              SHOULD_RELEASE=true
+              echo "$TAG is new -- this merge bumped the version, will build and release."
+            fi
           fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+
+          # Platform-selector suffix: "v0.25.1-wl" -> "wl". No suffix, or a
+          # suffix that isn't purely w/m/l letters, means build everything
+          # (keeps this additive -- an ordinary "v0.25.1" isn't affected).
+          VERSION_PART="${TAG#v}"
+          SUFFIX=""
+          if [[ "$VERSION_PART" =~ ^[0-9]+\.[0-9]+\.[0-9]+-([a-z]+)$ ]]; then
+            CANDIDATE="${BASH_REMATCH[1]}"
+            if [[ "$CANDIDATE" =~ ^[wml]+$ ]]; then
+              SUFFIX="$CANDIDATE"
+            fi
+          fi
+          if [ -z "$SUFFIX" ]; then
+            BUILD_WINDOWS=true; BUILD_MAC=true; BUILD_LINUX=true
+          else
+            BUILD_WINDOWS=false; BUILD_MAC=false; BUILD_LINUX=false
+            [[ "$SUFFIX" == *w* ]] && BUILD_WINDOWS=true
+            [[ "$SUFFIX" == *m* ]] && BUILD_MAC=true
+            [[ "$SUFFIX" == *l* ]] && BUILD_LINUX=true
+          fi
+          echo "build_windows=$BUILD_WINDOWS" >> "$GITHUB_OUTPUT"
+          echo "build_mac=$BUILD_MAC" >> "$GITHUB_OUTPUT"
+          echo "build_linux=$BUILD_LINUX" >> "$GITHUB_OUTPUT"
+          echo "Platform selection for $TAG -- windows:$BUILD_WINDOWS mac:$BUILD_MAC linux:$BUILD_LINUX"
+
+      - name: Tag this commit
+        if: github.ref_type == 'branch' && steps.plan.outputs.should_release == 'true'
+        run: |
+          git tag ${{ steps.plan.outputs.tag }}
+          git push origin ${{ steps.plan.outputs.tag }}
+
+      # Deletes any existing release for this exact tag before creating a
+      # fresh one, same reasoning as the old single-job workflow: makes
+      # this idempotent regardless of what a prior interrupted run left
+      # behind. Created empty (no assets) here -- each selected platform in
+      # the build job below uploads its own assets afterward with `gh
+      # release upload`, not `create`, so they can't race each other the
+      # way multiple parallel `create` calls would.
+      - name: Create draft release
+        if: steps.plan.outputs.should_release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "${{ steps.plan.outputs.tag }}" --yes --repo "${{ github.repository }}" || echo "No existing release -- nothing to clean up."
+          gh release create "${{ steps.plan.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ steps.plan.outputs.tag }}" \
+            --draft \
+            --generate-notes
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.should_release == 'true'
+    strategy:
+      # One platform's build failing shouldn't cancel the others -- each
+      # produces an independent installer for an independent OS/arch.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            label: Windows
+          - os: macos-latest
+            platform: mac
+            label: macOS (Apple Silicon)
+          - os: macos-13
+            platform: mac
+            label: macOS (Intel)
+          - os: ubuntu-latest
+            platform: linux
+            label: Linux
+    runs-on: ${{ matrix.os }}
+    name: build (${{ matrix.label }})
+    steps:
+      # Deliberately the very first step, before checkout -- an unselected
+      # platform (per the plan job's platform-selector parsing) exits here
+      # almost instantly rather than paying for a checkout it won't use.
+      - name: Check platform selected
+        id: selected
+        shell: bash
+        run: |
+          case "${{ matrix.platform }}" in
+            windows) SEL="${{ needs.plan.outputs.build_windows }}" ;;
+            mac) SEL="${{ needs.plan.outputs.build_mac }}" ;;
+            linux) SEL="${{ needs.plan.outputs.build_linux }}" ;;
+          esac
+          echo "selected=$SEL" >> "$GITHUB_OUTPUT"
+          echo "${{ matrix.label }} selected for this release: $SEL"
+
+      - uses: actions/checkout@v4
+        if: steps.selected.outputs.selected == 'true'
 
       - uses: actions/setup-node@v4
-        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
+        if: steps.selected.outputs.selected == 'true'
         with:
           node-version: 24
           cache: npm
@@ -114,104 +205,47 @@ jobs:
       # local venv + PyInstaller -- needs a real Python on PATH on every
       # platform, not just whatever the runner image happens to ship.
       - uses: actions/setup-python@v5
-        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
+        if: steps.selected.outputs.selected == 'true'
         with:
           python-version: '3.11'
           cache: pip
           cache-dependency-path: src/python/requirements-build.txt
 
       - run: npm ci
-        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
-
-      - name: Tag this commit
-        if: github.ref_type == 'branch' && steps.release_check.outputs.should_release == 'true'
-        run: |
-          git tag ${{ steps.release_check.outputs.tag }}
-          git push origin ${{ steps.release_check.outputs.tag }}
-
-      - name: Determine this run's release tag
-        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
-        id: release_tag
-        shell: bash
-        run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${{ steps.release_check.outputs.tag }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      # cancel-in-progress (above) kills an older run's process, but doesn't
-      # undo anything it already did via the GitHub API before being killed
-      # -- if that run got as far as creating a draft release and uploading
-      # one asset before being cut off, that orphaned draft is still there.
-      # Deleting any existing release for this exact tag first makes each
-      # run start from a clean slate regardless of what a prior interrupted
-      # run left behind. `gh` is preinstalled on GitHub-hosted runners.
-      # Doesn't touch the git tag itself (only removes the Release object).
-      - name: Remove any stray release for this tag
-        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release delete "${{ steps.release_tag.outputs.tag }}" --yes --repo "${{ github.repository }}" || echo "No existing release -- nothing to clean up."
+        if: steps.selected.outputs.selected == 'true'
 
       # Build only -- no network/GitHub calls happen during this step, it's
-      # purely local packaging. Deliberately NOT `npm run dist:publish`:
-      # electron-builder's own GitHub publisher has its own internal
-      # retry behavior around creating the release, and a retry there (e.g.
-      # after a transient network hiccup) has been the suspected cause of a
-      # single run ending up with two release objects instead of one --
-      # the failure mode this whole flow exists to prevent. Publishing is
-      # instead done explicitly below, as one plain `gh` call this workflow
-      # fully controls: no hidden retries, no way to silently duplicate.
+      # purely local packaging. Deliberately NOT electron-builder's own
+      # `--publish` flow: its GitHub publisher has its own internal retry
+      # behavior around creating/uploading, and a retry there (e.g. after a
+      # transient network hiccup) has been the suspected cause of a single
+      # run ending up with duplicate release state before. Publishing is
+      # done explicitly below instead, as plain `gh` calls this workflow
+      # fully controls.
       - name: Build
-        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
+        if: steps.selected.outputs.selected == 'true'
         run: npm run dist
 
-      # Explicit, single-shot release creation + asset upload. The app has
-      # no electron-updater/auto-update feature, so the .exe.blockmap
-      # electron-builder's nsis target generates alongside the installer
-      # (for differential updates) isn't functionally needed by anything --
-      # uploaded anyway, when present, since it's free/harmless, not
-      # because it's used. Included conditionally rather than as a second
-      # literal glob: whether a non-publishing build still computes the
-      # blockmap (it's an update-flow artifact, so it may only get
-      # generated when a publish is actually requested) isn't confirmed --
-      # an unmatched literal glob would otherwise fail `gh` outright.
-      - name: Publish release
-        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
+      # Uploads whatever this platform actually produced -- Windows makes
+      # an nsis installer + its blockmap + a portable exe, mac makes a dmg,
+      # Linux makes an AppImage. One combined glob covering every possible
+      # extension (rather than per-OS branching) keeps this step reusable
+      # across all four matrix entries as-is; the existence check discards
+      # whichever patterns didn't match on this particular platform (an
+      # unmatched glob expands to its own literal, unquoted, string, which
+      # -e correctly treats as "not a real file").
+      - name: Upload release assets
+        if: steps.selected.outputs.selected == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ASSETS=(dist/*.exe)
-          if compgen -G "dist/*.exe.blockmap" > /dev/null; then
-            ASSETS+=(dist/*.exe.blockmap)
+          ASSETS=()
+          for f in dist/*.exe dist/*.exe.blockmap dist/*.dmg dist/*.AppImage; do
+            [ -e "$f" ] && ASSETS+=("$f")
+          done
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "No build artifacts found in dist/ -- nothing to upload." >&2
+            exit 1
           fi
-          gh release create "${{ steps.release_tag.outputs.tag }}" \
-            "${ASSETS[@]}" \
-            --repo "${{ github.repository }}" \
-            --title "${{ steps.release_tag.outputs.tag }}" \
-            --draft \
-            --generate-notes
-
-  # linux: still needs a "linux" target added to package.json's build config
-  # (only "mac"/"win" exist today) and the same release-tag/build/publish
-  # steps as the windows-latest job above (not sketched out here since
-  # they'd just be a copy of it) before this would actually produce
-  # anything.
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with:
-  #         fetch-depth: 0
-  #     - uses: actions/setup-node@v4
-  #       with:
-  #         node-version: 24
-  #         cache: npm
-  #     - uses: actions/setup-python@v5
-  #       with:
-  #         python-version: '3.11'
-  #         cache: pip
-  #         cache-dependency-path: src/python/requirements-build.txt
-  #     - run: npm ci
+          gh release upload "${{ needs.plan.outputs.tag }}" "${ASSETS[@]}" --repo "${{ github.repository }}" --clobber
