@@ -15,6 +15,10 @@ type OpenFolderResult = {
     canceled: boolean;
 };
 
+// Mirrors LibraryScreen.tsx's own SortField/SortDirection unions.
+type LibrarySortField = 'title' | 'uploadDate' | 'dateAdded' | 'channel' | 'downloaded' | 'quality';
+type LibrarySortDirection = 'asc' | 'desc';
+
 type LibraryIndex = {
     channels: {
         channelFolderName: string;
@@ -66,6 +70,8 @@ declare global {
             setLibraryDir: (dir: string) => Promise<{ success: boolean; libraryDir: string }>
             getLibraryViewMode: () => Promise<{ libraryViewMode: 'channel' | 'video' }>
             setLibraryViewMode: (mode: 'channel' | 'video') => Promise<{ success: boolean; libraryViewMode: 'channel' | 'video' }>
+            getLibrarySort: () => Promise<{ sortField: LibrarySortField; sortDirection: LibrarySortDirection }>
+            setLibrarySort: (payload: { sortField: LibrarySortField; sortDirection: LibrarySortDirection }) => Promise<{ success: boolean; sortField: LibrarySortField; sortDirection: LibrarySortDirection }>
             getThemeMode: () => Promise<{ themeMode: 'light' | 'dark' }>
             setThemeMode: (mode: 'light' | 'dark') => Promise<{ success: boolean; themeMode: 'light' | 'dark' }>
             getCustomConvertFormats: () => Promise<{ customConvertFormats: string[] }>

@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
-import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT } from './settings.mjs';
+import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
@@ -306,6 +306,22 @@ ipcMain.handle('settings:setLibraryViewMode', async (e, mode) => {
     settings.libraryViewMode = mode === 'video' ? 'video' : 'channel';
     writeSettings(settings);
     return { success: true, libraryViewMode: settings.libraryViewMode };
+});
+
+ipcMain.handle('settings:getLibrarySort', async () => {
+    const { librarySortField, librarySortDirection } = readSettings();
+    return {
+        sortField: clampLibrarySortField(librarySortField),
+        sortDirection: clampLibrarySortDirection(librarySortDirection),
+    };
+});
+
+ipcMain.handle('settings:setLibrarySort', async (e, { sortField, sortDirection } = {}) => {
+    const settings = readSettings();
+    settings.librarySortField = clampLibrarySortField(sortField);
+    settings.librarySortDirection = clampLibrarySortDirection(sortDirection);
+    writeSettings(settings);
+    return { success: true, sortField: settings.librarySortField, sortDirection: settings.librarySortDirection };
 });
 
 ipcMain.handle('settings:getThemeMode', async () => {

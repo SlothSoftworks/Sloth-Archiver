@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setLibraryDir: (dir) => ipcRenderer.invoke('settings:setLibraryDir', dir),
     getLibraryViewMode: () => ipcRenderer.invoke('settings:getLibraryViewMode'),
     setLibraryViewMode: (mode) => ipcRenderer.invoke('settings:setLibraryViewMode', mode),
+    getLibrarySort: () => ipcRenderer.invoke('settings:getLibrarySort'),
+    setLibrarySort: (payload) => ipcRenderer.invoke('settings:setLibrarySort', payload),
     getThemeMode: () => ipcRenderer.invoke('settings:getThemeMode'),
     setThemeMode: (mode) => ipcRenderer.invoke('settings:setThemeMode', mode),
     getCustomConvertFormats: () => ipcRenderer.invoke('settings:getCustomConvertFormats'),

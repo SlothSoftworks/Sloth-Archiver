@@ -240,3 +240,17 @@ Assessed as low-medium difficulty: every build step already exists as a working 
 - Whatever comes out of this needs to apply consistently to both download paths (the Downloader tab's single download and the bulk-add queue's `processItem`), not just one of them, given both hit the same underlying `getVideoInfoPython`/`downloadVideoWithProgressUpdates` handlers today.
 
 **Update — 2026-08-29 — partially addressed:** Investigated by analyzing a competing yt-dlp-based downloader's own error-handling design (`reports/ErrorHandling.md`) and mapping it against this app's pipeline. Phase 1 (stderr-based error classification, an allow-list auto-retry policy with a fixed backoff ladder, and a stall-based timeout) and Phase 2 (process-tree-aware cancellation) are implemented in `src/electron/downloadErrors.mjs` and wired into `downloadVideoWithProgressUpdates` (`main.mjs`), reaching both the single-download flow and the bulk-add queue. See `reports/ErrorHandlingRoadmap.md` for the full phase breakdown. **Still open:** the YouTube-specific bot-block player-client fallback ladder (Phase 3 — needs live adversarial testing) and persisting retry/queue state across app restarts (Phase 4).
+
+---
+
+## TD-013 — 2026-08-30 — Library tab settings each get their own IPC get/set pair instead of one grouped call
+
+**Where:** `src/electron/settings.mjs` and `main.mjs`'s `ipcMain.handle` calls — specifically `settings:getLibraryViewMode`/`setLibraryViewMode` and `settings:getLibrarySort`/`setLibrarySort`, exposed through `preload.mjs` and `src/types/electron-api.d.ts`. `LibraryScreen.tsx`'s `thumbnailSize` setting follows the same one-setting-one-pair shape.
+
+**What happens today:** Every Library-tab preference (view mode, sort field, sort direction, thumbnail size) is its own independent `getX`/`setX` IPC method, each reading/writing the same underlying `settings.json` blob (`readSettings`/`writeSettings`) but through a separate round trip. `LibraryScreen.load()` already fires several of these in parallel via `Promise.all`.
+
+**Why it's there:** This mirrors the pattern used everywhere else in the app (`themeMode`, `maxSimultaneousDownloads`, `customConvertFormats`, etc. each have their own pair) — consistent, but means every new Library-tab preference adds another IPC method pair.
+
+**Why it's debt:** Came up while adding `getLibrarySort`/`setLibrarySort` — the IPC surface for this one tab's settings will keep growing linearly with every new preference. A single `getLibrarySettings`/`setLibrarySettings` pair covering the whole group would cap that growth.
+
+**Suggested future fix:** Consolidate into one `getLibrarySettings`/`setLibrarySettings` pair. `setLibrarySettings` must accept a **partial** patch merged server-side (`Object.assign` onto the existing settings), not a full-object replace — `viewMode` currently lives in `LibraryScreen`'s own state while `sortField`/`sortDirection` live in the child `FlatVideoList` (which mounts/unmounts independently as the user switches views), so a full-object write from one could clobber a concurrent change from the other if the caller has to round-trip the whole group's current values first. The underlying `settings.json` keys don't need to change shape, so this is a pure IPC-surface consolidation, not a data migration. Deliberately not done now — deferred as a "keep in mind for when this list grows more" item, not an active problem yet.
