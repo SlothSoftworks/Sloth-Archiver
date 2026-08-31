@@ -49,6 +49,11 @@
     },
     "win": {
       "target": "nsis"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "lltrash94",
+      "repo": "SlothArchiver"
     }
   },
   "scripts": {
@@ -60,6 +65,7 @@
     "preview": "vite preview",
     "electron-build": "electron-builder",
     "dist": "npm run build:all:deep && npm run electron-build",
+    "dist:publish": "npm run build:all:deep && electron-builder --publish always",
     "build:renderer": "vite build",
     "build:copy:electron": "node scripts/copy-electron.mjs",
     "build:ytdlp:bin": "node scripts/build-ytdlp-bin.mjs",

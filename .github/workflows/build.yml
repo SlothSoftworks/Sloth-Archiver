@@ -1,0 +1,140 @@
+name: Build
+
+# Two ways in:
+#   - Push to master (i.e. a PR just got merged) -- only master's HEAD
+#     actually moving triggers this, not commits on the PR's own branch
+#     while it's still open. What happens next depends on whether
+#     package.json's version was bumped in that merge (see "Determine
+#     release tag" below): a version bump produces a real tagged release,
+#     same as the manual path; no bump just produces a build-only smoke
+#     artifact, so a trivial merge doesn't spam a new release.
+#   - A version tag pushed directly (e.g. v0.24.0) -- same real
+#     build+release path, for cutting/re-cutting a release without going
+#     through a merge:
+#       git tag v0.24.0 && git push origin v0.24.0
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*.*.*'
+
+# Required so electron-builder's GitHub publish step can create/update a
+# release and upload artifacts using the workflow's own GITHUB_TOKEN --
+# needs "Read and write permissions" enabled under Settings > Actions >
+# General > Workflow permissions for that default token to actually have
+# this scope, in addition to declaring it here.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      # One platform's build failing shouldn't cancel the other -- each
+      # produces an independent installer for an independent OS.
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+        # macOS commented out for now -- macOS runners cost 10x the Linux
+        # minutes multiplier, and this is still being iterated on. Re-add
+        # once the workflow itself is confirmed working via Windows.
+        # os: [macos-latest, windows-latest]
+        # Linux commented out for now to save CI minutes -- also needs a
+        # "linux" target added to package.json's build config (only "mac"
+        # and "win" exist today) before this would actually work.
+        # os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need real tag history to check "does vX.Y.Z already exist" below
+          # -- the default shallow checkout wouldn't have it.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # build-ytdlp-bin.mjs freezes yt-dlp into a standalone binary via a
+      # local venv + PyInstaller -- needs a real Python on PATH on every
+      # platform, not just whatever the runner image happens to ship.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: src/python/requirements-build.txt
+
+      - run: npm ci
+
+      # A tag push already names its own release -- nothing to decide.
+      # A master push only becomes a release if this commit's
+      # package.json version isn't tagged yet (i.e. this merge bumped it).
+      # Note this deliberately does NOT push the tag and rely on that
+      # re-triggering the tag path above: a tag pushed with the default
+      # GITHUB_TOKEN from inside a workflow run does not trigger further
+      # workflow runs (GitHub's own loop-prevention), so the release has to
+      # happen in this same run instead.
+      - name: Determine release tag
+        if: github.ref_type == 'branch'
+        id: release_check
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "$TAG already exists -- this merge didn't bump the version, building only."
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "$TAG is new -- this merge bumped the version, will tag and release."
+          fi
+
+      - name: Tag this commit
+        if: github.ref_type == 'branch' && steps.release_check.outputs.should_release == 'true'
+        run: |
+          git tag ${{ steps.release_check.outputs.tag }}
+          git push origin ${{ steps.release_check.outputs.tag }}
+
+      # Build-only path: version unchanged since the last release, or this
+      # is some other branch push entirely -- just a smoke test.
+      - name: Build (no release)
+        if: github.ref_type == 'branch' && steps.release_check.outputs.should_release == 'false'
+        run: npm run dist
+
+      - name: Upload build artifact
+        if: github.ref_type == 'branch' && steps.release_check.outputs.should_release == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SlothArchiver-${{ matrix.os }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+          if-no-files-found: error
+
+      # Real release path: either a tag was pushed directly, or this
+      # master push bumped the version (tagged just above).
+      - name: Build and publish release
+        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
+        run: npm run dist:publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # linux:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 24
+  #         cache: npm
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.11'
+  #         cache: pip
+  #         cache-dependency-path: src/python/requirements-build.txt
+  #     - run: npm ci
+  #     - run: npm run dist:publish
+  #       env:
+  #         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
