@@ -24,9 +24,8 @@ you point it here.
 ### QoL features
 
 1. Language support. Add support for language and set up the ability add more languages in the future via a "strings" style file that the app can reado n startup and load all the messages in the app in any language.
-2. Protable version: a portable .exe for windows that just lets the user open and use the app.
-3. Silicon compatible generation set up for github and local
-4. custom player hot keys with several functions some ideaS:
+2. Silicon compatible generation set up for github and local
+3. custom player hot keys with several functions some ideaS:
    - shift + left/right arrows for 10 sec + or - 
    - number keys to specific parts of the video similar to youtube
    - j and k keypresses to move frame by frame

@@ -11,6 +11,16 @@ completion is recorded instead, down in [Archived](#archived), so that history i
 lost when the backlog gets trimmed. The sections above Archived are meant to stay
 short and scannable: only what's still actually open.
 
+**2026-08-31 pass (continued):** [Portable Windows build](#portable-windows-build)
+shipped the same day it was assessed below — `win.target: ["nsis", "portable"]`,
+exactly as scoped, no surprises in the packaging mechanics. Verified on a real
+Windows machine, not just a successful CI build. One real finding from that
+testing: the portable build is noticeably slow to start, traced directly to NSIS's
+portable target re-extracting the entire app on every launch (not an install-time
+cost like the regular installer) — logged as `TD-014` in `reports/TechnicalDebt.md`
+rather than fixed now, since it's not a priority. Removed from `futureSpecs.md`
+directly.
+
 **2026-08-31 pass:** four new `futureSpecs.md` items assessed this pass, none with
 any code behind them yet — **Portable Windows build** and
 **Silicon-compatible (Apple Silicon) builds** (both QoL features),
@@ -141,9 +151,9 @@ these are detailed in the dated log under [Archived](#archived).
   - [Local files library support](#local-files-library)
 - [QoL features](#qol-features)
   - [Language support](#language-support)
-  - [Portable Windows build](#portable-windows-build)
   - [Silicon-compatible (Apple Silicon) builds](#silicon-compatible-builds)
   - [Custom player hotkeys](#player-hotkeys)
+  - [~~Portable Windows build~~ — shipped](#portable-windows-build)
   - [~~Cookie browser-picker "Clear" quirk~~ — shipped](#cookie-picker-quirk)
   - [~~Delete feature for playlists~~ — shipped](#playlist-delete)
 - [Small features and corrections](#small-features)
@@ -207,6 +217,7 @@ flowchart LR
         d28["Embedded clip range controls: Set Start/End/Clip/Clear buttons + draggable scrub-bar markers in the player's own chrome"]
         d29["LibraryVideoPlayerWithTools: self-contained clip flow, now the only clipping UI (old instrument-panel Clip row removed) + standaloneClipping mode + SaveClipDialog 'Save as file'"]
         d30["Player polish: click-anywhere play/pause (no Vidstack Gesture delay), theme-aware clip markers, frame-accurate clip re-encode auto-upgrade"]
+        d31["Portable Windows build (win.target: nsis + portable)"]
     end
 
     subgraph TODO["Not started"]
@@ -217,7 +228,6 @@ flowchart LR
         t9["Export/Import library JSON"]
         t14["Playlist mode (internal queue playback)"]
         t16["Local files library support"]
-        t17["Portable Windows build"]
         t18["Silicon-compatible (Apple Silicon) builds"]
         t19["Custom player hotkeys"]
         t20["Loop / Loop sequence buttons"]
@@ -229,7 +239,7 @@ flowchart LR
     class d2,d22 updater
     class d3,d8,d9,d10,d11,d12,d17,d19,d21,t14 playlist
     class d4,d7,d15,d16,d18,d23,t1,t20 smallfeat
-    class d5,d6,d13,d14,t6,t17,t18 qol
+    class d5,d6,d13,d14,t6,d31,t18 qol
     class t7 longshot
     class d20,d26,d27,d28,d29,d30,t19 player
 ```
@@ -627,31 +637,30 @@ across many languages immediately — expanding language coverage afterward is j
 adding more JSON files, not more engineering.
 
 <a id="portable-windows-build"></a>
-### Portable Windows build
+### ~~Portable Windows build~~ — SHIPPED
 
-**New this pass.** **Overall: Low** — electron-builder already ships first-class
-support for exactly this, confirmed directly in the already-installed dependency,
-not something that needs new tooling.
+Landed 2026-08-31, exactly as scoped in this section's own assessment — `win.target`
+became `["nsis", "portable"]`, no other config or app-code changes. Confirmed
+directly from electron-builder's own source (`NsisTarget.js`) before shipping that
+both targets write to the same top-level `dist/` output directory with distinct
+default filenames (`SlothArchiver Setup <version>.exe` vs `SlothArchiver <version>.exe`,
+no collision) and that only the installer target generates a `.blockmap` (portable
+explicitly disables differential-update awareness) — so the existing CI workflow's
+`dist/*.exe` glob and conditional blockmap check needed zero changes to pick up the
+new artifact. Verified working on a real Windows machine, not just via CI producing
+a file. Shipped as the config-only version this section recommended (normal per-user
+AppData path for settings, not a zero-footprint/no-trace build) — that decision was
+never revisited, so treat "true portability" as still open if it comes back up.
 
-**Confirmed directly:** `node_modules/app-builder-lib/templates/nsis/portable.nsi`
-already exists — electron-builder's nsis target has a built-in `"portable"`
-variant (a single no-install `.exe`, distinct from the normal installer) alongside
-the standard `"nsis"` target already in use. `package.json`'s `win.target` is a
-single string (`"nsis"`) today; electron-builder accepts an array there, and
-building both from one `win.target: ["nsis", "portable"]` config needs no separate
-pipeline.
-
-| Piece | Difficulty | Why |
-|---|---|---|
-| Add the target | Low | Config-only change (`win.target` becomes an array) — no app source changes, since a portable build is the same Electron app, just packaged without an installer/uninstaller. |
-| CI wiring | Low | The build workflow already globs `dist/*.exe` for both the smoke-test artifact upload and the release publish step, so a second `.exe` in `dist/` gets picked up automatically once the target is added — the only real change is both installers now sharing the `.exe` extension, so the release asset names need to stay distinguishable (electron-builder's own default naming already includes the target type, so this is likely already handled, just worth confirming on the first real build rather than assuming). |
-| Whether "portable" also means "no trace left on the host" | Low, worth deciding explicitly | electron-builder's portable target only changes *how the app is packaged/launched* — it does not automatically redirect `app.getPath('userData')` (where settings/library-index caching live) to a directory beside the `.exe` instead of the normal per-user AppData path. A portable build today would still write those files to the same OS-standard location an installed build uses. Worth an explicit decision: is "no separate installer" enough, or does "portable" here also imply "runs from a USB stick with zero footprint on the host"? The latter needs an actual code change (detecting portable mode, e.g. via `process.env.PORTABLE_EXECUTABLE_DIR`, and pointing `userData` there instead) that the former doesn't. |
-
-**Recommendation:** ship the config-only version first (still uses the normal
-per-user AppData path for settings, exactly like the installed build) — that
-satisfies "no installer required," which is most of what a portable request
-usually means. Revisit true zero-footprint portability only if it turns out to
-actually matter to whoever asked for this.
+One real, user-visible finding from actual testing: the portable build is noticeably
+slower to start than the installed one. Root cause confirmed directly from
+electron-builder's `portable.nsi` template — it unconditionally wipes and
+re-extracts the *entire* packaged app to a temp directory on every single launch
+(the installed version only pays that cost once, at install time). Not a bug in
+this app's config, just how NSIS's portable target works. Logged as `TD-014`
+(`reports/TechnicalDebt.md`) rather than acted on now — not a priority, but worth
+having on record given it's the kind of thing that reads as "the app is just slow"
+in a report with no obvious cause otherwise.
 
 <a id="silicon-compatible-builds"></a>
 ### Silicon-compatible (Apple Silicon) builds

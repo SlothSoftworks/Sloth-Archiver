@@ -254,3 +254,21 @@ Assessed as low-medium difficulty: every build step already exists as a working 
 **Why it's debt:** Came up while adding `getLibrarySort`/`setLibrarySort` — the IPC surface for this one tab's settings will keep growing linearly with every new preference. A single `getLibrarySettings`/`setLibrarySettings` pair covering the whole group would cap that growth.
 
 **Suggested future fix:** Consolidate into one `getLibrarySettings`/`setLibrarySettings` pair. `setLibrarySettings` must accept a **partial** patch merged server-side (`Object.assign` onto the existing settings), not a full-object replace — `viewMode` currently lives in `LibraryScreen`'s own state while `sortField`/`sortDirection` live in the child `FlatVideoList` (which mounts/unmounts independently as the user switches views), so a full-object write from one could clobber a concurrent change from the other if the caller has to round-trip the whole group's current values first. The underlying `settings.json` keys don't need to change shape, so this is a pure IPC-surface consolidation, not a data migration. Deliberately not done now — deferred as a "keep in mind for when this list grows more" item, not an active problem yet.
+
+---
+
+## TD-014 — 2026-08-31 — Portable Windows build is noticeably slow to start
+
+**Where:** `package.json`'s `build.win.target` (`["nsis", "portable"]`) — specifically the `portable` variant, produced by electron-builder's bundled `portable.nsi` NSIS template.
+
+**What happens today:** Confirmed real-world on an actual Windows machine (not just inferred) — the portable `.exe` takes noticeably longer to open than the installed nsis version. Confirmed directly against the template source (`node_modules/app-builder-lib/templates/nsis/portable.nsi`): on every single launch, it unconditionally wipes (`RMDir /r $INSTDIR`) and re-extracts (`File /r "${APP_DIR_64}\*.*"`) the *entire* packaged app — the full Electron framework plus every bundled resource (`ytdlp-bin`, `ffmpeg`, etc., the same payload the earlier size-reduction work targeted) — into a temp directory before it can even start. The installed nsis version only pays that extraction cost once, at install time; the portable one pays it on every launch, with nothing cached or skipped between runs.
+
+**Why it's there:** This is the standard, documented behavior of NSIS's portable target (electron-builder ships this template as-is, not a customization of it) — it's what makes a portable build genuinely portable (no installed state, safe to run from a USB stick, self-contained) at the cost of doing real extraction work every time instead of once.
+
+**Why it's debt:** Not a bug in this app's own code — nothing here misconfigured the portable target — but a real, user-visible startup cost inherent to the packaging choice, worth tracking since it's the kind of thing that looks like "the app is slow" in a bug report with no obvious cause unless someone already knows this mechanism exists.
+
+**Suggested future fix — not investigated yet, no clear answer today:**
+- The most direct lever is the size of what gets extracted — this payload is the same one `reports/` bloat-reduction work already went after (bundled ffmpeg/yt-dlp/Electron itself), so further shrinking that helps this for free, same cost paid elsewhere.
+- Worth checking whether electron-builder's portable target supports skipping re-extraction when the target temp directory already has a matching version (the template's `RMDir /r` looks unconditional today, but this needs actually reading the rest of the template/electron-builder's options, not assumed).
+- A different packaging shape entirely — a plain `.zip` the user extracts once themselves, rather than a self-extracting NSIS portable exe — trades one manual one-time extraction for zero extraction on every subsequent launch, at the cost of not being a single double-clickable file. Worth deciding whether that tradeoff is actually preferable before investing in trying to speed up the current mechanism.
+- Not a priority today — flagged for later, not blocking.
