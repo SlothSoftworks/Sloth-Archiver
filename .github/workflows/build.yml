@@ -3,11 +3,12 @@ name: Build
 # Two ways in:
 #   - Push to master (i.e. a PR just got merged) -- only master's HEAD
 #     actually moving triggers this, not commits on the PR's own branch
-#     while it's still open. What happens next depends on whether
-#     package.json's version was bumped in that merge (see "Determine
-#     release tag" below): a version bump produces a real tagged release,
-#     same as the manual path; no bump just produces a build-only smoke
-#     artifact, so a trivial merge doesn't spam a new release.
+#     while it's still open. Whether this actually builds anything depends
+#     on whether package.json's version was bumped in that merge (see
+#     "Determine release tag" below, the very first real step): no bump
+#     means the job exits immediately after that check, before Node/Python
+#     setup or any dependency install, so a merge that doesn't touch the
+#     version costs nothing. A version bump builds and releases for real.
 #   - A version tag pushed directly (e.g. v0.24.0) -- same real
 #     build+release path, for cutting/re-cutting a release without going
 #     through a merge:
@@ -18,6 +19,16 @@ on:
       - master
     tags:
       - 'v*.*.*'
+    # Skips a build entirely when a push only touches docs/meta files -- e.g.
+    # a futureSpecs.md edit or a README tweak has no reason to spend a full
+    # Windows build. Applies to both the branches and tags triggers above
+    # (GitHub doesn't support scoping path filters to just one of them
+    # within a single `push:` block); in practice this only matters for the
+    # branches path, since a real release tag always accompanies a
+    # package.json version bump, which this filter doesn't touch.
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
 
 # Guards against two overlapping runs for the same ref (a manual re-run
 # while one's still in flight, or two pushes landing close together) both
@@ -59,29 +70,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Need real tag history to check "does vX.Y.Z already exist" below
-          # -- the default shallow checkout wouldn't have it.
+          # fetch-tags isn't needed here -- the version-bump check below
+          # queries the remote directly (git ls-remote), not local history.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-
-      # build-ytdlp-bin.mjs freezes yt-dlp into a standalone binary via a
-      # local venv + PyInstaller -- needs a real Python on PATH on every
-      # platform, not just whatever the runner image happens to ship.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
-          cache-dependency-path: src/python/requirements-build.txt
-
-      - run: npm ci
-
-      # A tag push already names its own release -- nothing to decide.
-      # A master push only becomes a release if this commit's
-      # package.json version isn't tagged yet (i.e. this merge bumped it).
+      # The very first real step, deliberately before Node/Python setup or
+      # any dependency install: a master push whose package.json version
+      # isn't new bails out right here, so a merge that doesn't bump the
+      # version costs nothing beyond a checkout. Uses grep/sed instead of
+      # `node -p require(...)` specifically so this check doesn't need Node
+      # set up yet -- setup-node happens further down, gated on this step's
+      # own result.
+      #
+      # A tag push already names its own release -- nothing to decide here.
       # Note this deliberately does NOT push the tag and rely on that
       # re-triggering the tag path above: a tag pushed with the default
       # GITHUB_TOKEN from inside a workflow run does not trigger further
@@ -92,38 +93,41 @@ jobs:
         id: release_check
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION=$(grep -m1 '"version"' package.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')
           TAG="v$VERSION"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "$TAG already exists -- this merge didn't bump the version, building only."
+            echo "$TAG already exists -- this merge didn't bump the version, skipping the build entirely."
           else
             echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "$TAG is new -- this merge bumped the version, will tag and release."
+            echo "$TAG is new -- this merge bumped the version, will build and release."
           fi
+
+      - uses: actions/setup-node@v4
+        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
+        with:
+          node-version: 24
+          cache: npm
+
+      # build-ytdlp-bin.mjs freezes yt-dlp into a standalone binary via a
+      # local venv + PyInstaller -- needs a real Python on PATH on every
+      # platform, not just whatever the runner image happens to ship.
+      - uses: actions/setup-python@v5
+        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: src/python/requirements-build.txt
+
+      - run: npm ci
+        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
 
       - name: Tag this commit
         if: github.ref_type == 'branch' && steps.release_check.outputs.should_release == 'true'
         run: |
           git tag ${{ steps.release_check.outputs.tag }}
           git push origin ${{ steps.release_check.outputs.tag }}
-
-      # Build-only path: version unchanged since the last release, or this
-      # is some other branch push entirely -- just a smoke test.
-      - name: Build (no release)
-        if: github.ref_type == 'branch' && steps.release_check.outputs.should_release == 'false'
-        run: npm run dist
-
-      - name: Upload build artifact
-        if: github.ref_type == 'branch' && steps.release_check.outputs.should_release == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: SlothArchiver-${{ matrix.os }}
-          path: |
-            dist/*.exe
-            dist/*.dmg
-          if-no-files-found: error
 
       - name: Determine this run's release tag
         if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
