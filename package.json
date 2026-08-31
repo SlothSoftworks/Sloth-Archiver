@@ -1,7 +1,7 @@
 {
   "name": "sloth-archiver",
   "private": true,
-  "version": "0.25.0",
+  "version": "0.25.1-lw",
   "description": "A desktop app for downloading and archiving videos, with a built-in library and playlist tracking.",
   "author": "Sloth <sloth.software.dev@protonmail.com>",
   "license": "GPL-3.0-or-later",
@@ -49,6 +49,10 @@
     },
     "win": {
       "target": ["nsis", "portable"]
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "AudioVideo"
     }
   },
   "scripts": {
