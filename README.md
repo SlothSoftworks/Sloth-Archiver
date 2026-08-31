@@ -1,23 +1,39 @@
 # SlothArchiver
 
-**Your own personal, offline video archive.**
+**Your own personal, offline video archive — for people too lazy to fight with
+Docker, servers, or a complicated setup to get one.**
 
 *Free and open source — no subscriptions, no accounts, no server to run.*
 
 SlothArchiver is a free desktop app for downloading and organizing videos and audio
-from YouTube and other platforms into a permanent library on your own computer —
-no subscriptions, no re-uploading to yet another cloud service, no losing access
-when a video gets taken down or a channel disappears.
+from YouTube and other platforms into a permanent library on your own computer.
+Install it, point it at a folder, and it does the archiving for you — no
+subscriptions, no re-uploading to yet another cloud service, no losing access
+when a video gets taken down or a channel disappears. The name isn't ironic:
+this app is built around doing as little work as possible, for you and for
+itself.
 
 ## Download
 
-> 🚧 Downloads coming soon.
+<!-- Update the version in these 5 links on every release -- currently 0.25.3.
+     Each filename must match exactly what GitHub actually named the asset on
+     the release page, NOT the local build's own filename -- GitHub's release
+     upload sanitizes spaces in asset names to dots, so the two Windows .exe
+     files differ from what "npm run dist" produces locally (e.g. the local
+     "SlothArchiver Setup 0.25.3.exe" becomes the asset
+     "SlothArchiver.Setup.0.25.3.exe"). Check the release's actual assets
+     list if unsure, don't assume the local build's naming carries over. -->
 
 | Platform | Link |
 |---|---|
-| macOS | [Download](#) |
-| Windows | [Download](#) |
-| Linux | [Download](#) |
+| Windows (installer) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.25.3/SlothArchiver.Setup.0.25.3.exe) |
+| Windows (portable, no install) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.25.3/SlothArchiver.0.25.3.exe) |
+| macOS (Apple Silicon) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.25.3/SlothArchiver-0.25.3-arm64.dmg) |
+| macOS (Intel) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.25.3/SlothArchiver-0.25.3.dmg) |
+| Linux (AppImage) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.25.3/SlothArchiver-0.25.3.AppImage) |
+
+All builds are unsigned, so your OS will show a first-run security warning —
+see [Installing](#installing) below.
 
 ## What is SlothArchiver?
 
@@ -31,15 +47,19 @@ your own machine.
 
 ## Why SlothArchiver?
 
-Most tools in this space ask you to pick your trade-off. Self-hosted servers give you
-a real library, but only if you're willing to run Docker and keep a machine on around
-the clock. Lightweight desktop downloaders skip all of that, but most of them just drop
-files in a folder and call it done — or eventually ask you to pay once you want more
-than that.
+Most tools in this space make you work for a real archive. Self-hosted servers give
+you one, but only if you're willing to run Docker, manage a server, and keep a
+machine on around the clock. Lightweight desktop downloaders skip all of that
+setup, but most of them just drop files in a folder and call it done — no real
+organization, nothing actually archived, just a pile of files you have to manage
+yourself — or eventually ask you to pay once you want more than that.
 
-SlothArchiver doesn't make you choose. It's a normal app you install like any other,
-with a real searchable library, playlist tracking, and version history built in — and
-it's free, in full, with no plan to change that.
+SlothArchiver is built to be the lazy option in the best sense: a normal app you
+install like any other, with zero server to babysit and zero config to get right.
+Point it at a folder once, and a real searchable library, playlist tracking, and
+version history all happen automatically from there — the app does the tedious
+bookkeeping so you don't have to, and it's free, in full, with no plan to change
+that.
 
 | | **SlothArchiver** | Arroxy | TubeArchiver | TubeArchivist / Pinchflat |
 |---|:---:|:---:|:---:|:---:|
@@ -55,7 +75,40 @@ it's free, in full, with no plan to change that.
 | macOS / Windows / Linux | ✅ | ✅ | Mac/Win only | ✅ (via Docker) |
 
 No other tool in this space currently checks every one of those boxes at once —
-that combination is the whole point of SlothArchiver.
+that combination is the whole point of SlothArchiver; A simple catalogued library, organized in one place and fully local.
+
+## Installing
+
+SlothArchiver's builds aren't code-signed (that requires a paid certificate
+this project doesn't have set up) — so the first time you open one, your OS
+will warn you it's from an unidentified/unrecognized developer. This is
+expected for any unsigned app, not a sign anything's actually wrong.
+Here's how to get past each OS's warning:
+
+**Windows** — you'll see "Windows protected your PC" (SmartScreen). Click
+**More info**, then **Run anyway**.
+
+![Windows SmartScreen bypass](docs/media/install-windows-smartscreen.png)
+
+**macOS** — you'll see a message that the app "cannot be opened because it is
+from an unidentified developer," and just double-clicking won't offer a way
+past it. Instead: right-click (or Control-click) the app → **Open** → confirm
+**Open** in the dialog that appears. You only need to do this once — after
+that, it opens normally. If macOS still blocks it, go to **System Settings →
+Privacy & Security**, scroll down, and click **Open Anyway** next to the
+message about SlothArchiver.
+
+![macOS Gatekeeper bypass](docs/media/install-macos-gatekeeper.png)
+
+**Linux (AppImage)** — make it executable first, then run it directly:
+```
+chmod +x SlothArchiver-<version>.AppImage
+./SlothArchiver-<version>.AppImage
+```
+If it fails to launch at all with a FUSE-related error, your distro likely
+needs `libfuse2` installed (common on newer distros that dropped FUSE2 by
+default, e.g. recent Ubuntu/Fedora releases) — install it via your package
+manager and try again.
 
 ## Features
 
@@ -169,7 +222,7 @@ yourself. For a deeper, more technical look at how the app is put together, see
 #### How is this different from other YouTube downloaders?
 Most tools fall into one of two camps: self-hosted servers (like TubeArchivist or
 Pinchflat) that need Docker and a machine running around the clock, or desktop
-downloaders (like Arroxy or TubeArchiver) that save files but don't keep an actual
+downloaders are built to save files but don't keep an actual
 library — and some of those eventually put real features behind a subscription.
 SlothArchiver is a normal desktop app with a real searchable library, playlist
 tracking, and version history, and it's free without any tier to upgrade to. See the
@@ -200,7 +253,7 @@ For downloads: the system will let you pick where to download the file when you 
 No, it can work without a YouTube account, however keep in mind you might be locked out of downloading certain videos (i.e. age-restricted ones) when downloading, or you could get locked out by YouTube if it detects you're downloading too many videos.
 
 #### Why would I need to load cookies / sign in?
-Cookies might be needed so your downloads can be done in case YouTube were to flag you for downloading. How it works is that it would usually flag your IP and lock you out of accessing their data — if this happens, only having a cookie will let you continue fetching data from them. In that scenario is when you might need to load the cookies, and that's why the feature exists on this app and yt-dlp.
+Cookies might be needed so your downloads can be done in case YouTube were to flag you for downloading or you're trying to download an age restricted video. How it works is that it would usually flag your IP and lock you out of accessing their data — if this happens, only having a cookie will let you continue fetching data from them. In that scenario is when you might need to load the cookies, and that's why the feature exists on this app and yt-dlp.
 
 #### What video quality can I download?
 For YouTube and Dailymotion, all of the video qualities that yt-dlp supports will be displayed for download, personally tested up to 4320p aka 8k resolution. Of course it depends on the source video.
