@@ -11,6 +11,51 @@ completion is recorded instead, down in [Archived](#archived), so that history i
 lost when the backlog gets trimmed. The sections above Archived are meant to stay
 short and scannable: only what's still actually open.
 
+**2026-08-30 pass (continued):** the two Player items still open after the pass
+below — [Player customization](#player-customization) and
+[Embed clip controls into a custom player](#custom-player-clip-controls), genuinely
+the same underlying UI as that pass's own note predicted — shipped together this
+same session as **Embedded Clip Range Controls on the Player**: Set Start/Set
+End/Clip/Clear buttons live directly in `LibraryVideoPlayerControls.tsx`'s control
+bar, with draggable bracket-shaped (`[`/`]`) start/end markers overlaid on the scrub
+bar (end wins on pixel overlap, `Start`/mirrored-`Start` icons), kept bidirectionally
+in sync with the instrument panel's existing clip fields via the same underlying
+state, no new sync mechanism needed. Both items removed from `futureSpecs.md`
+directly. Also shipped this same session:
+- **`LibraryVideoPlayerWithTools.tsx`**, a self-contained wrapper owning the entire
+  clip-creation flow (state, buttons, `SaveClipDialog`, the IPC calls) — proven out
+  first as a parallel "Player 2" experiment, then promoted to **replace** the old
+  ad-hoc player + instrument-panel clip wiring everywhere (`LibraryVideoDetail.tsx`'s
+  main video view, and `ClipCollectionView.tsx`'s per-clip player). The old "Clip"
+  row (start/end fields, Extract Clip button) is gone from `FfmpegUtilitiesPanel.tsx`
+  entirely — clipping now lives only in the player's own controls.
+- A `standaloneClipping` mode on that wrapper for future player mounts with no
+  library video to attach a clip to (used today by `ClipCollectionView`, clipping a
+  clip): saving always prompts for a file location instead of touching `clips.json`.
+  `SaveClipDialog` gained a matching "Save as file" checkbox for the normal
+  library-mode case, diverting one save to a file export instead of the library —
+  both share the same export path (`library:extractClip`, upgraded from a
+  copy-only, actually-dead-code relic to the same `clipAndConvert` pipeline
+  `library:createClip` already used). A success toast ("Clip saved · View") opens
+  the saved file's location.
+- Click-anywhere-on-the-video-to-toggle-play/pause — deliberately *not* Vidstack's
+  own `<Gesture>` primitive, traced directly into its source to unconditionally wait
+  250ms before firing (`Gesture#acceptEvent`, disambiguating from a double-tap
+  gesture this player doesn't have) — a plain `onClick` calling the player directly
+  removes that latency entirely.
+- Clip markers now theme-aware (`warning.main` via MUI's `alpha()`, chosen over
+  `primary.main` to stay visually distinct from the playback-position fill) instead
+  of a hardcoded amber hex.
+- A frame-accurate clipping fix for the keyframe-rounding tradeoff `clipAndConvert`'s
+  lossless `-c copy` path always accepted (a clip can only start at the keyframe *at
+  or before* the requested point — negligible on a long clip, can eat most of a
+  short one). Cheaply predicts that risk via a no-decode `ffprobe -skip_frame nokey`
+  keyframe lookup before committing to the fast path, and only auto-upgrades to a
+  real re-encode (matching the source's own codec, not a fixed target) for the
+  minority of clips actually at risk. Verified against real files: a safe clip
+  stayed a 263ms stream copy at the source's own bitrate; a risky one correctly
+  re-encoded in ~1s instead.
+
 **2026-08-30 pass:** two things. First, a re-org, not new assessment work: the four
 player-related items that were scattered across three different `futureSpecs.md`
 sections (Player customization and MKV support under Big features, Embed clip
@@ -65,8 +110,8 @@ these are detailed in the dated log under [Archived](#archived).
 - [Player (custom video player project)](#player) — grouped out of section order, see note there
   - [~~Personalized video player foundation~~ — shipped](#player-foundation)
   - [~~More resilient embedded player / MKV support~~ — shipped](#resilient-player)
-  - [Player customization (scrub-bar range selection) — partially shipped](#player-customization)
-  - [Embed clip controls into a custom player](#custom-player-clip-controls)
+  - [~~Player customization (scrub-bar range selection)~~ — shipped](#player-customization)
+  - [~~Embed clip controls into a custom player~~ — shipped](#custom-player-clip-controls)
   - [~~Player UX~~ — shipped](#player-ux)
 - [Long shot ideas — need planning](#long-shot-ideas)
   - [Video diff/comparator](#video-diff-comparator)
@@ -139,6 +184,9 @@ flowchart LR
         d25["Clip collection (saved clips/videoDir/clips + Clip Collection view + file-location/extract-MP3 options), incl. a lossless clip-trim freeze-frame fix"]
         d26["Personalized player foundation: Vidstack custom shell + MUI-themed controls, MKV/broad-format preview pipeline, poster+faststart fixes"]
         d27["Player UX (play icon + hide download + buffered-ahead look, resolved as a side effect of the custom scrub bar)"]
+        d28["Embedded clip range controls: Set Start/End/Clip/Clear buttons + draggable scrub-bar markers in the player's own chrome"]
+        d29["LibraryVideoPlayerWithTools: self-contained clip flow, now the only clipping UI (old instrument-panel Clip row removed) + standaloneClipping mode + SaveClipDialog 'Save as file'"]
+        d30["Player polish: click-anywhere play/pause (no Vidstack Gesture delay), theme-aware clip markers, frame-accurate clip re-encode auto-upgrade"]
     end
 
     subgraph TODO["Not started"]
@@ -147,9 +195,7 @@ flowchart LR
         t6["Language support"]
         t7["Video diff/comparator"]
         t9["Export/Import library JSON"]
-        t11["Player: click/drag-to-select clip start/end on the scrub bar"]
         t14["Playlist mode (internal queue playback)"]
-        t15["Embed clip controls into the player's own chrome (Clip button + range selection)"]
         t16["Local files library support"]
     end
 
@@ -161,22 +207,22 @@ flowchart LR
     class d4,d7,d15,d16,d18,d23,t1 smallfeat
     class d5,d6,d13,d14,t6 qol
     class t7 longshot
-    class d20,d26,d27,t11,t15 player
+    class d20,d26,d27,d28,d29,d30 player
 ```
 
 <a id="player"></a>
 ## Player (custom video player project)
 
 Grouped here, out of `futureSpecs.md`'s own section order, for easier review — four
-backlog items (three still with open work) that all converge on the same underlying
-player: [Player customization](#player-customization) and
+backlog items that all converged on the same underlying player:
+[Player customization](#player-customization) and
 [More resilient embedded player / MKV support](#resilient-player) (both Big
 features in `futureSpecs.md`), [Embed clip controls into a custom player](#custom-player-clip-controls)
 (QoL), and [Player UX](#player-ux) (Small features). Every one of them had
 independently arrived at "this needs a custom player shell" across earlier passes —
-see [the foundation entry](#player-foundation) immediately below for why they're
-grouped instead of scored separately, and each item's own subsection for exactly
-what it closed vs. what (if anything) is still open in it specifically.
+see [the foundation entry](#player-foundation) immediately below for why they were
+grouped instead of scored separately. All four are now fully shipped; each
+subsection below records what actually landed for it.
 
 <a id="player-foundation"></a>
 ### ~~Personalized video player foundation~~ — SHIPPED
@@ -265,37 +311,36 @@ non-native container/codec, not just MKV specifically," since the mechanism
 general. Removed from `futureSpecs.md` directly.
 
 <a id="player-customization"></a>
-### Player customization (pick-timestamp + scrub-bar range selection) — PARTIALLY SHIPPED
+### ~~Player customization (pick-timestamp + scrub-bar range selection)~~ — SHIPPED
 
 The "Set as start/end" pick-timestamp buttons landed 2026-08-14 (see
-[Archived](#archived)), and the [player foundation](#player-foundation) above
-landed 2026-08-30 — but the foundation's own ref-API expansion
-(`seekTo`/`play`/`pause`/`getDuration`) was added deliberately unused, specifically
-to leave room for the piece below without another rework.
-
-**Still open — Overall: Medium.** Drag/click-to-select the clip start and end
-directly on the scrub bar. No longer blocked on "build a custom player" (done) —
-what's left is purely the range-selection UI itself: overlaying start/end handles
-on `LibraryVideoPlayerControls.tsx`'s existing `TimeSlider`, wired through the
-ref API's new `seekTo`/`getDuration` to convert between slider position and clip
-timestamps.
+[Archived](#archived)); the [player foundation](#player-foundation) landed
+2026-08-30, with its ref-API expansion (`seekTo`/`play`/`pause`/`getDuration`)
+deliberately added unused to leave room for this piece; the remaining
+scrub-bar drag/click-to-select piece landed the same day, together with
+[Embed clip controls into a custom player](#custom-player-clip-controls) directly
+below (genuinely the same UI, exactly as this section's own prior note predicted) —
+see the "2026-08-30 pass (continued)" note at the top of this file for
+the full writeup: draggable bracket-shaped start/end markers on
+`LibraryVideoPlayerControls.tsx`'s `TimeSlider`. (Initially kept in sync with the
+instrument panel's own clip fields via shared state; that instrument-panel UI was
+itself removed later the same session once `LibraryVideoPlayerWithTools.tsx`
+took over clipping entirely — see directly below.) Removed from `futureSpecs.md`
+directly.
 
 <a id="custom-player-clip-controls"></a>
-### Embed clip controls into a custom player
+### ~~Embed clip controls into a custom player~~ — SHIPPED
 
-**Still open — Overall: Low-Medium, down from Medium-High.** The prerequisite this
-section's prior assessment flagged (a custom player shell to embed anything into)
-[shipped 2026-08-30](#player-foundation) — what's left is exactly the two pieces
-below, both now cheaper than originally scored since the shell/scrub-bar/ref-API
-groundwork is done.
-
-| Piece | Difficulty | Why |
-|---|---|---|
-| Start/end range selection embedded on the custom scrub bar | Medium | The same piece as [Player customization](#player-customization)'s still-open item directly above — not separate scope, building it once covers both. |
-| An embedded "Clip" button inside the player chrome | Low | `SaveClipDialog` and its submit flow already exist and work — an embedded button (`LibraryVideoPlayerControls.tsx`) is just relocating the trigger for `setSaveClipDialogOpen(true)` into the player's own controls once a start/end is already selected there, not new logic. |
-
-**Recommendation:** build alongside [Player customization](#player-customization)'s
-scrub-bar piece, not as a separate pass — same underlying UI.
+Landed 2026-08-30, alongside [Player customization](#player-customization)
+directly above exactly as this section's own prior recommendation suggested (same
+underlying UI, one build covered both). Both pieces this section had flagged
+shipped: start/end range selection embedded on the scrub bar (draggable markers),
+and an embedded Clip button in `LibraryVideoPlayerControls.tsx`'s own chrome
+triggering the existing `SaveClipDialog` flow, now further generalized into
+`LibraryVideoPlayerWithTools.tsx` — a fully self-contained wrapper that went on to
+**replace** the old ad-hoc player + instrument-panel clip wiring everywhere, not
+just add a button alongside it. See the "2026-08-30 pass (continued)" note at the
+top of this file for the full writeup. Removed from `futureSpecs.md` directly.
 
 <a id="player-ux"></a>
 ### ~~Player UX~~ — SHIPPED
@@ -733,6 +778,7 @@ Removed from `futureSpecs.md` directly 2026-08-15.
 | Bulk select: checkbox multi-select in the flat video list, a channel's video grid, and the Playlist view, with "Download selected" (quality-picker dialog, resume-at-download queuing), "Delete local files" (media only, every version, entry stays), and "Delete from library" (whole entry) actions in the bottom options bar | 2026-08-25 |
 | Clip collection: permanent named clips saved into `<videoDir>/clips/` (+ manifest, "N clips" grid badge, per-video Clip Collection view with delete), a lossless clip-trim freeze-frame fix (input-side `-ss`/`-t` replacing output-side `-ss`/`-to`), a save-progress bar, a natural-first-frame clip poster fix, self-cleanup of an emptied clips folder, and per-clip "Open file location"/"Extract audio as MP3" options | 2026-08-25 |
 | Personalized video player foundation (custom Vidstack-based player + MUI control bar, MKV/broad-format preview pipeline, Player UX buffered-look item resolved as a side effect) — see [Player](#player) | 2026-08-30 |
+| Embedded clip range controls (Set Start/End/Clip/Clear buttons + draggable scrub-bar markers, closing Player customization and Embed clip controls into a custom player), `LibraryVideoPlayerWithTools.tsx` (self-contained clip flow, now replacing the old ad-hoc player + instrument-panel clip wiring everywhere) + `standaloneClipping` mode + SaveClipDialog "Save as file", click-anywhere play/pause (no Vidstack Gesture delay), theme-aware clip markers, frame-accurate clip re-encode auto-upgrade via keyframe-risk probing — see [Player](#player) | 2026-08-30 |
 | Downloader search bar failing on a video+playlist URL (now strips to the video via `--no-playlist`) | 2026-08-30 |
 | Bulk-add mis-handling a playlist mixed with plain video links (now expands each pasted line independently) | 2026-08-30 |
 
@@ -927,7 +973,7 @@ Removed from `futureSpecs.md` directly 2026-08-15.
 - **Playlist delete**: `deletePlaylistSnapshot({ libraryDir, playlistId })` (`library.mjs`, same containment-check pattern as every other destructive library operation) + `library:deletePlaylist` IPC + a delete button/confirm dialog in `PlaylistsSection.tsx` stating the videos themselves are untouched.
 - **Playlist thumbnail**: display prefers the live first entry's `thumbnailUrl`; `ensurePlaylistThumbnail()` (`main.js`) force-refetches a local fallback copy on every playlist save/refresh (tracks "whichever video is first right now," not a fixed image), used only once there's no live one to show. `listPlaylistSnapshots`/`getPlaylistSnapshot` (`library.mjs`) now expose `thumbnailUrl`/`thumbnailPath`; rendered via `Avatar` in both the list and detail views.
 - **Ordering/"order by" filter**: a sort-field dropdown (Title/Date published/Date added/Channel/Downloaded status/Quality) + direction toggle in the flat by-video list. Date added uses each video's *earliest* epoch, not its latest; Quality reuses the grid card's own existing `getBestDownloadedQuality` ranking. Same-day follow-up: search bar moved left-aligned next to the "Library" title, and the sort controls grouped into one outlined `Paper` container.
-- **Player "pick timestamp"**: `LibraryVideoPlayer.tsx` converted to `forwardRef`, exposing `getCurrentTime(): number | null` off the underlying `<video>` element; `LibraryVideoDetail.tsx` added a clock-icon button before each clip Start/End field that reads it and formats it in via the existing `formatSecondsAsClipTimestamp` helper. The other half of that spec item (click-to-select directly on the scrub bar) is deliberately still open — see [Player customization](#player-customization).
+- **Player "pick timestamp"**: `LibraryVideoPlayer.tsx` converted to `forwardRef`, exposing `getCurrentTime(): number | null` off the underlying `<video>` element; `LibraryVideoDetail.tsx` added a clock-icon button before each clip Start/End field that reads it and formats it in via the existing `formatSecondsAsClipTimestamp` helper. The other half of that spec item (click-to-select directly on the scrub bar) was deliberately left open at the time — it later shipped 2026-08-30, see [Player customization](#player-customization).
 - All four shipped the same short sequence each time: implement → lint/`tsc -b`/`npm test` (289 passing throughout)/`npm run build:nolint` → user manual-tested and confirmed → move on to the next.
 
 **2026-08-12:**
