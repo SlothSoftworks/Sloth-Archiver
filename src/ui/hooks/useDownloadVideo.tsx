@@ -21,11 +21,11 @@ function useDownloadVideo() {
   const [isRetrying, setIsRetrying] = useState(false);
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; kind: string; nextAttemptInMs: number } | null>(null);
   // 'progressUpdate' is one shared broadcast channel, not scoped
-  // per-download (TD-008) -- this hook can be mounted several times at
-  // once, so every message must be checked against this instance's own
-  // in-flight request first, or one download's progress bleeds into
-  // another's UI. A ref, not state, since the listener closure needs the
-  // current value without re-subscribing on every change.
+  // per-download -- this hook can be mounted several times at once, so
+  // every message must be checked against this instance's own in-flight
+  // request first, or one download's progress bleeds into another's UI.
+  // A ref, not state, since the listener closure needs the current value
+  // without re-subscribing on every change.
   const requestIdRef = useRef<string | null>(null);
 
 
@@ -60,7 +60,7 @@ function useDownloadVideo() {
       const listener = window.electronAPIPythonDownload.onProgressUpdate((msg: DownloadProgressMessage) => {
         if (msg.requestId !== requestIdRef.current) return;
         const { type, payload } = msg;
-        let accumErr = msg;
+        let accumErr: object = msg;
         // A retry that starts making progress again (or finishes) is no
         // longer "retrying" -- only the 'retrying' case itself should leave
         // this true.
@@ -83,8 +83,8 @@ function useDownloadVideo() {
           case 'postprocessing':
             setDownloadStatus('Postprocessing...')
             if (typeof payload.postprocessPercent === 'number') {
-              // A real, continuous percentage from our own direct ffmpeg pass
-              // (TD-004). Deliberately NOT clamped non-decreasing like the
+              // A real, continuous percentage from our own direct ffmpeg
+              // pass. Deliberately NOT clamped non-decreasing like the
               // download case above: yt-dlp's own merge step (the else
               // branch) can leave postprocessProgress at 100 already, and
               // clamping here would stick our real, near-0-starting percent
@@ -94,7 +94,7 @@ function useDownloadVideo() {
               // yt-dlp's own merge-step postprocessing only ever reports
               // started/finished, never a real percentage -- a deliberate
               // 2-state approximation, fine here since a plain stream merge
-              // is fast, not the slow re-encode case TD-004 is about.
+              // is fast, unlike the slower re-encode case handled above.
               setPostprocessProgress(payload.stage === 'start' ? 50 : 100);
             }
             break;
@@ -109,7 +109,7 @@ function useDownloadVideo() {
             setIsRetrying(false);
             setDownloadErrorKind(payload.kind ?? null);
             if (downloadError != null) {
-              accumErr = JSON.stringify(downloadError) + '\n' + JSON.stringify(msg);
+              accumErr = { previous: downloadError, current: msg };
             }
             setDownloadError(accumErr);
             break;

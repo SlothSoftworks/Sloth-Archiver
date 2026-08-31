@@ -77,6 +77,8 @@ beforeEach(() => {
     getLibraryIndex: vi.fn().mockResolvedValue({ channels: makeChannels() }),
     getLibraryViewMode: vi.fn().mockResolvedValue({ libraryViewMode: 'channel' }),
     setLibraryViewMode: vi.fn().mockResolvedValue({ success: true, libraryViewMode: 'video' }),
+    getLibrarySort: vi.fn().mockResolvedValue({ sortField: 'title', sortDirection: 'asc' }),
+    setLibrarySort: vi.fn().mockResolvedValue({ success: true, sortField: 'title', sortDirection: 'asc' }),
     getThumbnailSize: vi.fn().mockResolvedValue({ thumbnailSize: 220 }),
     setThumbnailSize: vi.fn().mockResolvedValue({ success: true, thumbnailSize: 220 }),
     refreshLibraryIndex: vi.fn().mockResolvedValue({ channels: makeChannels() }),

@@ -263,9 +263,9 @@ export default function OptionsScreen() {
   // below. Switching back to 'file' saves immediately.
   //
   // cookiesBrowser is explicitly cleared (both here and persisted) whenever
-  // the user switches away from browser mode -- previously it sat in state
-  // untouched, so switching to paste-cookie mode and back showed a stale
-  // "Using Firefox" value even though nothing was actually selected.
+  // the user switches away from browser mode -- otherwise switching to
+  // paste-cookie mode and back would show a stale "Using Firefox" value even
+  // though nothing was actually selected.
   const handleModeChange = async (_e: MouseEvent<HTMLElement>, mode: 'file' | 'browser' | null) => {
     if (!mode || mode === cookiesMode) return;
     setCookiesModeState(mode);

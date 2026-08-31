@@ -669,8 +669,29 @@ function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selected
   onRefresh: () => void;
 }) {
   const selectionActive = selectedVideoDirs.size > 0;
-  const [sortField, setSortField] = useState<SortField>('title');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [sortField, setSortFieldState] = useState<SortField>('title');
+  const [sortDirection, setSortDirectionState] = useState<SortDirection>('asc');
+  useEffect(() => {
+    window.electronAPI.getLibrarySort().then(({ sortField, sortDirection }) => {
+      setSortFieldState(sortField);
+      setSortDirectionState(sortDirection);
+    });
+  }, []);
+  // Fire-and-forget writes, same pattern as handleViewModeChange above --
+  // the search term itself is deliberately never persisted here, only the
+  // field/direction chosen to order by.
+  const setSortField = (field: SortField) => {
+    setSortFieldState(field);
+    window.electronAPI.setLibrarySort({ sortField: field, sortDirection });
+  };
+  const setSortDirection = (direction: SortDirection) => {
+    setSortDirectionState(direction);
+    window.electronAPI.setLibrarySort({ sortField, sortDirection: direction });
+  };
+  const isDateSortField = sortField === 'uploadDate' || sortField === 'dateAdded';
+  const sortDirectionLabel = isDateSortField
+    ? (sortDirection === 'asc' ? 'Older' : 'Newer')
+    : (sortDirection === 'asc' ? 'Ascending' : 'Descending');
 
   const flatVideos = useMemo(() => {
     const entries = channels.flatMap((channel) => channel.videos.map((video) => ({ video, channelName: channel.displayName })));
@@ -709,10 +730,10 @@ function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selected
                 ))}
               </Select>
             </FormControl>
-            <Tooltip title={sortDirection === 'asc' ? 'Ascending' : 'Descending'}>
+            <Tooltip title={sortDirectionLabel}>
               <IconButton
                 size="small"
-                onClick={() => setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+                onClick={() => setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')}
                 aria-label="Toggle sort direction"
               >
                 {sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />}

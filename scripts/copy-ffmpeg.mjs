@@ -15,9 +15,9 @@ fs.mkdirSync(outDir, { recursive: true });
 // ffmpeg-static/ffprobe-static resolve to ffmpeg.exe/ffprobe.exe on Windows --
 // preserve that extension rather than always writing an extensionless name,
 // mirroring the ytdlpBinaryName pattern already used for the yt-dlp binary.
-// This was previously masked because --ffmpeg-location hands yt-dlp a
-// directory (it does its own lenient resolution); it stops being masked the
-// moment something constructs an exact path and spawns it directly.
+// --ffmpeg-location hands yt-dlp a directory (its own lenient resolution
+// tolerates a missing extension), but anything that constructs an exact path
+// and spawns it directly does not.
 const isWindows = process.platform === 'win32';
 for (const [name, srcPath] of [['ffmpeg', ffmpegPath], ['ffprobe', ffprobeStatic.path]]) {
     const destName = isWindows ? `${name}.exe` : name;

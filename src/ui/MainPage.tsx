@@ -5,9 +5,11 @@ import Button from '@mui/material/Button';
 import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
 import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
 import Stack from '@mui/material/Stack';
 import Badge from '@mui/material/Badge';
 import Chip from '@mui/material/Chip';
+import Link from '@mui/material/Link';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Dialog from '@mui/material/Dialog';
@@ -24,7 +26,9 @@ import LibraryScreen from './screens/LibraryScreen';
 import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
 import BulkAddSidePanel, { BulkAddToggleButton } from './components/BulkAddSidePanel';
 import { useLibraryNotification } from './hooks/useLibraryNotifications';
-import ltxImage from '../assets/ltx.jpeg';
+import { useYtdlpUpdater } from './hooks/useYtdlpUpdater';
+
+const REPO_URL = 'https://github.com/lltrash94/SlothArchiver';
 
 const LIBRARY_TAB_INDEX = 1;
 const OPTIONS_TAB_INDEX = 2;
@@ -58,17 +62,11 @@ interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
   value: number;
-  // Opt-in for a screen that needs a definite height to lay its own content
-  // out against -- e.g. LibraryScreen's bottom options bar, which has to
-  // stay pinned at the tab's bottom regardless of content length rather than
-  // just being the last thing before .tabContainer's own scrollbar kicks in.
-  // Deliberately unpadded (unlike the plain p:3 Box below) so a full-bleed
-  // bottom bar can span the tab's actual width, the same way the top tab bar
-  // above .tabContainer isn't padded either -- the screen itself is
-  // responsible for padding whichever inner region needs it (its own
-  // scrollable content, not the bar). Downloader/Options don't need any of
-  // this and keep the plain auto-height, padded Box, scrolled via
-  // .tabContainer as before.
+  // Opt-in for a screen that needs a definite height to lay content out
+  // against, e.g. a bottom bar that must stay pinned at the tab's bottom.
+  // Deliberately unpadded so a full-bleed bar can span the tab's actual
+  // width -- the screen itself is responsible for padding whichever inner
+  // region needs it.
   fill?: boolean;
 }
 
@@ -104,14 +102,18 @@ export function BasicTabs() {
   const navigate = useNavigate();
   const value = pathToTabIndex(location.pathname);
   const [infoOpen, setInfoOpen] = useState(false);
-  // Statically shown in the top bar for the duration of alpha testing --
-  // makes it trivial for a tester to say exactly which build they're
-  // reporting a bug against. Options also shows this (OptionsScreen.tsx)
-  // for after alpha, once this top-bar copy is removed.
   const [appVersion, setAppVersion] = useState('');
   useEffect(() => {
     window.electronAPI.getAppVersion().then(setAppVersion);
   }, []);
+  // ffmpeg has no separate "check for update" flow (it's only ever replaced
+  // by rebuilding the app itself), so this is fetched directly for display
+  // rather than through useYtdlpUpdater's update-check machinery.
+  const [ffmpegVersion, setFfmpegVersion] = useState<string | null>(null);
+  useEffect(() => {
+    window.electronAPI.getFfmpegVersion().then(setFfmpegVersion);
+  }, []);
+  const { currentVersion: ytdlpVersion } = useYtdlpUpdater();
   const { count: libraryNotificationCount, reset: resetLibraryNotifications } = useLibraryNotification();
   // Bumped to force LibraryScreen to remount (see its `key` below) -- every
   // other tab gets this reset for free, since CustomTabPanel only renders a
@@ -122,7 +124,7 @@ export function BasicTabs() {
   // like any other tab: back to its own start.
   const [libraryResetKey, setLibraryResetKey] = useState(0);
 
-  const handleChange = (event: React.SyntheticEvent, newValue: number) => {
+  const handleChange = (_event: React.SyntheticEvent, newValue: number) => {
     navigate(TAB_PATHS[newValue]);
     if (newValue === LIBRARY_TAB_INDEX) {
       resetLibraryNotifications();
@@ -181,16 +183,46 @@ export function BasicTabs() {
       <BulkAddSidePanel />
 
       <Dialog open={infoOpen} onClose={() => setInfoOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>About</DialogTitle>
+        <DialogTitle>
+          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+            <span>About</span>
+            <Chip
+              size="small"
+              variant="outlined"
+              label={appVersion ? `v${appVersion}` : 'Version unknown'}
+              sx={{ fontFamily: 'monospace' }}
+            />
+          </Stack>
+        </DialogTitle>
         <DialogContent>
-          <Box
-            component="img"
-            src={ltxImage}
-            alt="LTX"
-            sx={{ width: '100%', borderRadius: 2, mb: 2, display: 'block' }}
-          />
+          <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5, mb: 2 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+              Dependencies
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Chip
+                size="small"
+                variant="outlined"
+                label={ytdlpVersion ? `yt-dlp: ${ytdlpVersion}` : 'yt-dlp version unknown'}
+                sx={{ fontFamily: 'monospace' }}
+              />
+              <Chip
+                size="small"
+                variant="outlined"
+                label={ffmpegVersion ? `ffmpeg: ${ffmpegVersion}` : 'ffmpeg version unknown'}
+                sx={{ fontFamily: 'monospace' }}
+              />
+            </Stack>
+          </Box>
+          <DialogContentText sx={{ mb: 2 }}>
+            Sloth Archiver is under active construction -- features, behavior, and data
+            formats are all still subject to change.
+          </DialogContentText>
           <DialogContentText>
-            Alfa para uso exclusivo de LTX distribuir este software sin permiso resultarà en unos tablazos por qlo.
+            For news and bug reports visit:{' '}
+            <Link href={REPO_URL} target="_blank" rel="noopener noreferrer">
+              {REPO_URL}
+            </Link>
           </DialogContentText>
         </DialogContent>
         <DialogActions>

@@ -17,13 +17,9 @@ import {
 import { isValidUrl } from '../../utils/utils.ts';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
 
-// A fixed, hardcoded set of common YouTube quality tiers -- not derived from
-// any specific video's own available resolutions (those aren't known until
-// each entry's info is actually fetched, one at a time, once the queue is
-// already running). Per-video matching against whichever of these is picked
-// happens in useBulkAddQueue's pickClosestResolution. Exported for
-// BulkDownloadQualityDialog.tsx (Library tab's bulk-select download), which
-// reuses the same tier list rather than duplicating it.
+// Fixed set of common quality tiers -- not derived from any specific video's
+// own available resolutions, since those aren't known until each entry is
+// fetched. Per-video matching happens in useBulkAddQueue's pickClosestResolution.
 export const QUALITY_TIERS = ['2160', '1440', '1080', '720', '480', '360', '240', '144', 'MP3'];
 
 function isPlaylistUrl(url: string): boolean {
@@ -54,11 +50,8 @@ export default function BulkAddDialog({ open, onClose }: { open: boolean; onClos
     if (!trimmed) return;
     setError(null);
 
-    // Each line is classified independently -- a playlist-URL line expands
-    // into that playlist's full entry list (tagged with its own playlistId),
-    // any other line is treated as a single standalone video link. This
-    // lets one submission mix a playlist link with plain video links instead
-    // of only ever recognizing a playlist when it's the sole line pasted.
+    // Each line is classified independently, so one submission can mix a
+    // playlist link with plain video links.
     const lines = trimmed.split(/[\n,]+/).map((l) => l.trim()).filter(Boolean);
 
     const invalid = lines.filter((l) => !isValidUrl(l));

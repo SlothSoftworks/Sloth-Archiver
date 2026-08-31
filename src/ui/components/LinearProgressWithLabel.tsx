@@ -4,9 +4,7 @@ import type { LinearProgressProps } from '@mui/material/LinearProgress';
 // value = the "truly finished" progress (postprocessing, or a plain
 // download with no postprocess step), valueBuffer = the "how much has
 // loaded" progress underneath it -- the same visual metaphor as a video
-// player's seek bar. Shown wherever this app displays download/ffmpeg
-// progress: the Downloader tab, multi-platform downloads, and the Library
-// view's own download/quality-swap/ffmpeg-utility panels.
+// player's seek bar.
 export default function LinearProgressWithLabel(props: LinearProgressProps & { value: number; valueBuffer: number }) {
   const { value, valueBuffer } = props;
   const displayValue = value > 0 ? value : valueBuffer;

@@ -3,7 +3,29 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import LibraryVideoDetail from './LibraryVideoDetail';
-import type { DownloadProgressMessage } from '../../types';
+import type { LibraryClip, DownloadProgressMessage } from '../../types';
+
+// The real clip-creation flow (seeking the player, the embedded Set Start/
+// Set End/Save buttons, SaveClipDialog, the createClip IPC call) now lives
+// entirely inside LibraryVideoPlayerWithTools -- see its own test file for
+// coverage of that. Vidstack's internal currentTime/seekable state also
+// never updates from synthetic jsdom events without reverse-engineering its
+// reactive internals, which isn't worth doing just to drive a "seek, then
+// click Set Start" gesture from this outer level. What LibraryVideoDetail
+// itself is responsible for is just wiring: passing videoDir/
+// existingClipTitles down, and reacting to onClipCreated (updating the
+// clips list, refreshing the index) -- this fake stands in for the real
+// player and exercises exactly that, via a single button that fires
+// onClipCreated with a canned clip.
+vi.mock('../components/LibraryVideoPlayerWithTools', () => ({
+  default: ({ onClipCreated }: { onClipCreated?: (clip: LibraryClip) => void }) => (
+    <button
+      onClick={() => onClipCreated?.({ id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 10 })}
+    >
+      Fake save clip
+    </button>
+  ),
+}));
 
 let registeredCallback: ((msg: DownloadProgressMessage) => void) | null = null;
 
@@ -22,9 +44,9 @@ function baseMetadata(overrides: Record<string, unknown> = {}) {
     uploadDate: '20260115',
     addedEpoch: 0,
     resolutions: [
-      { resolution: '720', filesizeMb: '10' },
-      { resolution: '480', filesizeMb: '5' },
-      { resolution: 'MP3', filesizeMb: '3' },
+      { resolution: '720', filesizeMb: 10 },
+      { resolution: '480', filesizeMb: 5 },
+      { resolution: 'MP3', filesizeMb: 3 },
     ],
     downloadedFilePath: null,
     downloadedResolution: null,
@@ -67,6 +89,9 @@ beforeEach(() => {
     getCustomConvertFormats: vi.fn().mockResolvedValue({ customConvertFormats: [] }),
     onFfmpegUtilityProgress: vi.fn(),
     removeFfmpegUtilityProgressListener: vi.fn(),
+    ensurePlayablePreview: vi.fn().mockResolvedValue({ success: true, previewPath: '/mock/preview.mp4', generated: false }),
+    onPreviewGenerationProgress: vi.fn(),
+    removePreviewGenerationProgressListener: vi.fn(),
     deleteVideoInfoCacheEntry: vi.fn().mockResolvedValue({ success: true, existed: true }),
     getVideoInfoPython: vi.fn(),
     addLibraryVersion: vi.fn(),
@@ -322,26 +347,14 @@ describe('LibraryVideoDetail', () => {
     }));
   });
 
-  it('opens the save-clip dialog (not the save-file dialog) from the entered start/end times', async () => {
-    const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720', downloadedFormat: 'dflt' });
-    renderDetail(video);
+  it('adds a clip fired by the player and refreshes the index', async () => {
+    const { onVersionsChanged } = renderDetail(makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720', downloadedFormat: 'dflt' }));
     const user = userEvent.setup();
 
-    await user.type(screen.getByLabelText('Clip start (HH:MM:SS)'), '000010');
-    await user.type(screen.getByLabelText('Clip end (HH:MM:SS)'), '000020');
-    await user.click(screen.getByRole('button', { name: 'Extract clip' }));
+    await user.click(screen.getByRole('button', { name: 'Fake save clip' }));
 
-    expect(await screen.findByRole('heading', { name: 'Save clip' })).toBeInTheDocument();
-    expect(window.electronAPI.saveExportedFile).not.toHaveBeenCalled();
-
-    await user.type(screen.getByLabelText('Clip name'), 'My Clip');
-    await user.click(screen.getByRole('button', { name: 'Save clip' }));
-
-    await waitFor(() => expect(window.electronAPI.createClip).toHaveBeenCalledWith({
-      videoDir: video.videoDir, inputPath: '/v/video.mp4', start: '00:00:10', end: '00:00:20', format: 'source', clipName: 'My Clip', forceReencode: false,
-    }));
-    // Dialog closes and the parent's index refresh fires so clipCount updates.
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Save clip' })).not.toBeInTheDocument());
+    await waitFor(() => expect(onVersionsChanged).toHaveBeenCalled());
+    expect(await screen.findByRole('button', { name: 'Clip Collection' })).toBeInTheDocument();
   });
 
   it('shows the Clip Collection tab only once the video has a clip', async () => {
@@ -350,11 +363,7 @@ describe('LibraryVideoDetail', () => {
     expect(screen.queryByRole('button', { name: 'Clip Collection' })).not.toBeInTheDocument();
 
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText('Clip start (HH:MM:SS)'), '000010');
-    await user.type(screen.getByLabelText('Clip end (HH:MM:SS)'), '000020');
-    await user.click(screen.getByRole('button', { name: 'Extract clip' }));
-    await user.type(screen.getByLabelText('Clip name'), 'My Clip');
-    await user.click(screen.getByRole('button', { name: 'Save clip' }));
+    await user.click(screen.getByRole('button', { name: 'Fake save clip' }));
 
     expect(await screen.findByRole('button', { name: 'Clip Collection' })).toBeInTheDocument();
   });
@@ -364,18 +373,14 @@ describe('LibraryVideoDetail', () => {
     renderDetail(video);
     const user = userEvent.setup();
     // The tab click below triggers a lazy getClips() fetch since this is the
-    // first time it's opened -- mock it to agree with the clip createClip
-    // already returned, or the fetch would silently overwrite it with [].
+    // first time it's opened -- mock it to agree with the clip the fake
+    // player just fired, or the fetch would silently overwrite it with [].
     window.electronAPI.getClips = vi.fn().mockResolvedValue({
       success: true,
       clips: [{ id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 5 }],
     });
 
-    await user.type(screen.getByLabelText('Clip start (HH:MM:SS)'), '000010');
-    await user.type(screen.getByLabelText('Clip end (HH:MM:SS)'), '000020');
-    await user.click(screen.getByRole('button', { name: 'Extract clip' }));
-    await user.type(screen.getByLabelText('Clip name'), 'My Clip');
-    await user.click(screen.getByRole('button', { name: 'Save clip' }));
+    await user.click(screen.getByRole('button', { name: 'Fake save clip' }));
     await user.click(await screen.findByRole('button', { name: 'Clip Collection' }));
 
     await user.click(await screen.findByRole('button', { name: 'Delete My Clip' }));
@@ -393,11 +398,7 @@ describe('LibraryVideoDetail', () => {
       clips: [{ id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 5 }],
     });
 
-    await user.type(screen.getByLabelText('Clip start (HH:MM:SS)'), '000010');
-    await user.type(screen.getByLabelText('Clip end (HH:MM:SS)'), '000020');
-    await user.click(screen.getByRole('button', { name: 'Extract clip' }));
-    await user.type(screen.getByLabelText('Clip name'), 'My Clip');
-    await user.click(screen.getByRole('button', { name: 'Save clip' }));
+    await user.click(screen.getByRole('button', { name: 'Fake save clip' }));
     await user.click(await screen.findByRole('button', { name: 'Clip Collection' }));
 
     await user.click(await screen.findByRole('button', { name: 'Convert clip to a different format' }));
@@ -417,11 +418,7 @@ describe('LibraryVideoDetail', () => {
       clips: [{ id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 5 }],
     });
 
-    await user.type(screen.getByLabelText('Clip start (HH:MM:SS)'), '000010');
-    await user.type(screen.getByLabelText('Clip end (HH:MM:SS)'), '000020');
-    await user.click(screen.getByRole('button', { name: 'Extract clip' }));
-    await user.type(screen.getByLabelText('Clip name'), 'My Clip');
-    await user.click(screen.getByRole('button', { name: 'Save clip' }));
+    await user.click(screen.getByRole('button', { name: 'Fake save clip' }));
     await user.click(await screen.findByRole('button', { name: 'Clip Collection' }));
 
     await user.click(await screen.findByRole('checkbox', { name: 'Save into new file' }));

@@ -18,13 +18,10 @@ export const DEAD_VIDEO_ERROR_PATTERNS = [
     /members-only|join this channel/i,
 ];
 
-// Closed taxonomy for yt-dlp download-path failures (reports/ErrorHandling.md
-// section 2). Deliberately smaller than that report's own list: `ipBlock`,
-// `drmProtected`, and `parse` weren't meaningfully distinct from `botBlock`/
-// `network`/`unknown` for our own stderr-matching purposes -- can be split out
-// later if real-world patterns show a need. `stalled` and `cancelled` are
-// never pattern-matched: the caller (main.mjs) assigns them directly since
-// they're detected by our own supervision, not by reading yt-dlp's stderr.
+// Closed taxonomy for yt-dlp download-path failures. `stalled` and
+// `cancelled` are never pattern-matched: the caller (main.mjs) assigns them
+// directly since they're detected by our own supervision, not by reading
+// yt-dlp's stderr.
 export const ERROR_KINDS = {
     BOT_BLOCK: 'botBlock',
     NETWORK: 'network',
@@ -85,11 +82,10 @@ export function classifyDownloadError({ stderr, exitCode, spawnError } = {}) {
     return { kind: ERROR_KINDS.UNKNOWN, message };
 }
 
-// Failure modes where waiting and trying again plausibly changes the outcome
-// (reports/ErrorHandling.md section 4). Deliberately excludes botBlock --
-// retrying blind against a soft block just escalates it into a harder one;
-// that needs a different strategy, not a repeat (tracked as Phase 3 in
-// reports/ErrorHandlingRoadmap.md, not built here).
+// Failure modes where waiting and trying again plausibly changes the outcome.
+// Deliberately excludes botBlock -- retrying blind against a soft block just
+// escalates it into a harder one; that needs a different strategy, not a
+// repeat.
 const AUTO_RETRYABLE_KINDS = new Set([
     ERROR_KINDS.NETWORK,
     ERROR_KINDS.CHUNK_TRANSFER_FAILURE,
@@ -103,10 +99,7 @@ export function isAutoRetryable(kind) {
 
 // Fixed escalating ladder, not unbounded exponential backoff (last step
 // repeats once the attempt count runs past the ladder's length). Hardcoded
-// starting constants, same as MAX_SIMULTANEOUS_DOWNLOADS_CEILING and similar
-// values elsewhere in this app before they became user-configurable -- not
-// exposed as an Options-tab setting yet (reports/ErrorHandlingRoadmap.md
-// Phase 4).
+// constants -- not exposed as an Options-tab setting.
 export const RETRY_BACKOFF_MS = [30_000, 60_000, 120_000, 300_000];
 export const MAX_AUTO_RETRIES = 3;
 
@@ -115,9 +108,8 @@ export function getBackoffMs(attempt) {
 }
 
 // yt-dlp/ffmpeg sometimes surface a full disk only as a generic failure
-// message (reports/ErrorHandling.md section 2's own "don't trust the wrapped
-// tool's message" lesson) -- actively re-check real free space whenever a
-// failure's kind is ambiguous, and relabel it if the disk actually is full.
+// message -- actively re-check real free space whenever a failure's kind is
+// ambiguous, and relabel it if the disk actually is full.
 export async function recheckDiskSpaceIfAmbiguous(kind, outputPath) {
     if (kind !== ERROR_KINDS.UNKNOWN) return kind;
     try {

@@ -50,9 +50,7 @@ const STATUS_LABEL: Record<BulkAddStatus, string> = {
   cancelled: 'Cancelled',
 };
 
-// Small header button, meant to live in MainPage.tsx's tab bar row so it's
-// reachable regardless of which tab is active -- badge reflects however many
-// items are still pending/in-flight, not the whole list.
+// Badge reflects however many items are still pending/in-flight, not the whole list.
 export function BulkAddToggleButton() {
   const { items, panelOpen, setPanelOpen } = useBulkAddQueue();
   const activeCount = items.filter((it) => it.status === 'pending' || it.status === 'fetching' || it.status === 'downloading').length;
@@ -67,11 +65,8 @@ export function BulkAddToggleButton() {
   );
 }
 
-// Same "value = postprocess once it's actually progressing, else fall back
-// to the raw download %" rule LibraryVideoDetail.tsx's own progress bar
-// uses -- kept as a separate, smaller copy here (no percentage label, this
-// list item doesn't have room) rather than a shared import, matching that
-// file's own stated reasoning for not sharing this widget.
+// Displays postprocess progress once it's actually progressing, else falls back
+// to the raw download percentage.
 function BulkAddProgressBar({ downloadProgress, postprocessProgress }: { downloadProgress: number; postprocessProgress: number }) {
   const displayValue = postprocessProgress > 0 ? postprocessProgress : downloadProgress;
   return (
@@ -91,10 +86,6 @@ function BulkAddProgressBar({ downloadProgress, postprocessProgress }: { downloa
 
 function BulkAddListItem({ item, stopping, onRetry, onRemove, onCancel }: { item: BulkAddItem; stopping: boolean; onRetry: () => void; onRemove: () => void; onCancel: () => void }) {
   const isActive = item.status === 'fetching' || item.status === 'downloading';
-  // Once an item is done (or cancelled) there's nothing left to clean up
-  // individually -- "Clear done" (below) is the affordance for that now, so
-  // a per-item delete button that would otherwise sit there doing nothing
-  // useful is just hidden instead.
   const showDelete = item.status !== 'done' && item.status !== 'cancelled';
   const retryLabel = getRetryStage(item) === 'download' ? 'Retry download' : 'Retry';
   return (
@@ -189,8 +180,7 @@ export default function BulkAddSidePanel() {
   const { items, isRunning, stopRequested, panelOpen, setPanelOpen, stop, resume, cancelAllPending, cancelItem, retryItem, removeItem, clearFinished } = useBulkAddQueue();
   const [dialogOpen, setDialogOpen] = useState(false);
   const hasFinished = items.some((it) => it.status === 'done' || it.status === 'skipped' || it.status === 'cancelled');
-  // Only meaningful once stopped -- while running, whatever's still
-  // 'pending' just means "hasn't been picked up yet," not "stuck."
+  // Only meaningful once stopped -- while running, 'pending' just means "not picked up yet."
   const hasStoppedPending = !isRunning && items.some((it) => it.status === 'pending');
 
   return (

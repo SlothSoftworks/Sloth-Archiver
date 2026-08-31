@@ -8,31 +8,22 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import AudiotrackIcon from '@mui/icons-material/Audiotrack';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import LibraryVideoPlayer from './LibraryVideoPlayer';
+import LibraryVideoPlayerWithTools from './LibraryVideoPlayerWithTools';
 import BulkDeleteConfirmDialog from './BulkDeleteConfirmDialog';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
 import { formatSecondsAsClipTimestamp, OTHER_FORMAT_VALUE, TRANSCODE_ON_CONVERT_TOOLTIP } from '../screens/FfmpegUtilitiesPanel';
 import type { LibraryClip, LibraryVideoMetadata } from '../../types';
 
-// Placeholder metadata for LibraryVideoPlayer -- overrideFilePath takes
-// priority over every field here, this just satisfies the required prop
-// without pretending a clip has a real video identity.
+// Placeholder metadata for LibraryVideoPlayerWithTools -- overrideFilePath
+// takes priority over every field here, this just satisfies the required
+// prop without pretending a clip has a real video identity.
 const EMPTY_METADATA = { downloadedFilePath: null, thumbnail: null, videoId: '' } as LibraryVideoMetadata;
 
-// The clip list has no separate "format" field -- a clip's extension (from
-// its own fileName) already is its format, and stays in sync automatically
-// whenever Convert changes that file.
 function getClipExtension(fileName: string): string {
   const lastDot = fileName.lastIndexOf('.');
   return lastDot === -1 ? '' : fileName.slice(lastDot + 1).toUpperCase();
 }
 
-// Swaps in for the whole normal video layout (player + instrument panel)
-// when the "Clip Collection" tab is active -- a player on the left, a
-// scrollable list of this video's saved clips on the right. Reuses
-// LibraryVideoPlayer pointed directly at a clip's own file via
-// overrideFilePath, and BulkDeleteConfirmDialog (already generic on
-// title/description, no LibraryScreen-specific coupling) for delete.
 export default function ClipCollectionView({
   videoDir, clips, onClipsChanged, onEmptied,
   onOpenFileLocation, onExtractMp3, extractingMp3, extractMp3Disabled, extractMp3Progress, extractMp3Error,
@@ -104,12 +95,15 @@ export default function ClipCollectionView({
       <Stack spacing={2} sx={{ width: { xs: '100%', md: '70%' } }}>
         {activeClip &&
           // No thumbnailPath here on purpose -- a clip's poster should be its
-          // own natural first frame (the browser derives this automatically
-          // for a video with no explicit poster), not the parent video's
-          // unrelated stored thumbnail.
-          <LibraryVideoPlayer
+          // own natural first frame, not the parent video's unrelated stored
+          // thumbnail. standaloneClipping since a clip has nowhere in
+          // clips.json to live if re-clipped (clips aren't nested) -- saving
+          // always prompts for a file location instead.
+          <LibraryVideoPlayerWithTools
             metadata={EMPTY_METADATA}
             overrideFilePath={`${videoDir}/clips/${activeClip.fileName}`}
+            convertFormatOptions={convertFormatOptions}
+            standaloneClipping
           />}
 
         {activeClip &&

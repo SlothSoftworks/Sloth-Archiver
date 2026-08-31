@@ -64,20 +64,16 @@ function playlistThumbnailSrc(thumbnailUrl: string | null | undefined, thumbnail
 }
 
 // Minimal shape this component needs from a library index entry -- just
-// enough to compute download state (getBestDownloadedQuality) and the
-// resume-at-download fields (videoDir/latestEpoch) for whichever playlist
-// entries are already in the library.
+// enough to compute download state and the resume-at-download fields.
 type IndexedVideo = { videoDir: string; latestEpoch: string | null; epochs: { metadata: LibraryVideoMetadata }[] };
 
-// Deliberately minimal for this first version -- a plain list and detail
-// view, no extra polish beyond title search (sorting, bulk actions, etc).
 // onBulkBarUpdate reports a summary of the current selection (count, whether
 // "Download selected" applies, and the two trigger closures) up to
 // LibraryScreen, which renders the actual bottom bar -- that bar has to live
 // outside this component's own scrollable region to stay pinned to the
-// tab's bottom (see LibraryScreen.tsx's structural split), but the
-// selection state and its confirm dialogs stay owned here, where the
-// playlist data already lives. null means "no bar" (list view, or loading).
+// tab's bottom, but the selection state and its confirm dialogs stay owned
+// here, where the playlist data already lives. null means "no bar" (list
+// view, or loading).
 export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate: (bar: PlaylistBulkBar | null) => void }) {
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,8 +115,8 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
   };
   const clearSelection = () => setSelectedVideoIds(new Set());
 
-  // Selectable entries (per the confirmed design) are every entry not
-  // confirmed unavailable -- both already-in-library and not-yet-added ones.
+  // Selectable entries are every entry not confirmed unavailable -- both
+  // already-in-library and not-yet-added ones.
   const selectableEntries = (selectedPlaylist?.entries || []).filter((e) => !e.unavailable);
   const selectedEntries = selectableEntries.filter((e) => selectedVideoIds.has(e.videoId));
   // An in-library entry's downloaded quality comes from its own epochs; a
@@ -142,8 +138,8 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
     const entries: BulkAddEntry[] = selectedEntries.map((entry) => {
       const videoDir = selectedPlaylist?.localFiles[entry.videoId];
       const video = videoDir ? videoByDir.get(videoDir) : undefined;
-      // Already in the library -- resume straight at download (see
-      // useBulkAddQueue's getRetryStage), same as the video-grid flow.
+      // Already in the library -- resume straight at download, same as the
+      // video-grid flow.
       if (video && video.latestEpoch) {
         return {
           id: entry.videoId,
@@ -158,7 +154,7 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
         };
       }
       // Not yet added -- the normal fetch/add/download path, exactly like
-      // pasting this same playlist into Bulk Add today.
+      // pasting this same playlist into Bulk Add.
       return { id: entry.videoId, title: entry.title, url: entry.url, videoId: entry.videoId, playlistId };
     });
     start(entries, { download: true, targetResolution });
@@ -311,10 +307,10 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
     setRefreshing(false);
   };
 
-  // Only ever deletes the playlist's own saved snapshot (see
-  // deletePlaylistSnapshot, library.mjs) -- the videos it references stay in
-  // the library untouched, hence the notice in the confirm dialog rather
-  // than the "videoDeleted"-style branching the single-video delete flow has.
+  // Only ever deletes the playlist's own saved snapshot -- the videos it
+  // references stay in the library untouched, hence the notice in the
+  // confirm dialog rather than the "videoDeleted"-style branching the
+  // single-video delete flow has.
   const handleDeletePlaylist = async () => {
     if (!selectedPlaylistId) return;
     setDeleting(true);
@@ -436,8 +432,6 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
                   key={entry.videoId}
                   secondaryAction={
                     <Stack direction="row" alignItems="center" spacing={0.5}>
-                      {/* Every entry not confirmed unavailable is selectable --
-                          both already-in-library and not-yet-added ones. */}
                       {!entry.unavailable &&
                         <Checkbox
                           size="small"

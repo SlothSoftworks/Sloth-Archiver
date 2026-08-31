@@ -9,10 +9,8 @@ import {
   Typography,
 } from '@mui/material';
 
-// Bulk counterpart to LibraryVideoDetail.tsx's single-delete confirmation
-// dialog -- same shape/tone. Generic on title/description rather than a
-// hardcoded count-based body, since it's shared by two different bulk
-// actions with different copy: "Delete from library" (whole entries) and
+// Generic on title/description since it's shared by two different bulk actions
+// with different copy: "Delete from library" (whole entries) and
 // "Delete local files" (just the downloaded media, entry stays).
 export default function BulkDeleteConfirmDialog({ open, title, description, deleting, error, onCancel, onConfirm }: {
   open: boolean;

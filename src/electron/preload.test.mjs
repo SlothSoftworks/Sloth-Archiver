@@ -81,6 +81,7 @@ const invokeTable = [
   ['saveExportedFile', [{ f: 1 }], ['dialog:saveExportedFile', { f: 1 }]],
   ['extractMp3FromFile', [{ f: 1 }], ['library:extractMp3', { f: 1 }]],
   ['convertFileFormat', [{ f: 1 }], ['library:convertFormat', { f: 1 }]],
+  ['ensurePlayablePreview', [{ f: 1 }], ['library:ensurePlayablePreview', { f: 1 }]],
   ['extractClipFromFile', [{ f: 1 }], ['library:extractClip', { f: 1 }]],
   ['embedFileMetadata', [{ f: 1 }], ['library:embedMetadata', { f: 1 }]],
   ['reportRendererError', [{ message: 'm' }], ['errorLog:report', { message: 'm' }]],
@@ -135,6 +136,19 @@ describe('electronAPI event subscriptions', () => {
     removeAllListeners.mockClear();
     electronAPI.removeFfmpegUtilityProgressListener();
     expect(removeAllListeners).toHaveBeenCalledWith('ffmpegUtilityProgress');
+  });
+
+  it('onPreviewGenerationProgress/removePreviewGenerationProgressListener wire to the previewGenerationProgress channel', () => {
+    on.mockClear();
+    const callback = vi.fn();
+    electronAPI.onPreviewGenerationProgress(callback);
+    expect(on).toHaveBeenCalledWith('previewGenerationProgress', expect.any(Function));
+    on.mock.calls[0][1]({}, { percent: 50 });
+    expect(callback).toHaveBeenCalledWith({ percent: 50 });
+
+    removeAllListeners.mockClear();
+    electronAPI.removePreviewGenerationProgressListener();
+    expect(removeAllListeners).toHaveBeenCalledWith('previewGenerationProgress');
   });
 });
 

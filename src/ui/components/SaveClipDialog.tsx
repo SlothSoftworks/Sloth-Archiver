@@ -23,16 +23,17 @@ import LinearProgressWithLabel from './LinearProgressWithLabel';
 // pointless re-encode into the same container.
 const SOURCE_FORMAT_VALUE = 'source';
 
-// Replaces the old save-file-dialog flow for Extract Clip: instead of
-// picking an arbitrary disk location, this collects a name (permanent
-// library storage, <videoDir>/clips/<name>.<ext>) plus a further-tunable
-// start/end and an optional format conversion. Modeled on
-// BulkDownloadQualityDialog.tsx's structure.
+// Collects a name (permanent library storage, <videoDir>/clips/<name>.<ext>)
+// plus a further-tunable start/end and an optional format conversion.
 export default function SaveClipDialog({
-  open, onClose, defaultClipStart, defaultClipEnd, convertFormatOptions, existingClipTitles, submitting, progress, error, onSubmit,
+  open, onClose, title = 'Save clip', defaultClipStart, defaultClipEnd, convertFormatOptions, existingClipTitles, submitting, progress, error, offerSaveAsFile, onSubmit,
 }: {
   open: boolean;
   onClose: () => void;
+  // e.g. "Save clip to file" for standaloneClipping mode -- makes it clear
+  // at a glance that this save behaves differently from the normal
+  // library-clip flow.
+  title?: string;
   defaultClipStart: string;
   defaultClipEnd: string;
   convertFormatOptions: string[];
@@ -40,7 +41,11 @@ export default function SaveClipDialog({
   submitting: boolean;
   progress: number;
   error: string | null;
-  onSubmit: (payload: { clipName: string; start: string; end: string; format: string; forceReencode: boolean }) => void;
+  // Shows a "Save as file" checkbox -- for callers whose normal save has a
+  // permanent home (library clips.json) but that also want to offer
+  // diverting this particular save to an arbitrary disk location instead.
+  offerSaveAsFile?: boolean;
+  onSubmit: (payload: { clipName: string; start: string; end: string; format: string; forceReencode: boolean; saveAsFile: boolean }) => void;
 }) {
   const [clipName, setClipName] = useState('');
   const [start, setStart] = useState(defaultClipStart);
@@ -48,6 +53,7 @@ export default function SaveClipDialog({
   const [format, setFormat] = useState(SOURCE_FORMAT_VALUE);
   const [otherFormatInput, setOtherFormatInput] = useState('');
   const [forceReencode, setForceReencode] = useState(false);
+  const [saveAsFile, setSaveAsFile] = useState(false);
 
   // Re-seed from the panel's current values each time the dialog opens --
   // it may be reopened later with a different range than last time.
@@ -59,6 +65,7 @@ export default function SaveClipDialog({
       setFormat(SOURCE_FORMAT_VALUE);
       setOtherFormatInput('');
       setForceReencode(false);
+      setSaveAsFile(false);
     }
   }, [open, defaultClipStart, defaultClipEnd]);
 
@@ -71,12 +78,12 @@ export default function SaveClipDialog({
 
   const handleSubmit = () => {
     if (!canSubmit) return;
-    onSubmit({ clipName: trimmedName, start: start.trim(), end: end.trim(), format: resolvedFormat, forceReencode });
+    onSubmit({ clipName: trimmedName, start: start.trim(), end: end.trim(), format: resolvedFormat, forceReencode, saveAsFile });
   };
 
   return (
     <Dialog open={open} onClose={() => !submitting && onClose()} maxWidth="xs" fullWidth>
-      <DialogTitle>Save clip</DialogTitle>
+      <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField
@@ -145,6 +152,25 @@ export default function SaveClipDialog({
                 label={<Typography variant="body2">Transcode on convert</Typography>}
               />
               <Tooltip title={TRANSCODE_ON_CONVERT_TOOLTIP}>
+                <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+              </Tooltip>
+            </Stack>}
+
+          {offerSaveAsFile &&
+            <Stack direction="row" spacing={0.5} alignItems="center">
+              <FormControlLabel
+                sx={{ ml: 0 }}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={saveAsFile}
+                    onChange={(e) => setSaveAsFile(e.target.checked)}
+                    disabled={submitting}
+                  />
+                }
+                label={<Typography variant="body2">Save as file</Typography>}
+              />
+              <Tooltip title="This clip will not be saved to your Clip Collection -- you'll be asked where to save the file instead.">
                 <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
               </Tooltip>
             </Stack>}

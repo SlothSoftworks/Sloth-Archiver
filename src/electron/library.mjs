@@ -2,6 +2,7 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import { previewCachePathFor } from './previewCache.mjs';
 
 // Windows reserves these as device names -- CON, PRN.txt, con, etc. all refer
 // to the device, not an ordinary file/folder, regardless of case or extension.
@@ -78,8 +79,8 @@ export function channelFolderName(channel) {
 
 // Keyed on videoId, not title -- YouTube titles can change after upload, and
 // videoId is stable and already unique on its own. Also shrinks the Windows
-// MAX_PATH=260 worst case (TD-005, reports/TechnicalDebt.md), though
-// channel-folder length and libraryDir depth remain unbounded.
+// MAX_PATH=260 worst case, though channel-folder length and libraryDir depth
+// remain unbounded.
 export function videoFolderName(videoId) {
     return sanitizeForFilesystem(videoId);
 }
@@ -186,6 +187,11 @@ export function deleteClip({ libraryDir, videoDir, clipId }) {
         return { success: false };
     }
     fs.rmSync(path.join(clipsDir, clip.fileName), { force: true });
+    // Orphaned otherwise if this clip ever needed a preview derivative (e.g.
+    // saved in its source format and that format wasn't natively playable) --
+    // the whole-clipsDir removal below already covers the "last clip"
+    // case, this covers deleting one of several.
+    fs.rmSync(previewCachePathFor(path.join(clipsDir, clip.fileName)), { force: true });
     const remaining = manifest.filter((c) => c.id !== clipId);
     if (remaining.length === 0) {
         // No clips left -- remove the whole clips/ folder (manifest included)
@@ -418,6 +424,10 @@ export function deleteLocalFiles({ libraryDir, videoDir }) {
         let changed = false;
         if (metadata.downloadedFilePath && fs.existsSync(metadata.downloadedFilePath)) {
             fs.rmSync(metadata.downloadedFilePath, { force: true });
+            // Orphaned otherwise: previewCache.mjs's cache-hit check only
+            // ever compares against a source file that, from here on, no
+            // longer exists to invalidate against.
+            fs.rmSync(previewCachePathFor(metadata.downloadedFilePath), { force: true });
             filesDeleted++;
         }
         if (metadata.downloadedFilePath) {
@@ -784,17 +794,16 @@ export function listPlaylistSnapshots({ libraryDir }) {
 //
 // localFiles is recomputed fresh against the current library index on every
 // read, rather than trusting what was last written to disk -- it's a cheap
-// local lookup (findVideoInIndex), and disk staleness was a real bug: a
-// video bulk-added after this playlist was first saved had no "go to
-// library" link until an explicit "Refresh from YouTube".
+// local lookup (findVideoInIndex), and stale disk data would leave a video
+// bulk-added after this playlist was saved with no "go to library" link
+// until an explicit "Refresh from YouTube".
 //
 // When no index is handed in, this forces a genuine refreshLibraryIndex()
 // rescan rather than reusing getLibraryIndex()'s cache, which is only
-// invalidated by mutations this process itself knows about -- a second,
-// similar bug surfaced entries a playlist *refresh* had just discovered,
-// whose video already existed in the library, still showing no link. A
-// playlist detail view is opened rarely enough that a full rescan here is
-// cheap insurance against that failure mode.
+// invalidated by mutations this process itself knows about -- an entry a
+// playlist *refresh* just discovered, whose video already existed in the
+// library, could otherwise still show no link. A playlist detail view is
+// opened rarely enough that a full rescan here is cheap insurance.
 export async function getPlaylistSnapshot({ libraryDir, playlistId, index }) {
     const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
     const epochDir = resolvePlaylistEpochDir(playlistDir);

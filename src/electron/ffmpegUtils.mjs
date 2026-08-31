@@ -68,10 +68,10 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
         });
     }
 
-    // Bypasses yt-dlp's own postprocessing entirely (TD-004): its
-    // postprocessing subprocess only reads output after the process exits,
-    // so it can never report real progress; spawning ffmpeg ourselves with
-    // -progress pipe:1 gives a genuine, continuous percentage.
+    // Bypasses yt-dlp's own postprocessing entirely: its postprocessing
+    // subprocess only reads output after the process exits, so it can never
+    // report real progress; spawning ffmpeg ourselves with -progress pipe:1
+    // gives a genuine, continuous percentage.
     function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress, extraInputArgs = [], preInputArgs = [] }) {
         return new Promise((resolve, reject) => {
             const args = [...preInputArgs, '-i', inputPath, ...extraInputArgs, ...codecArgs, '-progress', 'pipe:1', '-y', outputPath];
@@ -141,6 +141,119 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
         }
     }
 
+    // ffmpeg's -version output starts with a single banner line like
+    // "ffmpeg version 7.0.2 Copyright (c) 2000-2024 the FFmpeg developers" --
+    // this pulls out just the version token, same idea as
+    // updater.mjs's getCurrentYtdlpVersion for the yt-dlp binary. Used by the
+    // About dialog (MainPage.tsx) so a bug report can name the exact bundled
+    // build, not just "ffmpeg" with no version.
+    function getFfmpegVersion() {
+        return new Promise((resolve) => {
+            const proc = spawn(ffmpegBinaryPath, ['-version']);
+            let stdout = '';
+            proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+            proc.on('error', () => resolve(null));
+            proc.on('close', () => {
+                const match = stdout.match(/^ffmpeg version (\S+)/m);
+                resolve(match ? match[1] : null);
+            });
+        });
+    }
+
+    // Per-stream codec info (not just container/duration) -- used by
+    // previewCache.mjs to decide whether a non-native file's video/audio
+    // codecs are already Chromium-compatible (a fast remux suffices) or need
+    // a real re-encode to preview. Normalizes ffprobe's snake_case fields to
+    // this codebase's own camelCase convention, same as reshapeVideoInfo does
+    // for yt-dlp's raw JSON elsewhere.
+    function probeMediaStreams(filePath) {
+        return new Promise((resolve, reject) => {
+            const proc = spawn(ffprobeBinaryPath, ['-v', 'quiet', '-print_format', 'json', '-show_streams', filePath]);
+            let stdout = '';
+            let stderr = '';
+            proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+            proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+            proc.on('error', reject);
+            proc.on('close', (code) => {
+                if (code !== 0) {
+                    reject(new Error(stderr || `ffprobe exited with code ${code}`));
+                    return;
+                }
+                try {
+                    const streams = JSON.parse(stdout).streams || [];
+                    resolve(streams.map((s) => ({ codecType: s.codec_type, codecName: s.codec_name })));
+                } catch {
+                    reject(new Error('Failed to parse ffprobe stream output'));
+                }
+            });
+        });
+    }
+
+    // Finds the last keyframe at or before `atSeconds` -- -ss before -i (see
+    // clipAndConvert's own comment) can only ever start a stream-copied clip
+    // there, never exactly on the requested timestamp. -skip_frame nokey
+    // means ffprobe only decodes/reports actual keyframes (cheap -- no full
+    // decode of the frames in between), and -read_intervals "%<atSeconds>"
+    // limits reading to [0, atSeconds] so this stays fast even deep into a
+    // long file. Resolves 0 (not a rejection) if none are found (e.g.
+    // atSeconds is before the first keyframe, or something in the probe
+    // output didn't parse) -- callers treat that as "assume worst case", not
+    // "assume no risk".
+    function findLastKeyframeAtOrBefore(inputPath, atSeconds) {
+        return new Promise((resolve) => {
+            const proc = spawn(ffprobeBinaryPath, [
+                '-v', 'error',
+                '-select_streams', 'v:0',
+                '-skip_frame', 'nokey',
+                '-show_entries', 'frame=pkt_pts_time',
+                '-read_intervals', `%${atSeconds}`,
+                '-of', 'csv=p=0',
+                inputPath,
+            ]);
+            let stdout = '';
+            proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+            proc.on('error', () => resolve(0));
+            proc.on('close', () => {
+                const lines = stdout.trim().split('\n').filter(Boolean);
+                const last = lines.length ? parseFloat(lines[lines.length - 1]) : NaN;
+                resolve(Number.isFinite(last) ? last : 0);
+            });
+        });
+    }
+
+    // Below this fraction of the clip's own length, or this many seconds in
+    // absolute terms, a keyframe-rounded start is a rounding error nobody
+    // will notice (a 2s-early start on a 10-minute clip is 0.3% of it).
+    // Above it, a real, perceptible chunk of what the user asked for would
+    // be missing (that same 2s on a 3-second clip is 65% of it) -- these
+    // numbers aren't tuned against real user reports, just chosen to
+    // separate those two cases by a wide margin.
+    const KEYFRAME_RISK_RATIO_THRESHOLD = 0.1;
+    const KEYFRAME_RISK_ABSOLUTE_FLOOR_SECONDS = 0.5;
+
+    async function isKeyframeRoundingRisky(inputPath, startSeconds, totalDurationSeconds) {
+        if (!(totalDurationSeconds > 0)) return false;
+        const keyframeBefore = await findLastKeyframeAtOrBefore(inputPath, startSeconds);
+        const offset = Math.max(0, startSeconds - keyframeBefore);
+        return offset > KEYFRAME_RISK_ABSOLUTE_FLOOR_SECONDS
+            && (offset / totalDurationSeconds) > KEYFRAME_RISK_RATIO_THRESHOLD;
+    }
+
+    // "Same as source" (format 'source') means don't change the codec, only
+    // stop stream-copying -- so when a keyframe-risk re-encode is needed
+    // there, it still has to re-encode into *something* resembling the
+    // source rather than a fixed target. Only VP8/VP9 (-> WebM's own codecs)
+    // is special-cased, matching convertWithFallback/the reencodeCodecArgs
+    // below -- anything else (including codecs this bundled ffmpeg can't
+    // encode) falls back to the same libx264/aac default those use, which is
+    // already correct for the overwhelmingly common case (yt-dlp downloads
+    // are forced to --merge-output-format mp4, i.e. already h264/aac).
+    async function reencodeCodecArgsMatchingSource(inputPath) {
+        const streams = await probeMediaStreams(inputPath).catch(() => []);
+        const isVp8or9 = streams.some((s) => s.codecType === 'video' && /^vp[89]$/.test(s.codecName || ''));
+        return isVp8or9 ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus'] : ['-c:v', 'libx264', '-c:a', 'aac'];
+    }
+
     // Clip [start,end] and, optionally, convert format in one pass -- not a
     // trim then a separate convert (two ffmpeg invocations, two temp files).
     // 'source' (or falsy) keeps the source container: fast lossless -c copy
@@ -164,21 +277,40 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
     // zero re-encoding, zero quality/frame loss, just a clip that may start
     // up to one GOP length earlier than the exact requested timestamp (the
     // standard, universally-recommended tradeoff for lossless trimming).
+    // startSeconds (plain seconds, separate from the HH:MM:SS `start` string
+    // ffmpeg itself takes) drives isKeyframeRoundingRisky below -- when that
+    // tradeoff would actually cost a noticeable chunk of a short clip, this
+    // skips straight to a real re-encode (frame-accurate, since re-encoding
+    // decodes every frame rather than copying packets) instead of accepting
+    // it, without paying that re-encode cost on the vast majority of clips
+    // where the rounding error is negligible.
     // -to (an absolute output timestamp) is replaced with -t (a duration):
     // once the input has been seeked, -to's "absolute timestamp" meaning is
     // no longer relative to the original file, but -t's plain duration is
     // unambiguous regardless of where the seek landed.
-    async function clipAndConvert({ inputPath, outputPath, start, format, totalDurationSeconds, onProgress, forceReencode = false }) {
+    async function clipAndConvert({ inputPath, outputPath, start, startSeconds, format, totalDurationSeconds, onProgress, forceReencode = false }) {
         const preInputArgs = ['-ss', start];
         const durationArgs = ['-t', String(totalDurationSeconds)];
-        if (!format || format === 'source') {
+        const isSourceFormat = !format || format === 'source';
+        const risky = !forceReencode && startSeconds != null
+            // Fails open toward re-encoding (slower, but always correct)
+            // rather than silently trusting the fast path if the probe
+            // itself errors out for some reason.
+            && await isKeyframeRoundingRisky(inputPath, startSeconds, totalDurationSeconds).catch(() => true);
+
+        if (isSourceFormat) {
+            if (forceReencode || risky) {
+                const sourceReencodeCodecArgs = await reencodeCodecArgsMatchingSource(inputPath);
+                await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, ...sourceReencodeCodecArgs], totalDurationSeconds, onProgress, preInputArgs });
+                return;
+            }
             await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, '-c', 'copy'], totalDurationSeconds, onProgress, preInputArgs });
             return;
         }
         const reencodeCodecArgs = format.toLowerCase() === 'webm'
             ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus']
             : ['-c:v', 'libx264', '-c:a', 'aac'];
-        if (forceReencode) {
+        if (forceReencode || risky) {
             await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, ...reencodeCodecArgs], totalDurationSeconds, onProgress, preInputArgs });
             return;
         }
@@ -189,5 +321,5 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
         }
     }
 
-    return { getMediaDurationSeconds, runFfmpegWithProgress, convertWithFallback, clipAndConvert };
+    return { getMediaDurationSeconds, getFfmpegVersion, probeMediaStreams, runFfmpegWithProgress, convertWithFallback, clipAndConvert };
 }

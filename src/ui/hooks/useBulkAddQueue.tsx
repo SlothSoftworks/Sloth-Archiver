@@ -32,10 +32,10 @@ export type BulkAddItem = {
   error?: string;
   videoId?: string;
   thumbnailUrl?: string;
-  // Set once this item's library entry exists on disk (add-to-library
-  // succeeded) -- lets processItem/retry resume straight at the download
-  // step instead of re-running fetch/dedup/add, which would otherwise see
-  // the entry already exists and wrongly mark it "skipped".
+  // Set once this item's library entry exists on disk -- lets processItem/
+  // retry resume straight at the download step instead of re-running
+  // fetch/dedup/add, which would otherwise see the entry already exists and
+  // wrongly mark it "skipped".
   videoDir?: string;
   epoch?: string;
   resolution?: string;
@@ -82,8 +82,7 @@ const MAX_DOWNLOAD_SLOTS = MAX_SIMULTANEOUS_DOWNLOADS_CEILING;
 
 // Picks the closest available height to the requested ceiling, preferring
 // not to exceed it (falls back to the closest above only if nothing at or
-// under the target exists) -- run per-video since each one's own available
-// resolutions can differ.
+// under the target exists).
 function pickClosestResolution(resolutions: { resolution: string }[], target: string): string | null {
   const heights = resolutions
     .map((r) => Number(r.resolution))
@@ -98,10 +97,9 @@ function pickClosestResolution(resolutions: { resolution: string }[], target: st
 }
 
 // Best-effort extraction of the classified error message threaded through
-// from main.mjs's downloadErrors.mjs (see useDownloadVideo.tsx's
-// 'error' case) -- falls back to a generic message for the pre-existing
-// non-download failure paths (fetch/add-to-library) that never went through
-// that classifier.
+// from main.mjs's downloadErrors.mjs (see useDownloadVideo.tsx's 'error'
+// case) -- falls back to a generic message for failure paths (fetch/
+// add-to-library) that never went through that classifier.
 function extractDownloadErrorMessage(downloadError: unknown): string {
   const message = (downloadError as { payload?: { message?: string } } | null)?.payload?.message;
   return message || 'Download failed.';
@@ -145,14 +143,12 @@ function useDownloadSlot(
   return { startDownload, cancelDownload };
 }
 
-// Renderer-side queue, not a main-process job manager -- see
-// futureSpecsFeedback.md's "Bulk add and playlist detection (no background
-// worker)" assessment for why. Runs up to maxSimultaneousDownloads items at
-// once (a user setting, Options tab) via a fixed pool of MAX_DOWNLOAD_SLOTS
-// useDownloadVideo() instances (see useDownloadSlot above) -- this is what
-// TD-008 (reports/TechnicalDebt.md) had to be fixed first for: each slot's
-// progress is now tagged with its own request id and filtered independently,
-// so several real downloads can be in flight without cross-talking.
+// Renderer-side queue, not a main-process job manager. Runs up to
+// maxSimultaneousDownloads items at once (a user setting, Options tab) via a
+// fixed pool of MAX_DOWNLOAD_SLOTS useDownloadVideo() instances (see
+// useDownloadSlot above) -- each slot's progress is tagged with its own
+// request id and filtered independently, so several real downloads can be in
+// flight without cross-talking.
 function useBulkAddQueueState() {
   const [items, setItems] = useState<BulkAddItem[]>([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -348,9 +344,9 @@ function useBulkAddQueueState() {
         updateItem(itemId, { status: 'failed', error: extractDownloadErrorMessage(result.downloadError) });
       }
     } else {
-      // recordLibraryDownload can reject -- an uncaught rejection here used
-      // to skip freeSlot below and leave this slot permanently busy, wedging
-      // the whole queue's stop/resume UI, not just this one item.
+      // recordLibraryDownload can reject -- caught here so a failure still
+      // frees the slot instead of leaving it permanently busy and wedging
+      // the whole queue's stop/resume UI.
       try {
         await window.electronAPI.recordLibraryDownload({
           videoDir: meta.videoDir,
@@ -406,11 +402,10 @@ function useBulkAddQueueState() {
   // is still running queues up after it instead of losing it.
   //
   // Deliberately not async: the panel and "fetching" status must appear in
-  // the same tick as the click, not after an awaited settings fetch (an
-  // earlier async version regressed exactly this). maxSimultaneous keeps
-  // whatever value a previous run already resolved to; the current setting
-  // is fetched in the background and applied once back, re-running
-  // fillFreeSlots in case that unlocks more capacity.
+  // the same tick as the click, not after an awaited settings fetch.
+  // maxSimultaneous keeps whatever value a previous run already resolved to;
+  // the current setting is fetched in the background and applied once back,
+  // re-running fillFreeSlots in case that unlocks more capacity.
   const start = (entries: BulkAddEntry[], options: StartOptions) => {
     optionsRef.current = { ...options, maxSimultaneous: optionsRef.current.maxSimultaneous };
     stopRequestedRef.current = false;

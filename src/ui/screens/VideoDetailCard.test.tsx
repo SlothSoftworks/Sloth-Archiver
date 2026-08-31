@@ -13,8 +13,8 @@ const videoMetaData = {
   description: 'a description with a link https://example.com/x here',
   thumbnail: 'https://example.com/thumb.jpg',
   resolutions: [
-    { resolution: '720', filesizeMb: '10' },
-    { resolution: 'MP3', filesizeMb: '5' },
+    { resolution: '720', filesizeMb: 10 },
+    { resolution: 'MP3', filesizeMb: 5 },
   ],
   originalUrl: 'https://youtube.com/watch?v=vid1',
   durationString: '2:00',

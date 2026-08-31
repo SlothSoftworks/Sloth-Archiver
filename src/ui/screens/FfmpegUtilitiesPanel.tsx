@@ -1,5 +1,4 @@
 import {
-  Box,
   Checkbox,
   Divider,
   FormControlLabel,
@@ -14,11 +13,7 @@ import {
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import AudiotrackIcon from '@mui/icons-material/Audiotrack';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
-import ContentCutIcon from '@mui/icons-material/ContentCut';
 import LabelOutlinedIcon from '@mui/icons-material/LabelOutlined';
-import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
 
 // Sentinel Select value for "Other" -- a one-off custom format typed for
@@ -67,13 +62,6 @@ export function formatSecondsAsClipTimestamp(totalSeconds: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-// Backs the clip fields' up/down spinner arrows -- parses whatever's typed
-// (SS / MM:SS / HH:MM:SS, or empty) down to a second count, nudges it, and
-// renders back out fully zero-padded so the result stays unambiguous.
-function stepClipTimestamp(value: string, deltaSeconds: number): string {
-  return formatSecondsAsClipTimestamp(parseClipTimestampSeconds(value) + deltaSeconds);
-}
-
 // Every control here operates on the video *file*, gated on isVideoDownloaded
 // (regardless of an existing MP3), or on ffmpegAction !== null while another
 // utility is already running (they share one ffmpegAction slot in the
@@ -91,15 +79,8 @@ export default function FfmpegUtilitiesPanel({
   setOtherFormatInput,
   forceReencode,
   setForceReencode,
-  clipStart,
-  setClipStart,
-  clipEnd,
-  setClipEnd,
-  onSetClipStartFromPlayer,
-  onSetClipEndFromPlayer,
   onExtractMp3,
   onConvertFormat,
-  onExtractClip,
   onEmbedMetadata,
 }: {
   ffmpegAction: 'extractMp3' | 'convert' | 'clip' | 'embedMetadata' | 'extractAudioToLibrary' | 'extractClipMp3' | 'convertClip' | null;
@@ -114,15 +95,8 @@ export default function FfmpegUtilitiesPanel({
   setOtherFormatInput: (value: string) => void;
   forceReencode: boolean;
   setForceReencode: (value: boolean) => void;
-  clipStart: string;
-  setClipStart: (value: string) => void;
-  clipEnd: string;
-  setClipEnd: (value: string) => void;
-  onSetClipStartFromPlayer: () => void;
-  onSetClipEndFromPlayer: () => void;
   onExtractMp3: () => void;
   onConvertFormat: () => void;
-  onExtractClip: () => void;
   onEmbedMetadata: () => void;
 }) {
   const ffmpegControlsDisabled = !isVideoDownloaded || ffmpegAction !== null;
@@ -130,11 +104,6 @@ export default function FfmpegUtilitiesPanel({
   // whichever of video/audio exists, so it's enabled whenever either is
   // downloaded, not gated on isVideoDownloaded like the rest of the panel.
   const embedMetadataDisabled = (!isVideoDownloaded && !hasAudioFile) || ffmpegAction !== null;
-  // ffmpeg's -to is an absolute end timestamp, not a duration -- if it isn't
-  // at least a second past -ss, ffmpeg aborts with "-to value smaller than
-  // -ss". Caught here since there's nothing to extract from end <= start.
-  const clipRangeInvalid = !!clipStart.trim() && !!clipEnd.trim()
-    && parseClipTimestampSeconds(clipEnd) < parseClipTimestampSeconds(clipStart) + 1;
 
   return (
     <>
@@ -144,7 +113,7 @@ export default function FfmpegUtilitiesPanel({
           <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
             FFMPEG utilities
           </Typography>
-          <Tooltip title="FFmpeg is a tool this app uses to edit media files already on your device -- extracting audio, converting formats, trimming clips, or adding info tags -- without re-downloading anything.">
+          <Tooltip title="FFmpeg is a tool this app uses to edit media files already on your device -- extracting audio, converting formats, or adding info tags -- without re-downloading anything. Clipping now lives in the player's own controls, above.">
             <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
           </Tooltip>
         </Stack>
@@ -154,7 +123,7 @@ export default function FfmpegUtilitiesPanel({
           </Typography>}
         {!isVideoDownloaded && hasAudioFile &&
           <Typography variant="caption" color="text.secondary">
-            Download the video for this version to use Extract MP3, Convert, and Clip.
+            Download the video for this version to use Extract MP3 and Convert.
           </Typography>}
         {ffmpegAction &&
           <LinearProgressWithLabel value={ffmpegProgress} valueBuffer={ffmpegProgress} />}
@@ -226,124 +195,6 @@ export default function FfmpegUtilitiesPanel({
             <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
           </Tooltip>
         </Stack>
-
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Typography variant="body2">Clip</Typography>
-          <Tooltip title="Set start to the player's current position">
-            <span>
-              <IconButton
-                size="small"
-                onClick={onSetClipStartFromPlayer}
-                disabled={ffmpegControlsDisabled}
-                aria-label="Set clip start from player position"
-              >
-                <AccessTimeIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-          <TextField
-            size="small"
-            variant="standard"
-            placeholder="HH:MM:SS"
-            value={clipStart}
-            onChange={(e) => setClipStart(formatClipTimestampInput(e.target.value))}
-            disabled={ffmpegControlsDisabled}
-            sx={{ width: 96 }}
-            slotProps={{
-              htmlInput: { inputMode: 'numeric', 'aria-label': 'Clip start (HH:MM:SS)' },
-              input: {
-                endAdornment: (
-                  <Stack sx={{ ml: 0.5 }}>
-                    <IconButton
-                      size="small"
-                      sx={{ p: 0 }}
-                      disabled={ffmpegControlsDisabled}
-                      onClick={() => setClipStart(stepClipTimestamp(clipStart, 1))}
-                      aria-label="Increase clip start by 1 second"
-                    >
-                      <KeyboardArrowUpIcon sx={{ fontSize: 14 }} />
-                    </IconButton>
-                    <IconButton
-                      size="small"
-                      sx={{ p: 0 }}
-                      disabled={ffmpegControlsDisabled}
-                      onClick={() => setClipStart(stepClipTimestamp(clipStart, -1))}
-                      aria-label="Decrease clip start by 1 second"
-                    >
-                      <KeyboardArrowDownIcon sx={{ fontSize: 14 }} />
-                    </IconButton>
-                  </Stack>
-                ),
-              },
-            }}
-          />
-          <Typography variant="body2" color="text.secondary">–</Typography>
-          <Tooltip title="Set end to the player's current position">
-            <span>
-              <IconButton
-                size="small"
-                onClick={onSetClipEndFromPlayer}
-                disabled={ffmpegControlsDisabled}
-                aria-label="Set clip end from player position"
-              >
-                <AccessTimeIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-          <TextField
-            size="small"
-            variant="standard"
-            placeholder="HH:MM:SS"
-            value={clipEnd}
-            onChange={(e) => setClipEnd(formatClipTimestampInput(e.target.value))}
-            disabled={ffmpegControlsDisabled}
-            sx={{ width: 96 }}
-            slotProps={{
-              htmlInput: { inputMode: 'numeric', 'aria-label': 'Clip end (HH:MM:SS)' },
-              input: {
-                endAdornment: (
-                  <Stack sx={{ ml: 0.5 }}>
-                    <IconButton
-                      size="small"
-                      sx={{ p: 0 }}
-                      disabled={ffmpegControlsDisabled}
-                      onClick={() => setClipEnd(stepClipTimestamp(clipEnd, 1))}
-                      aria-label="Increase clip end by 1 second"
-                    >
-                      <KeyboardArrowUpIcon sx={{ fontSize: 14 }} />
-                    </IconButton>
-                    <IconButton
-                      size="small"
-                      sx={{ p: 0 }}
-                      disabled={ffmpegControlsDisabled}
-                      onClick={() => setClipEnd(stepClipTimestamp(clipEnd, -1))}
-                      aria-label="Decrease clip end by 1 second"
-                    >
-                      <KeyboardArrowDownIcon sx={{ fontSize: 14 }} />
-                    </IconButton>
-                  </Stack>
-                ),
-              },
-            }}
-          />
-          <Box sx={{ flexGrow: 1 }} />
-          <Tooltip title={clipRangeInvalid ? 'End must be at least 1 second after start' : 'Extract clip'}>
-            <span>
-              <IconButton
-                size="small"
-                aria-label="Extract clip"
-                onClick={onExtractClip}
-                disabled={ffmpegControlsDisabled || !clipStart.trim() || !clipEnd.trim() || clipRangeInvalid}
-              >
-                <ContentCutIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-        </Stack>
-        {clipRangeInvalid &&
-          <Typography variant="caption" color="error">
-            End must be at least 1 second after start.
-          </Typography>}
 
         <Stack direction="row" spacing={1} alignItems="center">
           <Typography variant="body2" sx={{ flexGrow: 1 }}>Embed metadata</Typography>

@@ -15,6 +15,10 @@ type OpenFolderResult = {
     canceled: boolean;
 };
 
+// Mirrors LibraryScreen.tsx's own SortField/SortDirection unions.
+type LibrarySortField = 'title' | 'uploadDate' | 'dateAdded' | 'channel' | 'downloaded' | 'quality';
+type LibrarySortDirection = 'asc' | 'desc';
+
 type LibraryIndex = {
     channels: {
         channelFolderName: string;
@@ -26,6 +30,7 @@ type LibraryIndex = {
             latestEpoch: string | null;
             metadata: LibraryVideoMetadata;
             epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
+            thumbnailPath: string | null;
             clipCount: number;
         }[];
     }[];
@@ -33,6 +38,11 @@ type LibraryIndex = {
 
 declare global {
     interface Window {
+        // Set by App.tsx only in the dev-mock fallback path (no real preload
+        // attached) -- read back by testing/mockData/electronAPIMocks.ts to
+        // decide whether DownloaderScreen should seed itself with mock video
+        // info.
+        mockingElectron?: string;
         electronAPI: {
             pickFolder: (options: T) => Promise <OpenFolderResult>;
             saveVideoFile: (defaultName?: string) => Promise <FolderPickerResult>;
@@ -54,11 +64,14 @@ declare global {
             removeYtdlpUpdateProgressListener: () => void
             quitApp: () => Promise<void>
             getAppVersion: () => Promise<string>
+            getFfmpegVersion: () => Promise<string | null>
             deleteVideoInfoCacheEntry: (url: string) => Promise<{ success: boolean; existed: boolean }>
             getLibraryDir: () => Promise<{ libraryDir: string }>
             setLibraryDir: (dir: string) => Promise<{ success: boolean; libraryDir: string }>
             getLibraryViewMode: () => Promise<{ libraryViewMode: 'channel' | 'video' }>
             setLibraryViewMode: (mode: 'channel' | 'video') => Promise<{ success: boolean; libraryViewMode: 'channel' | 'video' }>
+            getLibrarySort: () => Promise<{ sortField: LibrarySortField; sortDirection: LibrarySortDirection }>
+            setLibrarySort: (payload: { sortField: LibrarySortField; sortDirection: LibrarySortDirection }) => Promise<{ success: boolean; sortField: LibrarySortField; sortDirection: LibrarySortDirection }>
             getThemeMode: () => Promise<{ themeMode: 'light' | 'dark' }>
             setThemeMode: (mode: 'light' | 'dark') => Promise<{ success: boolean; themeMode: 'light' | 'dark' }>
             getCustomConvertFormats: () => Promise<{ customConvertFormats: string[] }>
@@ -92,7 +105,10 @@ declare global {
             saveExportedFile: (payload: { defaultName: string; extensions: string[]; inputPath?: string }) => Promise<{ filePath?: string; canceled: boolean }>
             extractMp3FromFile: (payload: { inputPath: string; outputPath: string }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
             convertFileFormat: (payload: { inputPath: string; outputPath: string; format: string; forceReencode?: boolean }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
-            extractClipFromFile: (payload: { inputPath: string; outputPath: string; start: string; end: string }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
+            ensurePlayablePreview: (payload: { filePath: string }) => Promise<{ success: boolean; previewPath?: string; generated?: boolean; message?: string }>
+            onPreviewGenerationProgress: (callback: (data: { percent: number }) => void) => void
+            removePreviewGenerationProgressListener: () => void
+            extractClipFromFile: (payload: { inputPath: string; outputPath: string; start: string; end: string; format?: string; forceReencode?: boolean }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
             createClip: (payload: { videoDir: string; inputPath: string; start: string; end: string; format: string; clipName: string; forceReencode?: boolean }) => Promise<{ success: boolean; clip?: LibraryClip; message?: string }>
             getClips: (payload: { videoDir: string }) => Promise<{ success: boolean; clips: LibraryClip[]; message?: string }>
             deleteClip: (payload: { videoDir: string; clipId: string }) => Promise<{ success: boolean; message?: string }>

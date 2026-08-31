@@ -83,12 +83,9 @@ export default function YtdlpUpdateDialog() {
             <Box>
               <Stack direction="row" spacing={2}>
                 <Button onClick={quit} color="error" variant="outlined">Quit</Button>
-                {/* Same file/handler Options' own "Open error log" button uses
-                    (main.mjs's errorLog:open, shell.openPath) -- every step of
-                    the update this dialog just ran gets logged there now
-                    (see updater.mjs's onLog threading), so this is the one
-                    place a failure here is actually diagnosable without
-                    leaving the app. */}
+                {/* Every step of the update this dialog just ran gets logged
+                    there, so this is the one place a failure here is
+                    actually diagnosable without leaving the app. */}
                 <Button onClick={() => window.electronAPI.openErrorLog()} variant="outlined">Open error log</Button>
                 <Button onClick={() => startUpdate()} variant="contained">Retry</Button>
               </Stack>

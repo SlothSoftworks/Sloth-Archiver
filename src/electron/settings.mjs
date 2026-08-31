@@ -33,6 +33,20 @@ export function clampMaxSimultaneousDownloads(value) {
     return Math.min(Math.max(n, 1), MAX_SIMULTANEOUS_DOWNLOADS_CEILING);
 }
 
+// Mirrors LibraryScreen.tsx's own SortField/SortDirection unions -- kept as
+// a plain string list here (not imported from the renderer) since this is a
+// Node module with no dependency on renderer-side TypeScript.
+export const LIBRARY_SORT_FIELDS = ['title', 'uploadDate', 'dateAdded', 'channel', 'downloaded', 'quality'];
+export const LIBRARY_SORT_FIELD_DEFAULT = 'title';
+
+export function clampLibrarySortField(value) {
+    return LIBRARY_SORT_FIELDS.includes(value) ? value : LIBRARY_SORT_FIELD_DEFAULT;
+}
+
+export function clampLibrarySortDirection(value) {
+    return value === 'desc' ? 'desc' : 'asc';
+}
+
 // Bounds for the Library tab's thumbnail-size slider (LibraryBottomBar.tsx).
 // 160px floor keeps a video card's title/quality-chip row from wrapping
 // awkwardly; 360px ceiling still fits 2+ columns at typical content widths.

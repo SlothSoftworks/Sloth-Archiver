@@ -1,6 +1,9 @@
 export interface Resolution {
     resolution: string;
-    filesizeMb: string;
+    // videoInfo.mjs's buildResolutions computes this as a rounded number (or
+    // null when neither filesize/filesize_approx nor tbr+duration are
+    // available) -- never a string.
+    filesizeMb: number | null;
 }
 
 // Mirrors the shape returned by window.electronAPI.getLibraryIndex() et al.
@@ -102,9 +105,9 @@ export type VideoDataProps = {
 
 export type DownloadProgressMessage = {
     type: string;
-    // Echoed back from the DownloadVideoParams that started this download
-    // (TD-008) -- 'progressUpdate' is one shared broadcast channel, not
-    // scoped per-download, so every listener filters to its own request.
+    // Echoed back from the DownloadVideoParams that started this download --
+    // 'progressUpdate' is one shared broadcast channel, not scoped
+    // per-download, so every listener filters to its own request.
     requestId: string;
     payload: {
       filename: string;
@@ -112,7 +115,7 @@ export type DownloadProgressMessage = {
       totalBytes: string;
       percent: string;
       speed: string;
-      // postprocessing-only fields (TD-004) -- postprocessPercent is a real,
+      // postprocessing-only fields -- postprocessPercent is a real,
       // continuous number, not named `percent` to avoid confusion with the
       // download phase's string-typed percent above.
       stage?: string;

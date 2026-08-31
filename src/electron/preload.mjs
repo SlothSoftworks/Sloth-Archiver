@@ -21,11 +21,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeYtdlpUpdateProgressListener: () => ipcRenderer.removeAllListeners('ytdlpUpdateProgress'),
     quitApp: () => ipcRenderer.invoke('app:quit'),
     getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
+    getFfmpegVersion: () => ipcRenderer.invoke('system:getFfmpegVersion'),
     deleteVideoInfoCacheEntry: (url) => ipcRenderer.invoke('videoInfoCache:deleteEntry', url),
     getLibraryDir: () => ipcRenderer.invoke('settings:getLibraryDir'),
     setLibraryDir: (dir) => ipcRenderer.invoke('settings:setLibraryDir', dir),
     getLibraryViewMode: () => ipcRenderer.invoke('settings:getLibraryViewMode'),
     setLibraryViewMode: (mode) => ipcRenderer.invoke('settings:setLibraryViewMode', mode),
+    getLibrarySort: () => ipcRenderer.invoke('settings:getLibrarySort'),
+    setLibrarySort: (payload) => ipcRenderer.invoke('settings:setLibrarySort', payload),
     getThemeMode: () => ipcRenderer.invoke('settings:getThemeMode'),
     setThemeMode: (mode) => ipcRenderer.invoke('settings:setThemeMode', mode),
     getCustomConvertFormats: () => ipcRenderer.invoke('settings:getCustomConvertFormats'),
@@ -59,6 +62,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveExportedFile: (payload) => ipcRenderer.invoke('dialog:saveExportedFile', payload),
     extractMp3FromFile: (payload) => ipcRenderer.invoke('library:extractMp3', payload),
     convertFileFormat: (payload) => ipcRenderer.invoke('library:convertFormat', payload),
+    ensurePlayablePreview: (payload) => ipcRenderer.invoke('library:ensurePlayablePreview', payload),
+    onPreviewGenerationProgress: (callback) => ipcRenderer.on('previewGenerationProgress', (_event, data) => callback(data)),
+    removePreviewGenerationProgressListener: () => ipcRenderer.removeAllListeners('previewGenerationProgress'),
     extractClipFromFile: (payload) => ipcRenderer.invoke('library:extractClip', payload),
     createClip: (payload) => ipcRenderer.invoke('library:createClip', payload),
     getClips: (payload) => ipcRenderer.invoke('library:getClips', payload),
@@ -81,7 +87,7 @@ contextBridge.exposeInMainWorld('electronAPIPythonDownload', {
     // Library-view download, the always-mounted bulk-add queue), all on this
     // same shared 'progressUpdate' channel, and removeAllListeners would
     // silently kill every other instance's listener too the moment any one
-    // of them unmounts (the actual bug this fixes -- see TD-008).
+    // of them unmounts.
     onProgressUpdate: (callback) => {
         const listener = (_event, data) => callback(data);
         ipcRenderer.on('progressUpdate', listener);

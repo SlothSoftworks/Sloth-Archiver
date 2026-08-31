@@ -99,10 +99,6 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
     setPendingDownload(null);
   }
 
-  if(downloadError) {
-    console.log(downloadError);
-  }
-
   useEffect(() => {
     if (isDone) {
       setCurrentDownloadFinalPath(finalFilePath);

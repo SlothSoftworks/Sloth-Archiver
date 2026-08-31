@@ -45,13 +45,13 @@ export function downloadImageToFile(url, destDir, baseName, redirectsLeft = 5) {
 // per channel, not something piggybacked on the per-video fetch. --flat-
 // playlist avoids resolving every video into a full info-dict (only the
 // header is wanted), and --playlist-end 1 caps it to one entry.
-function fetchChannelAvatarUrl(channelId, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs }) {
+function fetchChannelAvatarUrl(channelId, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv }) {
     return new Promise((resolve) => {
         const channelUrl = `https://www.youtube.com/channel/${channelId}`;
         const script = spawn(ytdlpPath, [
             '-J', '--no-warnings', '--flat-playlist', '--playlist-end', '1',
             '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), channelUrl,
-        ]);
+        ], { env: ytdlpSpawnEnv() });
         let data = '';
         script.on('error', () => resolve(null));
         script.stdout.on('data', (chunk) => { data += chunk.toString(); });
@@ -75,11 +75,11 @@ function fetchChannelAvatarUrl(channelId, { ytdlpPath, ffmpegDir, cookiesArgs, j
 }
 
 // A factory (not bare exports) since ensureChannelIcon needs the yt-dlp
-// spawn dependencies (ytdlpPath/ffmpegDir/cookiesArgs/jsRuntimeArgs) and a
-// log sink -- same pattern as settings.mjs/cookies.mjs, so this stays a pure
-// Node module with those Electron-adjacent values injected by main.mjs
-// rather than imported here.
-export function createThumbnailFetchers({ ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, onLog }) {
+// spawn dependencies (ytdlpPath/ffmpegDir/cookiesArgs/jsRuntimeArgs/
+// ytdlpSpawnEnv) and a log sink -- same pattern as settings.mjs/cookies.mjs,
+// so this stays a pure Node module with those Electron-adjacent values
+// injected by main.mjs rather than imported here.
+export function createThumbnailFetchers({ ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, onLog }) {
     // Best-effort, never throws -- a missing channel icon just falls back to
     // the generic folder icon, not a broken add-to-library action. force
     // skips the "already have one" check, used by the "refresh channel icon"
@@ -89,7 +89,7 @@ export function createThumbnailFetchers({ ytdlpPath, ffmpegDir, cookiesArgs, jsR
         try {
             const hasIcon = !force && fs.existsSync(channelDir) && fs.readdirSync(channelDir).some((f) => f.startsWith('channel-icon.'));
             if (hasIcon) return;
-            const avatarUrl = await fetchChannelAvatarUrl(channelId, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs });
+            const avatarUrl = await fetchChannelAvatarUrl(channelId, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv });
             if (!avatarUrl) return;
             await downloadImageToFile(avatarUrl, channelDir, 'channel-icon');
         } catch (err) {

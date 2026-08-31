@@ -13,16 +13,12 @@ import {
 } from '@mui/material';
 import { QUALITY_TIERS } from './BulkAddDialog';
 
-// Deliberately narrower than the full LibraryVideoMetadata -- this dialog
-// only ever reads originalUrl, so callers (and tests) don't need to supply
-// every metadata field a real LibraryVideo carries.
+// Narrower than the full LibraryVideoMetadata -- this dialog only reads
+// originalUrl, so callers (and tests) don't need to supply every field.
 type SelectedVideo = { videoDir: string; metadata: { originalUrl: string | null } };
 
-// One-resolution-for-the-whole-batch picker for the Library tab's bulk-select
-// "Download selected" action -- deliberately no per-video picker, mirroring
-// how BulkAddDialog's own paste-URL flow picks one target tier for a whole
-// batch. Pure UI: all the actual queuing work happens in the caller
-// (LibraryScreen.tsx), via useBulkAddQueue's start().
+// One resolution for the whole batch -- deliberately no per-video picker.
+// Pure UI: the actual queuing happens in the caller via useBulkAddQueue's start().
 export default function BulkDownloadQualityDialog({ open, onClose, videos, onConfirm }: {
   open: boolean;
   onClose: () => void;
@@ -31,10 +27,9 @@ export default function BulkDownloadQualityDialog({ open, onClose, videos, onCon
 }) {
   const [targetResolution, setTargetResolution] = useState('720');
 
-  // Very old library entries can predate originalUrl being captured
-  // (src/types.ts's own comment on the field) -- those can't be re-fetched
-  // for a download, so they're silently excluded from the queued batch; this
-  // warning is the only place that's surfaced to the user.
+  // Entries without a saved source URL can't be re-fetched for a download,
+  // so they're excluded from the queued batch; this warning is the only
+  // place that's surfaced to the user.
   const skippedCount = videos.filter((v) => !v.metadata.originalUrl).length;
 
   const handleConfirm = () => {

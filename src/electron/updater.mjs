@@ -3,14 +3,11 @@ import path from 'path';
 import https from 'https';
 import { spawn } from 'child_process';
 
-// Every command below talks to the network (PyPI, GitHub) and previously had
-// no timeout of its own -- a stalled connection (a dropped packet with no
-// RST, a proxy/AV product holding the socket or a freshly-written .exe open
-// for a scan, etc.) left the spawn() promise pending forever: no resolve, no
-// reject, nothing logged, and the update overlay has no cancel button by
-// design (yt-dlp is a required dependency). Reported live: the installed app
-// hung at "Setting up build tools" while a `dev:electron` run of the same
-// update didn't -- with zero log trail to tell why. DEFAULT_TIMEOUT_MS bounds
+// Every command below talks to the network (PyPI, GitHub); a stalled
+// connection (a dropped packet with no RST, a proxy/AV product holding the
+// socket, etc.) would otherwise leave the spawn() promise pending forever --
+// no resolve, no reject, nothing logged, and the update overlay has no
+// cancel button (yt-dlp is a required dependency). DEFAULT_TIMEOUT_MS bounds
 // every step so a genuine hang surfaces as a real, logged, retryable error
 // instead of an indefinite silent spinner. Generous on purpose -- a slow
 // connection legitimately downloading PyInstaller/yt-dlp/curl_cffi for the
@@ -265,10 +262,10 @@ async function ensurePyinstaller(pythonExe, onProgress, onLog) {
 
 async function rebuildYtdlp({ pythonExe, pythonSrcDir, stagingWorkDir, onProgress, onLog }) {
     onProgress?.('fetching-yt-dlp');
-    // [default] pulls in yt-dlp-ejs (TD-010, reports/TechnicalDebt.md) -- the
-    // JS-challenge solver scripts YouTube's nsig challenge needs, mirroring
-    // scripts/build-ytdlp-bin.mjs's own requirements-build.txt pin so a
-    // self-updated binary doesn't regress back to the un-bundled state.
+    // [default] pulls in yt-dlp-ejs, the JS-challenge solver scripts
+    // YouTube's nsig challenge needs, mirroring scripts/build-ytdlp-bin.mjs's
+    // own requirements-build.txt pin so a self-updated binary doesn't
+    // regress back to the un-bundled state.
     await run(pythonExe, ['-m', 'pip', 'install', '--quiet', '--upgrade', 'yt-dlp[default]'], { onLog });
     // Browser-TLS-fingerprint impersonation, same pin as requirements-build.txt
     // (yt-dlp's own compat shim hard-rejects anything outside 0.5.10/0.10.x-0.15.x)
@@ -346,9 +343,8 @@ async function verifyAndSwap({ builtDir, liveDir, binaryName, onLog }) {
 // already viewable via Options -> "Open error log") -- every step below logs
 // the command it's about to run and how it ended (including a timeout, see
 // run()/probe()/fetchJson()/downloadFile() above), so a stuck or failed
-// update actually leaves a trail instead of nothing, which was the whole
-// problem: an update that hangs on the installed app has no console to watch
-// and, until now, nothing was ever written to disk either.
+// update actually leaves a trail instead of nothing -- an installed app has
+// no console to watch otherwise.
 export async function performYtdlpUpdate({ userDataDir, pythonSrcDir, liveYtdlpBinDir, ytdlpBinaryName, isDownloadActive, onProgress, onLog }) {
     if (isDownloadActive && isDownloadActive()) {
         throw new Error('A download is currently in progress. Finish it before applying a yt-dlp update.');
