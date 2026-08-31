@@ -56,8 +56,9 @@
     }
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "electron .",
     "dev:electron": "electron .",
+    "dev:vite": "vite",
     "build": "tsc -b && vite build",
     "build:nolint": "vite build",
     "lint": "eslint .",
