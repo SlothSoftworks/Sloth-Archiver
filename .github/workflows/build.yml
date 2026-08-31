@@ -26,8 +26,8 @@ on:
     tags:
       - 'v*.*.*'
     # Skips a build entirely when a push only touches docs/meta files -- e.g.
-    # a futureSpecs.md edit or a README tweak has no reason to spend a full
-    # build. Applies to both the branches and tags triggers above (GitHub
+    # a README tweak has no reason to spend a full build. Applies to both
+    # the branches and tags triggers above (GitHub
     # doesn't support scoping path filters to just one of them within a
     # single `push:` block); in practice this only matters for the branches
     # path, since a real release tag always accompanies a package.json

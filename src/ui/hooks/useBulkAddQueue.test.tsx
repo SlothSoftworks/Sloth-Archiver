@@ -47,8 +47,8 @@ beforeEach(() => {
 // The requestId of the most recently started download -- generated
 // internally by useDownloadVideo's startDownload (crypto.randomUUID()), not
 // something a test can predict up front, so this reads it back off the
-// startDownloadPython mock instead. Needed because useDownloadVideo (TD-008)
-// filters every incoming message against its own in-flight requestId.
+// startDownloadPython mock instead. Needed because useDownloadVideo filters
+// every incoming message against its own in-flight requestId.
 function getLastStartedRequestId(): string {
   const calls = (window.electronAPIPythonDownload.startDownloadPython as ReturnType<typeof vi.fn>).mock.calls;
   return calls[calls.length - 1][0].requestId;

@@ -6,7 +6,7 @@
 
 ## Related issues
 
-<!-- e.g. "Closes #12", "Relates to TD-004 (reports/TechnicalDebt.md)". Delete if none. -->
+<!-- e.g. "Closes #12", "Relates to #34". Delete if none. -->
 
 ## Test plan
 

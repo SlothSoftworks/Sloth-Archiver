@@ -21,8 +21,8 @@ beforeEach(() => {
 
 // requestId defaults to null (matching requestIdRef's own initial value,
 // before startDownload has ever been called) so these events pass
-// useDownloadVideo's TD-008 requestId filter for a hook under test that
-// never actually started a download -- these tests are only exercising the
+// useDownloadVideo's requestId filter for a hook under test that never
+// actually started a download -- these tests are only exercising the
 // message-type switch/reducer logic itself, not requestId routing.
 function emit(msg: Omit<DownloadProgressMessage, 'requestId'> & { requestId?: string | null }) {
   act(() => registeredCallback?.({ requestId: null, ...msg } as DownloadProgressMessage));

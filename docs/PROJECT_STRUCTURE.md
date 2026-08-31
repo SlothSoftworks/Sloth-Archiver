@@ -27,7 +27,6 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 | `src/utils/` | Small renderer-side helper modules with no Electron/Node dependency (URL parsing, formatting, a debounce hook). |
 | `scripts/` | Node scripts that assemble the pieces needed for a working build/install (see [below](#bundled-low-level-dependencies-and-the-build-pipeline)). |
 | `testing/` | Shared mock data used across the test suite. |
-| `reports/` | Standing project logs — technical debt and a security review — not app code. |
 | `docs/` | This file and the broader architecture overview. |
 
 Test files live directly beside the file they test (`main.mjs` / `main.test.mjs`,

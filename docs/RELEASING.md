@@ -195,12 +195,12 @@ Not currently supported as a separate path — the workflow either releases
   bump tries to release.
 - **Portable Windows build is slow to start** — NSIS's portable target
   re-extracts the entire app on every launch, not just once at install time.
-  Tracked as `TD-014` in `reports/TechnicalDebt.md`, not a priority today.
+  Not a priority today.
 - **Apple Silicon vs. Intel mac builds are two separate native jobs**, not
-  one universal2 binary — see `reports/futureSpecsFeedback.md`'s
-  "Silicon-compatible builds" section for why a true universal binary needs
-  more work (the PyInstaller-frozen `yt-dlp` binary can't cross-compile
-  between architectures).
+  one universal2 binary — a true universal binary needs more work than this
+  (the PyInstaller-frozen `yt-dlp` binary can't cross-compile between
+  architectures, so producing one means running that build twice and merging
+  the results with `lipo`).
 - **Linux support is new** — the `AppImage` target and the `ubuntu-latest`
   build job were both added the same day as this document; treat it as
   less battle-tested than the Windows/macOS paths until it's been through a

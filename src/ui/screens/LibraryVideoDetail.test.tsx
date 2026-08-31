@@ -71,8 +71,8 @@ function makeVideo(metadataOverrides: Record<string, unknown> = {}, videoOverrid
 }
 
 // requestId echoes back whatever startDownload actually generated
-// (crypto.randomUUID(), TD-008) -- useDownloadVideo filters every incoming
-// message against it, so a message emitted without one is silently dropped.
+// (crypto.randomUUID()) -- useDownloadVideo filters every incoming message
+// against it, so a message emitted without one is silently dropped.
 function getLastRequestId(): string {
   const calls = (window.electronAPIPythonDownload.startDownloadPython as ReturnType<typeof vi.fn>).mock.calls;
   return calls[calls.length - 1][0].requestId;
