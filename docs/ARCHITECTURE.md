@@ -211,11 +211,13 @@ than introducing a new one:
 ## Distribution
 
 The app is packaged per-platform into a standalone installer (via Electron's
-standard packaging tooling), bundling its own copies of `yt-dlp`, `ffmpeg`, and the
-small JS runtime `yt-dlp` needs for certain sites — nothing beyond the installer
-itself needs to be present on a user's machine. Because those bundled tools are
-native, platform-specific binaries rather than portable scripts, a build produced on
-one operating system can only ever ship that same operating system's binaries; a
-release for a different platform has to actually be built on (or for) that
-platform's toolchain, which is a build-pipeline detail tracked separately in the
-project's own technical debt log rather than covered here.
+standard packaging tooling), bundling its own copies of `yt-dlp` and `ffmpeg` —
+nothing beyond the installer itself needs to be present on a user's machine.
+Because those bundled tools are native, platform-specific binaries rather than
+portable scripts, a build produced on one operating system can only ever ship
+that same operating system's binaries; a release for a different platform has
+to actually be built on (or for) that platform's toolchain. CI now handles this
+per-platform building automatically — see `docs/RELEASING.md` for how a code
+change actually turns into a published release, including the version-bump
+trigger and the platform-selector suffix convention, which is a build-pipeline
+detail this document doesn't otherwise cover.
