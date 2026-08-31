@@ -49,9 +49,6 @@
     },
     "win": {
       "target": "nsis"
-    },
-    "nsis": {
-      "include": "assets/installer.nsh"
     }
   },
   "scripts": {
