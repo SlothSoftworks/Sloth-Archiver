@@ -24,7 +24,16 @@ you point it here.
 ### QoL features
 
 1. Language support. Add support for language and set up the ability add more languages in the future via a "strings" style file that the app can reado n startup and load all the messages in the app in any language.
+2. Protable version: a portable .exe for windows that just lets the user open and use the app.
+3. Silicon compatible generation set up for github and local
+4. custom player hot keys with several functions some ideaS:
+   - shift + left/right arrows for 10 sec + or - 
+   - number keys to specific parts of the video similar to youtube
+   - j and k keypresses to move frame by frame
+   - ctrl + s / cmd + s for a full resolution snapshot copied to clipboard (discuss this as it can be a new feature for other parts)
 
 ### Small features and corrections
 
 1. Video merger (requires video versioning first): Sometimes videos get re-edited and reuploaded and this causes them to have a different link. This feature would add an option to add the new link in the video library view and the metadata will replace the main link to the video (to keep updating and downloading if he wants to) but keep the original video data in a version marked (legacy/deleted from youtube)
+2. Embedded video new button "Loop" makes the video look back to the start when it reaches the end of the video.
+   - When this is implemented add also a "Loop sequence" button that loop only between the start and end clip markets (The button is only enabled whenboth markets and set and in valid placement, i.e. not the end before the start)

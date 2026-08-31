@@ -125,18 +125,82 @@ jobs:
             dist/*.dmg
           if-no-files-found: error
 
-      # Real release path: either a tag was pushed directly, or this
-      # master push bumped the version (tagged just above).
-      - name: Build and publish release
+      - name: Determine this run's release tag
         if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
-        run: npm run dist:publish
+        id: release_tag
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ steps.release_check.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # cancel-in-progress (above) kills an older run's process, but doesn't
+      # undo anything it already did via the GitHub API before being killed
+      # -- if that run got as far as creating a draft release and uploading
+      # one asset before being cut off, that orphaned draft is still there.
+      # Deleting any existing release for this exact tag first makes each
+      # run start from a clean slate regardless of what a prior interrupted
+      # run left behind. `gh` is preinstalled on GitHub-hosted runners.
+      # Doesn't touch the git tag itself (only removes the Release object).
+      - name: Remove any stray release for this tag
+        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete "${{ steps.release_tag.outputs.tag }}" --yes --repo "${{ github.repository }}" || echo "No existing release -- nothing to clean up."
 
-  # linux:
+      # Build only -- no network/GitHub calls happen during this step, it's
+      # purely local packaging. Deliberately NOT `npm run dist:publish`:
+      # electron-builder's own GitHub publisher has its own internal
+      # retry behavior around creating the release, and a retry there (e.g.
+      # after a transient network hiccup) has been the suspected cause of a
+      # single run ending up with two release objects instead of one --
+      # the failure mode this whole flow exists to prevent. Publishing is
+      # instead done explicitly below, as one plain `gh` call this workflow
+      # fully controls: no hidden retries, no way to silently duplicate.
+      - name: Build
+        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
+        run: npm run dist
+
+      # Explicit, single-shot release creation + asset upload. The app has
+      # no electron-updater/auto-update feature, so the .exe.blockmap
+      # electron-builder's nsis target generates alongside the installer
+      # (for differential updates) isn't functionally needed by anything --
+      # uploaded anyway, when present, since it's free/harmless, not
+      # because it's used. Included conditionally rather than as a second
+      # literal glob: whether a non-publishing build still computes the
+      # blockmap (it's an update-flow artifact, so it may only get
+      # generated when a publish is actually requested) isn't confirmed --
+      # an unmatched literal glob would otherwise fail `gh` outright.
+      - name: Publish release
+        if: github.ref_type == 'tag' || steps.release_check.outputs.should_release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ASSETS=(dist/*.exe)
+          if compgen -G "dist/*.exe.blockmap" > /dev/null; then
+            ASSETS+=(dist/*.exe.blockmap)
+          fi
+          gh release create "${{ steps.release_tag.outputs.tag }}" \
+            "${ASSETS[@]}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ steps.release_tag.outputs.tag }}" \
+            --draft \
+            --generate-notes
+
+  # linux: still needs a "linux" target added to package.json's build config
+  # (only "mac"/"win" exist today) and the same release-tag/build/publish
+  # steps as the windows-latest job above (not sketched out here since
+  # they'd just be a copy of it) before this would actually produce
+  # anything.
   #   runs-on: ubuntu-latest
   #   steps:
   #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
   #     - uses: actions/setup-node@v4
   #       with:
   #         node-version: 24
@@ -147,6 +211,3 @@ jobs:
   #         cache: pip
   #         cache-dependency-path: src/python/requirements-build.txt
   #     - run: npm ci
-  #     - run: npm run dist:publish
-  #       env:
-  #         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

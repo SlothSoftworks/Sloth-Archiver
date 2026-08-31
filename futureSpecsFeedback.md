@@ -11,6 +11,22 @@ completion is recorded instead, down in [Archived](#archived), so that history i
 lost when the backlog gets trimmed. The sections above Archived are meant to stay
 short and scannable: only what's still actually open.
 
+**2026-08-31 pass:** four new `futureSpecs.md` items assessed this pass, none with
+any code behind them yet — **Portable Windows build** and
+**Silicon-compatible (Apple Silicon) builds** (both QoL features),
+**Custom player hotkeys** (QoL), and **Loop / Loop sequence buttons** (Small
+features). See each item's own section below for the full writeup. Two are worth
+flagging up front: Silicon-compatible builds is currently blocked behind a
+decision made this same week, unrelated to this assessment — the mac CI job in
+`.github/workflows/build.yml` is fully commented out (macOS runners cost 10x the
+Linux-minute multiplier), so "shipping" this item isn't really possible until
+that's revisited. And custom player hotkeys splits into four genuinely
+different-difficulty pieces, not one uniform feature — three are cheap reuse of
+the player's own ref API (`seekTo`/`getCurrentTime`/`getDuration`/`play`/`pause`,
+added during the recent player foundation work specifically so future work like
+this could consume it directly), but frame-by-frame stepping needs a new
+metadata field (`fps`) this app doesn't track anywhere today.
+
 **2026-08-30 pass (continued):** the two Player items still open after the pass
 below — [Player customization](#player-customization) and
 [Embed clip controls into a custom player](#custom-player-clip-controls), genuinely
@@ -125,10 +141,14 @@ these are detailed in the dated log under [Archived](#archived).
   - [Local files library support](#local-files-library)
 - [QoL features](#qol-features)
   - [Language support](#language-support)
+  - [Portable Windows build](#portable-windows-build)
+  - [Silicon-compatible (Apple Silicon) builds](#silicon-compatible-builds)
+  - [Custom player hotkeys](#player-hotkeys)
   - [~~Cookie browser-picker "Clear" quirk~~ — shipped](#cookie-picker-quirk)
   - [~~Delete feature for playlists~~ — shipped](#playlist-delete)
 - [Small features and corrections](#small-features)
   - [Video merger](#video-merger)
+  - [Loop / Loop sequence buttons](#loop-button)
   - [~~Customizable thumbnail sizes~~ — shipped](#thumbnail-sizes)
   - [~~Metadata schema versioning~~ — shipped](#schema-versioning)
   - [~~Copy-link button~~ — shipped](#copy-link)
@@ -197,6 +217,10 @@ flowchart LR
         t9["Export/Import library JSON"]
         t14["Playlist mode (internal queue playback)"]
         t16["Local files library support"]
+        t17["Portable Windows build"]
+        t18["Silicon-compatible (Apple Silicon) builds"]
+        t19["Custom player hotkeys"]
+        t20["Loop / Loop sequence buttons"]
     end
 
     DONE ~~~ TODO
@@ -204,10 +228,10 @@ flowchart LR
     class d1,d1b,d24,d25,t9,t16 library
     class d2,d22 updater
     class d3,d8,d9,d10,d11,d12,d17,d19,d21,t14 playlist
-    class d4,d7,d15,d16,d18,d23,t1 smallfeat
-    class d5,d6,d13,d14,t6 qol
+    class d4,d7,d15,d16,d18,d23,t1,t20 smallfeat
+    class d5,d6,d13,d14,t6,t17,t18 qol
     class t7 longshot
-    class d20,d26,d27,d28,d29,d30 player
+    class d20,d26,d27,d28,d29,d30,t19 player
 ```
 
 <a id="player"></a>
@@ -579,7 +603,9 @@ YouTube-specific assumptions baked in.
 
 Language support carries over unchanged. Embed clip controls into a custom player
 has moved into the grouped [Player](#player) section above. The cookie
-browser-picker quirk and playlist delete have both shipped, see below.
+browser-picker quirk and playlist delete have both shipped, see below. **New this
+pass:** Portable Windows build, Silicon-compatible builds, and Custom player
+hotkeys, all assessed for the first time below.
 
 <a id="language-support"></a>
 ### Language support (i18n / "strings" file)
@@ -599,6 +625,97 @@ ongoing tax on every future PR that adds user-facing text. **Unchanged this pass
 extraction mechanism and lookup hook end-to-end without committing to full parity
 across many languages immediately — expanding language coverage afterward is just
 adding more JSON files, not more engineering.
+
+<a id="portable-windows-build"></a>
+### Portable Windows build
+
+**New this pass.** **Overall: Low** — electron-builder already ships first-class
+support for exactly this, confirmed directly in the already-installed dependency,
+not something that needs new tooling.
+
+**Confirmed directly:** `node_modules/app-builder-lib/templates/nsis/portable.nsi`
+already exists — electron-builder's nsis target has a built-in `"portable"`
+variant (a single no-install `.exe`, distinct from the normal installer) alongside
+the standard `"nsis"` target already in use. `package.json`'s `win.target` is a
+single string (`"nsis"`) today; electron-builder accepts an array there, and
+building both from one `win.target: ["nsis", "portable"]` config needs no separate
+pipeline.
+
+| Piece | Difficulty | Why |
+|---|---|---|
+| Add the target | Low | Config-only change (`win.target` becomes an array) — no app source changes, since a portable build is the same Electron app, just packaged without an installer/uninstaller. |
+| CI wiring | Low | The build workflow already globs `dist/*.exe` for both the smoke-test artifact upload and the release publish step, so a second `.exe` in `dist/` gets picked up automatically once the target is added — the only real change is both installers now sharing the `.exe` extension, so the release asset names need to stay distinguishable (electron-builder's own default naming already includes the target type, so this is likely already handled, just worth confirming on the first real build rather than assuming). |
+| Whether "portable" also means "no trace left on the host" | Low, worth deciding explicitly | electron-builder's portable target only changes *how the app is packaged/launched* — it does not automatically redirect `app.getPath('userData')` (where settings/library-index caching live) to a directory beside the `.exe` instead of the normal per-user AppData path. A portable build today would still write those files to the same OS-standard location an installed build uses. Worth an explicit decision: is "no separate installer" enough, or does "portable" here also imply "runs from a USB stick with zero footprint on the host"? The latter needs an actual code change (detecting portable mode, e.g. via `process.env.PORTABLE_EXECUTABLE_DIR`, and pointing `userData` there instead) that the former doesn't. |
+
+**Recommendation:** ship the config-only version first (still uses the normal
+per-user AppData path for settings, exactly like the installed build) — that
+satisfies "no installer required," which is most of what a portable request
+usually means. Revisit true zero-footprint portability only if it turns out to
+actually matter to whoever asked for this.
+
+<a id="silicon-compatible-builds"></a>
+### Silicon-compatible (Apple Silicon) builds
+
+**New this pass.** **Overall: Medium** — the Electron/renderer/ffmpeg side of this
+is close to free on a modern GitHub runner, but the app's own PyInstaller-frozen
+yt-dlp binary can't cross-compile, and the whole item is currently blocked behind
+a decision made this same week that has nothing to do with architecture.
+
+**Confirmed directly:** `package.json`'s `mac` target has no `arch` field at all
+today (defaults to whatever architecture the build machine is), and the mac job in
+`.github/workflows/build.yml` is fully commented out — disabled this week
+specifically for cost (macOS runners cost 10x the Linux-minute multiplier, per
+that workflow's own comment), not because arch support was scoped and rejected.
+
+| Piece | Difficulty | Why |
+|---|---|---|
+| Electron / renderer / ffmpeg-static | Low | Electron has mature `darwin-arm64` support, and `ffmpeg-static`/`ffprobe-static` resolve to whichever binary matches the architecture `npm install` actually runs on. GitHub's `macos-latest` runner is already arm64 — building there produces an arm64 app for every one of these pieces with no extra work beyond electron-builder's own `mac.arch` config. |
+| yt-dlp PyInstaller freeze | Medium-High | `build-ytdlp-bin.mjs` freezes yt-dlp via a local Python venv + PyInstaller, which does not cross-compile — it always produces a binary matching whatever Python interpreter ran it. Running on an arm64 GitHub runner naturally produces an arm64-only yt-dlp binary for free; a genuinely **universal** (x64+arm64 in one file) build would instead need this step run twice, once per architecture, and the two frozen binaries merged with `lipo` — not something PyInstaller does on its own, and not something this project's build scripts do today. |
+| "Local" generation specifically | Low-Medium, machine-dependent | Whatever architecture the developer's own machine is already produces a matching-arch build for free — both PyInstaller and Electron build for the host architecture by default. The real gap this item is actually about is GitHub CI producing arm64 output reliably, not local dev, which already works implicitly. |
+| Prerequisite: mac CI needs to exist at all first | Blocking | This can't really be scored as buildable independent of the mac-CI-disabled decision above being revisited — arch support is a refinement *on top of* mac builds existing, not a separate track. |
+
+**Recommendation:** decide whether to reintroduce mac CI at all before scoping
+architecture support specifically (see the workflow's own cost tradeoff note) —
+once mac builds are back, arch support itself is close to free for everything
+except the yt-dlp freeze, which needs an explicit choice between arm64-only
+(simplest, matches what GitHub's arm64 runner already produces with zero extra
+steps) and a genuinely universal binary (the `lipo`-merge step, doubling that one
+part of the build).
+
+<a id="player-hotkeys"></a>
+### Custom player hotkeys
+
+**New this pass.** **Overall: Medium overall, but genuinely mixed per-shortcut** —
+three of the four proposed shortcuts are cheap reuse of infrastructure the recent
+player foundation work already built specifically for this kind of consumer; one
+needs a new metadata field this app doesn't track anywhere today.
+
+**Confirmed directly:** no keyboard event handling exists anywhere in the player
+today (`LibraryVideoPlayer.tsx`/`LibraryVideoPlayerControls.tsx`) — this is
+entirely new surface, not a gap in something partially built. The player's ref
+API (`LibraryVideoPlayer.tsx`) already exposes `getCurrentTime`/`getDuration`/
+`seekTo`/`play`/`pause` — added during the player foundation work specifically
+"so [future work] can be built later as pure consumers of this surface, with no
+further rework of the player itself" (that work's own stated intent). No `fps`
+field exists anywhere in this app's video metadata (`videoInfo.mjs`, `types.ts`).
+The app's existing clipboard usage (`LibraryVideoDetail.tsx`'s copy-link button)
+uses `navigator.clipboard.writeText` — proving the renderer already has working
+clipboard access via the standard web API, just the text variant of the same API
+family the snapshot shortcut would need.
+
+| Piece | Difficulty | Why |
+|---|---|---|
+| Shift+←/→ (±10s seek) | Low | Direct `seekTo(getCurrentTime() ± 10)` on the existing ref method, behind a keydown listener scoped to when the player has focus. No new state, no new IPC. |
+| Number keys → percentage seek | Low | Same mechanism: `seekTo(getDuration() * digit / 10)`, reusing the same ref method as above. |
+| J/K frame-by-frame stepping | Medium-High | No frame rate is tracked anywhere in this app's metadata today, and browsers have no native "step exactly one frame" API regardless — real frame accuracy needs yt-dlp's `fps` field captured and threaded through (a small but real metadata addition, not just player-side work), and even then a JS-driven `seekTo(currentTime + 1/fps)` is an approximation, not truly frame-exact, especially for variable-frame-rate sources. Worth deciding upfront whether an approximate fixed small-time-delta nudge (no fps tracked at all) is good enough, versus doing it properly (track fps, step by its reciprocal). |
+| Ctrl/Cmd+S → full-resolution snapshot to clipboard | Medium | Genuinely new capability, not reuse: draw the current frame to an offscreen `<canvas>` (`canvas.drawImage(videoEl, ...)`), convert to a PNG blob, then `navigator.clipboard.write([new ClipboardItem(...)])` — the image variant of an API family already proven working in this renderer (see above). The real open question is what "full resolution" means when the actively-playing source is a remuxed/re-encoded `.preview/` file (the player foundation's caching pipeline) rather than the original download: capturing the currently-playing element is simplest but only as good as Chromium's decode of that preview, versus re-extracting a frame at the source's own resolution via a fresh ffmpeg call, which is meaningfully more work and a second code path. |
+
+**Recommendation:** ship the two cheap seek shortcuts together first (no open
+questions, pure reuse). Decide the "what resolution" question before building the
+snapshot shortcut, since it changes the implementation shape, not just a detail.
+Scope J/K frame-stepping as its own separate piece of work — it's the one item
+here that needs new data the app doesn't have today, not just new UI wiring, so
+bundling it with the others risks blocking the cheap wins on the hardest piece.
 
 <a id="cookie-picker-quirk"></a>
 ### ~~Cookie browser-picker "Clear" quirk~~ — SHIPPED
@@ -627,6 +744,7 @@ Video merger carries over unchanged. Player UX has moved into the grouped
 previously-parked "buffered ahead" look — see that section for why). The other
 five — metadata schema versioning, copy-link button, ordering/"order by" filter,
 playlist thumbnail, and customizable thumbnail sizes — have all shipped, see below.
+**New this pass:** Loop / Loop sequence buttons, assessed for the first time below.
 
 <a id="video-merger"></a>
 ### 1. Video merger
@@ -643,6 +761,31 @@ assessment: `refreshLibraryEntryMetadata` (shipped 2026-08-08, see
 [Archived](#archived)) already demonstrates the "re-fetch and write into a specific
 epoch" mechanics this feature would reuse, just for the same URL rather than a
 replacement one.
+
+<a id="loop-button"></a>
+### Loop / Loop sequence buttons
+
+**New this pass.** **Overall: Low** — both pieces are small, direct reuse of
+mechanisms and state that already exist from the recently-shipped clip range
+controls; no open design questions, unlike most of this pass's other new items.
+
+**Confirmed directly:** the player renders a real `<video>` element under the hood
+(`Box component="video"` via Vidstack's headless primitives, `LibraryVideoPlayer.tsx`)
+— the native HTML5 `loop` attribute needs no custom logic for whole-video looping.
+`LibraryVideoPlayerControls.tsx`'s `ClipMarkersControl` type already tracks
+`startSeconds`/`endSeconds` as live state (shipped this session as part of the
+Embedded Clip Range Controls work) — exactly the two timestamps "Loop sequence"
+needs, not new data to add.
+
+| Piece | Difficulty | Why |
+|---|---|---|
+| "Loop" (whole video) | Low | Toggle the native `loop` prop on the underlying `<video>` element directly — the browser handles the actual looping, no `timeupdate` listener or seek logic needed. |
+| "Loop sequence" (between clip markers) | Low-Medium | Needs a `timeupdate`-driven check ("has playback passed the end marker while loop-sequence is on? seek back to the start marker") — a new small listener, but the two timestamps it reads already exist as live state, not new data to track or thread through. |
+| Enable/disable gating | Low | The spec's own stated condition ("only enabled when both markers are set and in valid placement, i.e. not end before start") is a direct boolean check against state that already exists — the same shape of validation the Clip button itself already needs (a clip can't be created with end before start either), so likely direct reuse rather than new logic. |
+
+**Recommendation:** straightforward to build alongside any other player-chrome
+work — no blocking decisions here, unlike most of the other items assessed this
+pass.
 
 <a id="thumbnail-sizes"></a>
 ### ~~3. Customizable thumbnail sizes~~ — SHIPPED
