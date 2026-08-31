@@ -8,7 +8,8 @@ you point it here.
 
 ### Long shot ideas/Need planning
 
-1. Video diff/comparator: a feture that lets users compare the difference between versions of videos (we can think of how to do this. For example we coun try to fetch the video transcript or maybe look up if there's any algorithmic way to search through video content to compare it.) the diff should show as a report with timestamps
+1. Video diff/comparator: a feture that lets users compare the difference between versions of videos (we can think of how to do this. For example we could try to fetch the video transcript or maybe look up if there's any algorithmic way to search through video content to compare it.) the diff should show as a report with timestamps
+   - I saw that some similar software manages to download and save the subtitles of the video. this can be used as a base for this comparator feature
 
 ### Big features
 
