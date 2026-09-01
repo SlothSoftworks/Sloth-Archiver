@@ -140,6 +140,17 @@ jobs:
       # the build job below uploads its own assets afterward with `gh
       # release upload`, not `create`, so they can't race each other the
       # way multiple parallel `create` calls would.
+      #
+      # The release notes are hand-assembled instead of using
+      # `--generate-notes` on its own, so that anyone landing on the
+      # release page directly (not via the README) still gets a per-OS
+      # download table, matching the one in the README's own Download
+      # section. Asset filenames are computed here rather than read back
+      # from the (not-yet-uploaded) assets themselves -- GitHub sanitizes
+      # spaces in uploaded filenames to dots, and that rule is applied by
+      # hand below to match. Only platforms this run actually builds (per
+      # the plan job's platform-selector outputs) get a row, so a partial
+      # release never links to an asset that doesn't exist.
       - name: Create draft release
         if: steps.plan.outputs.should_release == 'true'
         shell: bash
@@ -147,11 +158,53 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete "${{ steps.plan.outputs.tag }}" --yes --repo "${{ github.repository }}" || echo "No existing release -- nothing to clean up."
-          gh release create "${{ steps.plan.outputs.tag }}" \
+
+          TAG="${{ steps.plan.outputs.tag }}"
+          VERSION="${TAG#v}"
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/$TAG"
+
+          # Built as an array of complete lines (rather than one big
+          # multi-line string) so no accidental leading whitespace ends up
+          # in the markdown -- 4+ leading spaces on a line would make
+          # GitHub render it as a code block instead of a table row.
+          ROWS=("| Platform | Link |" "|---|---|")
+          if [ "${{ steps.plan.outputs.build_windows }}" = "true" ]; then
+            ROWS+=("| Windows (installer) | [Download]($BASE_URL/SlothArchiver.Setup.$VERSION.exe) |")
+            ROWS+=("| Windows (portable, no install) | [Download]($BASE_URL/SlothArchiver.$VERSION.exe) |")
+          fi
+          if [ "${{ steps.plan.outputs.build_mac }}" = "true" ]; then
+            ROWS+=("| macOS (Apple Silicon) | [Download]($BASE_URL/SlothArchiver-$VERSION-arm64.dmg) |")
+            ROWS+=("| macOS (Intel) | [Download]($BASE_URL/SlothArchiver-$VERSION.dmg) |")
+          fi
+          if [ "${{ steps.plan.outputs.build_linux }}" = "true" ]; then
+            ROWS+=("| Linux (AppImage) | [Download]($BASE_URL/SlothArchiver-$VERSION.AppImage) |")
+          fi
+          ASSET_TABLE=$(printf '%s\n' "${ROWS[@]}")
+
+          # Same content `--generate-notes` alone would have produced --
+          # fetched separately here so it can be appended after the per-OS
+          # table above instead of being the whole release body. Falls back
+          # to empty (rather than failing the step) if the API call doesn't
+          # return anything, e.g. on a repo's very first release.
+          AUTO_NOTES=$(gh api "repos/${{ github.repository }}/releases/generate-notes" -f "tag_name=$TAG" --jq .body 2>/dev/null || echo "")
+
+          {
+            echo "## Downloads"
+            echo
+            echo "$ASSET_TABLE"
+            echo
+            echo "All builds are unsigned -- see the README's [Installing](https://github.com/${{ github.repository }}#installing) section for the first-run security warning on each OS."
+            if [ -n "$AUTO_NOTES" ]; then
+              echo
+              echo "$AUTO_NOTES"
+            fi
+          } > release-notes.md
+
+          gh release create "$TAG" \
             --repo "${{ github.repository }}" \
-            --title "${{ steps.plan.outputs.tag }}" \
+            --title "$TAG" \
             --draft \
-            --generate-notes
+            --notes-file release-notes.md
 
   build:
     needs: plan
