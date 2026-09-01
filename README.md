@@ -240,7 +240,9 @@ The app uses yt-dlp to download the video and metadata, which acts as a browser 
 
 This software is designed to work with yt-dlp and its functionalities without adding anything other than a layer of user interface and QoL features on top. This app is not designed or tested to be used to violate copyright, bypass DRM, or platform restrictions, and I don't condone the use of this app for that or any illegal purpose.
 
->TL;DR: It's a gray area as far as YouTube is concerned but not illegal.
+SlothArchiver is a personal-use, local tool — everything it downloads stays in your own library on your own machine. It doesn't upload, host, re-share, or otherwise distribute anything you download with anyone else. What you do with the files afterward, and whether that complies with a given platform's Terms of Service or the copyright law in your jurisdiction, is your responsibility as the user, not something this app enforces or takes a position on for you.
+
+>TL;DR: It's a gray area as far as YouTube is concerned but not illegal. This is a personal, local-only archiving tool — staying within your platform's ToS and your local copyright law is on you.
 
 #### What platforms does SlothArchiver support downloading from?
 At time of writing we support YouTube for downloads, library, and playlists. We support TikTok, Instagram, Twitter, Facebook, SoundCloud, and Dailymotion for pure downloads.
