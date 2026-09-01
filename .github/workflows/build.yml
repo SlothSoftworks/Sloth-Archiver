@@ -65,6 +65,7 @@ jobs:
     outputs:
       should_release: ${{ steps.plan.outputs.should_release }}
       tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
       build_windows: ${{ steps.plan.outputs.build_windows }}
       build_mac: ${{ steps.plan.outputs.build_mac }}
       build_linux: ${{ steps.plan.outputs.build_linux }}
@@ -106,14 +107,24 @@ jobs:
           # Platform-selector suffix: "v0.25.1-wl" -> "wl". No suffix, or a
           # suffix that isn't purely w/m/l letters, means build everything
           # (keeps this additive -- an ordinary "v0.25.1" isn't affected).
+          # VERSION is also stripped of a recognized platform-selector
+          # suffix here (once, as the shared source of truth) since it's a
+          # platform selector, not part of the semantic version -- a
+          # "0.25.1-wl" tag is still a rebuild of 0.25.1, and both the
+          # tag/package.json verification step and the CHANGELOG.md lookup
+          # below need the clean version to match against.
           VERSION_PART="${TAG#v}"
           SUFFIX=""
-          if [[ "$VERSION_PART" =~ ^[0-9]+\.[0-9]+\.[0-9]+-([a-z]+)$ ]]; then
-            CANDIDATE="${BASH_REMATCH[1]}"
+          VERSION="$VERSION_PART"
+          if [[ "$VERSION_PART" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([a-z]+)$ ]]; then
+            NUMERIC_CANDIDATE="${BASH_REMATCH[1]}"
+            CANDIDATE="${BASH_REMATCH[2]}"
             if [[ "$CANDIDATE" =~ ^[wml]+$ ]]; then
               SUFFIX="$CANDIDATE"
+              VERSION="$NUMERIC_CANDIDATE"
             fi
           fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if [ -z "$SUFFIX" ]; then
             BUILD_WINDOWS=true; BUILD_MAC=true; BUILD_LINUX=true
           else
@@ -126,6 +137,31 @@ jobs:
           echo "build_mac=$BUILD_MAC" >> "$GITHUB_OUTPUT"
           echo "build_linux=$BUILD_LINUX" >> "$GITHUB_OUTPUT"
           echo "Platform selection for $TAG -- windows:$BUILD_WINDOWS mac:$BUILD_MAC linux:$BUILD_LINUX"
+
+      # Guards against a mistagged or stray release: a directly pushed tag
+      # (unlike one this workflow creates itself off master -- see "Tag
+      # this commit" below) could in principle name a version that doesn't
+      # match package.json, or point at a commit that never actually
+      # landed on master. Skipped on the branch-push path since that tag
+      # is constructed from package.json itself, on the very commit this
+      # job is running on -- there's nothing to verify.
+      - name: Verify tag matches package.json and points at master
+        if: github.ref_type == 'tag' && steps.plan.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -e
+          PACKAGE_VERSION=$(grep -m1 '"version"' package.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')
+          if [ "${{ steps.plan.outputs.version }}" != "$PACKAGE_VERSION" ]; then
+            echo "::error::Tag ${{ steps.plan.outputs.tag }} (version ${{ steps.plan.outputs.version }}) does not match package.json's version ($PACKAGE_VERSION)."
+            exit 1
+          fi
+
+          git fetch --no-tags origin "+refs/heads/master:refs/remotes/origin/master"
+          TAG_COMMIT=$(git rev-list -n 1 "${{ steps.plan.outputs.tag }}")
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" origin/master; then
+            echo "::error::Tag ${{ steps.plan.outputs.tag }} must point at a commit reachable from origin/master."
+            exit 1
+          fi
 
       - name: Tag this commit
         if: github.ref_type == 'branch' && steps.plan.outputs.should_release == 'true'
@@ -188,12 +224,41 @@ jobs:
           # return anything, e.g. on a repo's very first release.
           AUTO_NOTES=$(gh api "repos/${{ github.repository }}/releases/generate-notes" -f "tag_name=$TAG" --jq .body 2>/dev/null || echo "")
 
+          # Pulls this release's own section out of CHANGELOG.md (keyed by
+          # the clean, suffix-stripped version -- CHANGELOG.md entries are
+          # per real version, not per platform-selector rebuild) so the
+          # hand-written "what's actually new" text shows up on the release
+          # page itself, not just in the repo. Stops at the next version
+          # heading rather than the next "## " of any kind, so a nested
+          # subheading inside one release's own entry doesn't truncate it
+          # early. Missing on purpose is expected right after a
+          # platform-only re-cut of an existing version whose CHANGELOG
+          # entry hasn't changed, or before CHANGELOG.md has ever been
+          # updated for a version -- degrades to just the download table +
+          # auto-generated notes rather than failing the release.
+          CLEAN_VERSION="${{ steps.plan.outputs.version }}"
+          MANUAL_NOTES=$(awk -v ver="## [$CLEAN_VERSION]" '
+            index($0, ver) == 1 { capture = 1; next }
+            capture && /^## \[/ { capture = 0 }
+            capture { print }
+          ' CHANGELOG.md 2>/dev/null || echo "")
+          if [ -z "$(echo "$MANUAL_NOTES" | tr -d '[:space:]')" ]; then
+            echo "::warning::No CHANGELOG.md section found for $CLEAN_VERSION -- release notes will skip the changelog section."
+            MANUAL_NOTES=""
+          fi
+
           {
             echo "## Downloads"
             echo
             echo "$ASSET_TABLE"
             echo
             echo "All builds are unsigned -- see the README's [Installing](https://github.com/${{ github.repository }}#installing) section for the first-run security warning on each OS."
+            if [ -n "$MANUAL_NOTES" ]; then
+              echo
+              echo "## What's new"
+              echo
+              echo "$MANUAL_NOTES"
+            fi
             if [ -n "$AUTO_NOTES" ]; then
               echo
               echo "$AUTO_NOTES"
@@ -307,3 +372,30 @@ jobs:
             exit 1
           fi
           gh release upload "${{ needs.plan.outputs.tag }}" "${ASSETS[@]}" --repo "${{ github.repository }}" --clobber
+
+  # Runs once, after every selected platform has uploaded its own installer
+  # assets, rather than per-platform -- otherwise two matrix entries could
+  # both try to publish their own partial SHA256SUMS at the same time (the
+  # same kind of race the two-job split above exists to avoid for release
+  # creation). Whatever's actually on the release at this point gets hashed
+  # -- deliberately no fixed required-file list, since a platform-selector
+  # release is legitimately missing some assets on purpose.
+  checksums:
+    needs: [plan, build]
+    if: needs.plan.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate and upload SHA256SUMS
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          mkdir artifacts
+          gh release download "${{ needs.plan.outputs.tag }}" --repo "${{ github.repository }}" --dir artifacts
+          # Drop any SHA256SUMS from a prior run of this same release before
+          # hashing, so a re-run never ends up hashing last run's checksums
+          # file into this run's checksums file.
+          rm -f artifacts/SHA256SUMS
+          (cd artifacts && sha256sum -- * > ../SHA256SUMS)
+          gh release upload "${{ needs.plan.outputs.tag }}" SHA256SUMS --repo "${{ github.repository }}" --clobber

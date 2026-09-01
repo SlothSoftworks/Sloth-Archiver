@@ -17,9 +17,10 @@ workflow file itself doesn't have to carry a full essay in its comments.
 3. [The platform-selector suffix](#platform-selector-suffix)
 4. [Why two jobs, not one](#why-two-jobs)
 5. [What you get afterward](#what-you-get-afterward)
-6. [Cookbook](#cookbook)
-7. [Repo-side prerequisites](#prerequisites)
-8. [Current known limitations](#known-limitations)
+6. [Release notes and checksums](#release-notes-and-checksums)
+7. [Cookbook](#cookbook)
+8. [Repo-side prerequisites](#prerequisites)
+9. [Current known limitations](#known-limitations)
 
 <a id="two-ways-a-build-starts"></a>
 ## The two ways a build starts
@@ -100,7 +101,9 @@ a separate tool or config file.
 ## Why two jobs, not one
 
 The workflow is split into a `plan` job and a `build` job (`needs: plan`),
-rather than one job that does everything:
+rather than one job that does everything. (A third job, `checksums`, runs
+after `build` for a related but separate reason — see [Release notes and
+checksums](#release-notes-and-checksums).)
 
 - **`plan`** runs on a plain Ubuntu runner with no Node/Python setup at all —
   it just checks out the repo, decides the tag and whether to release,
@@ -137,6 +140,47 @@ If you only bump the version without touching platforms, or explicitly write
 `-wml`, you'll see the standard Windows installer + portable exe (+ its
 blockmap), a macOS `.dmg` for each architecture, and a Linux `.AppImage` — all
 on the one draft release.
+
+<a id="release-notes-and-checksums"></a>
+## Release notes and checksums
+
+The draft release's notes aren't just GitHub's auto-generated commit list —
+the `plan` job assembles them by hand, in this order:
+
+1. **A per-OS download table**, same content as the README's own Download
+   section, so someone who lands on the release page directly (not via the
+   README) still knows which asset is theirs. Only platforms this run
+   actually built get a row.
+2. **This version's own `CHANGELOG.md` section**, under a `## What's new`
+   heading — extracted by matching the `## [<version>]` heading and copying
+   everything up to the next version heading. Looked up by the *clean*
+   version (platform-selector suffix stripped, see above), since a
+   `-w`/`-m`/`-l` re-cut of an existing version doesn't get its own
+   `CHANGELOG.md` entry. Missing on purpose — before `CHANGELOG.md` has an
+   entry for a version, or on a platform-only re-cut — just drops this
+   section rather than failing the release; a `::warning::` in the job log
+   flags it either way.
+3. **GitHub's auto-generated notes** (the PR/commit list `--generate-notes`
+   would have produced on its own) — fetched separately via `gh api
+   .../releases/generate-notes` so it can be appended after the two sections
+   above instead of being the entire body.
+
+Separately, a `checksums` job runs after `build` finishes (`needs: [plan,
+build]`) — one job, not per-platform, so two matrix entries can't race to
+publish their own partial checksums file. It downloads every asset already on
+the release, hashes them with `sha256sum`, and uploads the result as
+`SHA256SUMS`. No fixed list of "required" files — a platform-selector release
+is legitimately missing some assets on purpose, and the checksums file just
+reflects whatever's actually there.
+
+A tag pushed directly (not created by this workflow off `master`) also gets
+verified before anything else happens: the `plan` job's "Verify tag matches
+package.json and points at master" step confirms the tag's (clean) version
+matches `package.json`'s `"version"`, and that the tagged commit is reachable
+from `origin/master` — catching a stray or mistagged release before it builds
+anything. Skipped on the ordinary branch-push path, since that tag is built
+from `package.json` itself, on the same commit this job is already running
+on.
 
 <a id="cookbook"></a>
 ## Cookbook
