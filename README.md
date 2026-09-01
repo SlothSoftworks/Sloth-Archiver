@@ -285,5 +285,8 @@ Hopefully this doesn't happen often, but in these scenarios you can either add y
 #### How do I report a bug or request a feature?
 Raise an issue, but only if you have the proper evidence and description on how to reproduce it for bugs, or a good description of the feature you'd like to see — otherwise I can't work on it. As I mentioned this is a solo project, so keep in mind I can only work on this in my free time.
 
+#### What features are still in development?
+Check the [Roadmap](ROADMAP.md) for a running list of what's currently being worked on or explored.
+
 ### Do you accept contributions?
 At this moment in time I don't but once I prepare a proper contribution guide and a pipeline and if an actual community forms for this app I might.
