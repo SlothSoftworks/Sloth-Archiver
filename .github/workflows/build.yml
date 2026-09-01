@@ -13,12 +13,6 @@ name: Build
 #     build+release path, for cutting/re-cutting a release without going
 #     through a merge:
 #       git tag v0.25.0 && git push origin v0.25.0
-#
-# Platform-selector version suffix: append -w/-m/-l (any combination) to
-# the version to build only specific platforms, e.g. "0.25.1-w" builds
-# Windows only, "0.25.1-wl" builds Windows+Linux. No suffix (the normal
-# case) builds everything. Meant for a platform-specific fix that doesn't
-# need every OS rebuilt -- see the "plan" job's own step for the parsing.
 on:
   push:
     branches:
@@ -54,21 +48,18 @@ permissions:
 jobs:
   # Cheap, Node/Python-free, runs on Linux regardless of what's actually
   # being built -- figures out whether this run should build anything at
-  # all, and if so, which platforms and under which tag, before any real
-  # (expensive) work starts. Also owns creating the tag and the draft
-  # release itself exactly once, so the build job's per-platform runs never
-  # race each other trying to create the same release object (the failure
-  # mode a single-job version of this workflow hit earlier: two nearly
-  # simultaneous "does this release exist yet" checks both saying no).
+  # all, and under which tag, before any real (expensive) work starts. Also
+  # owns creating the tag and the draft release itself exactly once, so the
+  # build job's per-platform runs never race each other trying to create
+  # the same release object (the failure mode a single-job version of this
+  # workflow hit earlier: two nearly simultaneous "does this release exist
+  # yet" checks both saying no).
   plan:
     runs-on: ubuntu-latest
     outputs:
       should_release: ${{ steps.plan.outputs.should_release }}
       tag: ${{ steps.plan.outputs.tag }}
       version: ${{ steps.plan.outputs.version }}
-      build_windows: ${{ steps.plan.outputs.build_windows }}
-      build_mac: ${{ steps.plan.outputs.build_mac }}
-      build_linux: ${{ steps.plan.outputs.build_linux }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -103,40 +94,7 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
-
-          # Platform-selector suffix: "v0.25.1-wl" -> "wl". No suffix, or a
-          # suffix that isn't purely w/m/l letters, means build everything
-          # (keeps this additive -- an ordinary "v0.25.1" isn't affected).
-          # VERSION is also stripped of a recognized platform-selector
-          # suffix here (once, as the shared source of truth) since it's a
-          # platform selector, not part of the semantic version -- a
-          # "0.25.1-wl" tag is still a rebuild of 0.25.1, and both the
-          # tag/package.json verification step and the CHANGELOG.md lookup
-          # below need the clean version to match against.
-          VERSION_PART="${TAG#v}"
-          SUFFIX=""
-          VERSION="$VERSION_PART"
-          if [[ "$VERSION_PART" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([a-z]+)$ ]]; then
-            NUMERIC_CANDIDATE="${BASH_REMATCH[1]}"
-            CANDIDATE="${BASH_REMATCH[2]}"
-            if [[ "$CANDIDATE" =~ ^[wml]+$ ]]; then
-              SUFFIX="$CANDIDATE"
-              VERSION="$NUMERIC_CANDIDATE"
-            fi
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if [ -z "$SUFFIX" ]; then
-            BUILD_WINDOWS=true; BUILD_MAC=true; BUILD_LINUX=true
-          else
-            BUILD_WINDOWS=false; BUILD_MAC=false; BUILD_LINUX=false
-            [[ "$SUFFIX" == *w* ]] && BUILD_WINDOWS=true
-            [[ "$SUFFIX" == *m* ]] && BUILD_MAC=true
-            [[ "$SUFFIX" == *l* ]] && BUILD_LINUX=true
-          fi
-          echo "build_windows=$BUILD_WINDOWS" >> "$GITHUB_OUTPUT"
-          echo "build_mac=$BUILD_MAC" >> "$GITHUB_OUTPUT"
-          echo "build_linux=$BUILD_LINUX" >> "$GITHUB_OUTPUT"
-          echo "Platform selection for $TAG -- windows:$BUILD_WINDOWS mac:$BUILD_MAC linux:$BUILD_LINUX"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       # Guards against a mistagged or stray release: a directly pushed tag
       # (unlike one this workflow creates itself off master -- see "Tag
@@ -172,10 +130,10 @@ jobs:
       # Deletes any existing release for this exact tag before creating a
       # fresh one, same reasoning as the old single-job workflow: makes
       # this idempotent regardless of what a prior interrupted run left
-      # behind. Created empty (no assets) here -- each selected platform in
-      # the build job below uploads its own assets afterward with `gh
-      # release upload`, not `create`, so they can't race each other the
-      # way multiple parallel `create` calls would.
+      # behind. Created empty (no assets) here -- each platform in the
+      # build job below uploads its own assets afterward with `gh release
+      # upload`, not `create`, so they can't race each other the way
+      # multiple parallel `create` calls would.
       #
       # The release notes are hand-assembled instead of using
       # `--generate-notes` on its own, so that anyone landing on the
@@ -184,9 +142,7 @@ jobs:
       # section. Asset filenames are computed here rather than read back
       # from the (not-yet-uploaded) assets themselves -- GitHub sanitizes
       # spaces in uploaded filenames to dots, and that rule is applied by
-      # hand below to match. Only platforms this run actually builds (per
-      # the plan job's platform-selector outputs) get a row, so a partial
-      # release never links to an asset that doesn't exist.
+      # hand below to match.
       - name: Create draft release
         if: steps.plan.outputs.should_release == 'true'
         shell: bash
@@ -203,18 +159,15 @@ jobs:
           # multi-line string) so no accidental leading whitespace ends up
           # in the markdown -- 4+ leading spaces on a line would make
           # GitHub render it as a code block instead of a table row.
-          ROWS=("| Platform | Link |" "|---|---|")
-          if [ "${{ steps.plan.outputs.build_windows }}" = "true" ]; then
-            ROWS+=("| Windows (installer) | [Download]($BASE_URL/SlothArchiver.Setup.$VERSION.exe) |")
-            ROWS+=("| Windows (portable, no install) | [Download]($BASE_URL/SlothArchiver.$VERSION.exe) |")
-          fi
-          if [ "${{ steps.plan.outputs.build_mac }}" = "true" ]; then
-            ROWS+=("| macOS (Apple Silicon) | [Download]($BASE_URL/SlothArchiver-$VERSION-arm64.dmg) |")
-            ROWS+=("| macOS (Intel) | [Download]($BASE_URL/SlothArchiver-$VERSION.dmg) |")
-          fi
-          if [ "${{ steps.plan.outputs.build_linux }}" = "true" ]; then
-            ROWS+=("| Linux (AppImage) | [Download]($BASE_URL/SlothArchiver-$VERSION.AppImage) |")
-          fi
+          ROWS=(
+            "| Platform | Link |"
+            "|---|---|"
+            "| Windows (installer) | [Download]($BASE_URL/SlothArchiver.Setup.$VERSION.exe) |"
+            "| Windows (portable, no install) | [Download]($BASE_URL/SlothArchiver.$VERSION.exe) |"
+            "| macOS (Apple Silicon) | [Download]($BASE_URL/SlothArchiver-$VERSION-arm64.dmg) |"
+            "| macOS (Intel) | [Download]($BASE_URL/SlothArchiver-$VERSION.dmg) |"
+            "| Linux (AppImage) | [Download]($BASE_URL/SlothArchiver-$VERSION.AppImage) |"
+          )
           ASSET_TABLE=$(printf '%s\n' "${ROWS[@]}")
 
           # Same content `--generate-notes` alone would have produced --
@@ -224,26 +177,22 @@ jobs:
           # return anything, e.g. on a repo's very first release.
           AUTO_NOTES=$(gh api "repos/${{ github.repository }}/releases/generate-notes" -f "tag_name=$TAG" --jq .body 2>/dev/null || echo "")
 
-          # Pulls this release's own section out of CHANGELOG.md (keyed by
-          # the clean, suffix-stripped version -- CHANGELOG.md entries are
-          # per real version, not per platform-selector rebuild) so the
+          # Pulls this release's own section out of CHANGELOG.md so the
           # hand-written "what's actually new" text shows up on the release
           # page itself, not just in the repo. Stops at the next version
           # heading rather than the next "## " of any kind, so a nested
           # subheading inside one release's own entry doesn't truncate it
-          # early. Missing on purpose is expected right after a
-          # platform-only re-cut of an existing version whose CHANGELOG
-          # entry hasn't changed, or before CHANGELOG.md has ever been
-          # updated for a version -- degrades to just the download table +
-          # auto-generated notes rather than failing the release.
-          CLEAN_VERSION="${{ steps.plan.outputs.version }}"
-          MANUAL_NOTES=$(awk -v ver="## [$CLEAN_VERSION]" '
+          # early. Missing on purpose is expected before CHANGELOG.md has
+          # ever been updated for a version -- degrades to just the
+          # download table + auto-generated notes rather than failing the
+          # release.
+          MANUAL_NOTES=$(awk -v ver="## [$VERSION]" '
             index($0, ver) == 1 { capture = 1; next }
             capture && /^## \[/ { capture = 0 }
             capture { print }
           ' CHANGELOG.md 2>/dev/null || echo "")
           if [ -z "$(echo "$MANUAL_NOTES" | tr -d '[:space:]')" ]; then
-            echo "::warning::No CHANGELOG.md section found for $CLEAN_VERSION -- release notes will skip the changelog section."
+            echo "::warning::No CHANGELOG.md section found for $VERSION -- release notes will skip the changelog section."
             MANUAL_NOTES=""
           fi
 
@@ -281,10 +230,8 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            platform: windows
             label: Windows
           - os: macos-latest
-            platform: mac
             label: macOS (Apple Silicon)
           # macos-13 was fully retired by GitHub on 2025-12-04 -- a job
           # requesting it never fails outright, it just sits unschedulable
@@ -292,34 +239,15 @@ jobs:
           # be). macos-15-intel is GitHub's current dedicated label for an
           # Intel-architecture runner.
           - os: macos-15-intel
-            platform: mac
             label: macOS (Intel)
           - os: ubuntu-latest
-            platform: linux
             label: Linux
     runs-on: ${{ matrix.os }}
     name: build (${{ matrix.label }})
     steps:
-      # Deliberately the very first step, before checkout -- an unselected
-      # platform (per the plan job's platform-selector parsing) exits here
-      # almost instantly rather than paying for a checkout it won't use.
-      - name: Check platform selected
-        id: selected
-        shell: bash
-        run: |
-          case "${{ matrix.platform }}" in
-            windows) SEL="${{ needs.plan.outputs.build_windows }}" ;;
-            mac) SEL="${{ needs.plan.outputs.build_mac }}" ;;
-            linux) SEL="${{ needs.plan.outputs.build_linux }}" ;;
-          esac
-          echo "selected=$SEL" >> "$GITHUB_OUTPUT"
-          echo "${{ matrix.label }} selected for this release: $SEL"
-
       - uses: actions/checkout@v4
-        if: steps.selected.outputs.selected == 'true'
 
       - uses: actions/setup-node@v4
-        if: steps.selected.outputs.selected == 'true'
         with:
           node-version: 24
           cache: npm
@@ -328,14 +256,12 @@ jobs:
       # local venv + PyInstaller -- needs a real Python on PATH on every
       # platform, not just whatever the runner image happens to ship.
       - uses: actions/setup-python@v5
-        if: steps.selected.outputs.selected == 'true'
         with:
           python-version: '3.11'
           cache: pip
           cache-dependency-path: src/python/requirements-build.txt
 
       - run: npm ci
-        if: steps.selected.outputs.selected == 'true'
 
       # Build only -- no network/GitHub calls happen during this step, it's
       # purely local packaging. Deliberately NOT electron-builder's own
@@ -346,7 +272,6 @@ jobs:
       # done explicitly below instead, as plain `gh` calls this workflow
       # fully controls.
       - name: Build
-        if: steps.selected.outputs.selected == 'true'
         run: npm run dist
 
       # Uploads whatever this platform actually produced -- Windows makes
@@ -358,7 +283,6 @@ jobs:
       # unmatched glob expands to its own literal, unquoted, string, which
       # -e correctly treats as "not a real file").
       - name: Upload release assets
-        if: steps.selected.outputs.selected == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -373,13 +297,10 @@ jobs:
           fi
           gh release upload "${{ needs.plan.outputs.tag }}" "${ASSETS[@]}" --repo "${{ github.repository }}" --clobber
 
-  # Runs once, after every selected platform has uploaded its own installer
-  # assets, rather than per-platform -- otherwise two matrix entries could
-  # both try to publish their own partial SHA256SUMS at the same time (the
-  # same kind of race the two-job split above exists to avoid for release
-  # creation). Whatever's actually on the release at this point gets hashed
-  # -- deliberately no fixed required-file list, since a platform-selector
-  # release is legitimately missing some assets on purpose.
+  # Runs once, after every platform has uploaded its own installer assets,
+  # rather than per-platform -- otherwise two matrix entries could both try
+  # to publish their own partial SHA256SUMS at the same time (the same kind
+  # of race the two-job split above exists to avoid for release creation).
   checksums:
     needs: [plan, build]
     if: needs.plan.outputs.should_release == 'true'
