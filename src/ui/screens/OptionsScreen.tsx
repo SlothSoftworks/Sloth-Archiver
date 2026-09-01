@@ -13,6 +13,7 @@ import {
   DialogTitle,
   Grid,
   IconButton,
+  Link,
   MenuItem,
   Stack,
   TextField,
@@ -465,9 +466,24 @@ export default function OptionsScreen() {
           <Grid size={{ xs: 12, sm: 6 }} sx={dividerTop}>
             <Typography variant="h6" gutterBottom>Personal Cookie</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Loading a personal YouTube cookie lets requests authenticate as you, which can help avoid
-              "Sign in to confirm you're not a bot" errors.
+              Most downloads don't need this. It's only necessary for age-restricted videos,
+              members-only content, or once YouTube starts throwing a "Sign in to confirm
+              you're not a bot" error at you.
             </Typography>
+            <Alert severity="warning" variant="outlined" sx={{ mb: 2 }}>
+              This authenticates as your real account, so using it at a high volume can get that
+              account flagged or suspended -- this applies whether you paste a cookie or pull
+              live from a browser below. Use it in moderation, and consider a throwaway account's
+              cookies instead of your main one if you expect to be downloading a lot. This matches
+              {' '}
+              <Link
+                target="_blank"
+                rel="noopener noreferrer"
+                href="https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies"
+              >
+                yt-dlp's own recommended cookie usage
+              </Link>.
+            </Alert>
             <ToggleButtonGroup
               value={cookiesMode}
               exclusive

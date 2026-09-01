@@ -1,6 +1,7 @@
 # SlothArchiver
 
 [![Latest Release](https://img.shields.io/github/v/release/lltrash94/Sloth-Archiver)](https://github.com/lltrash94/Sloth-Archiver/releases/latest)
+[![CI](https://github.com/lltrash94/Sloth-Archiver/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/lltrash94/Sloth-Archiver/actions/workflows/ci.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational)](#download)
 
@@ -259,7 +260,9 @@ For downloads: the system will let you pick where to download the file when you 
 No, it can work without a YouTube account, however keep in mind you might be locked out of downloading certain videos (i.e. age-restricted ones) when downloading, or you could get locked out by YouTube if it detects you're downloading too many videos.
 
 #### Why would I need to load cookies / sign in?
-Cookies might be needed so your downloads can be done in case YouTube were to flag you for downloading or you're trying to download an age restricted video. How it works is that it would usually flag your IP and lock you out of accessing their data — if this happens, only having a cookie will let you continue fetching data from them. In that scenario is when you might need to load the cookies, and that's why the feature exists on this app and yt-dlp.
+For most scenarios you won't need to add cookies, it would only be mandatory for scenarios like age restricted videos or members-only content. [According to yt-dlp](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies) exporting cookies to download at a high rate can result in suspension or bans to your account and they encourage using the feature in moderation or make use of throwaway accounts. 
+From our side at SlothArchiver we try offer the best resilience for download retries and recovery to make the user experience better and you don't need to use Cookies for most scenarios.
+
 
 #### What video quality can I download?
 For YouTube and Dailymotion, all of the video qualities that yt-dlp supports will be displayed for download, personally tested up to 4320p aka 8k resolution. Of course it depends on the source video.
