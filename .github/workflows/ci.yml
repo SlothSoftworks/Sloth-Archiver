@@ -1,0 +1,48 @@
+name: CI
+
+# Pull-request-only on purpose -- this validates a change before it merges,
+# it doesn't need to re-run every time master itself moves (build.yml
+# already handles the real build+release path for that). Keeping this off
+# `push` entirely means a chain of small commits pushed straight to a PR
+# branch doesn't burn CI minutes beyond what each PR's own runs already
+# cost -- the default `pull_request` types (opened, synchronize, reopened)
+# are exactly "new or updated PR", nothing broader.
+#
+# No relation to build.yml's release pipeline: this never packages, tags,
+# or touches GitHub Releases -- lint + test only, so a contributor gets a
+# fast pass/fail on the code itself without waiting on (or paying for) a
+# real multi-platform installer build.
+on:
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+
+# A new push to the same PR supersedes whatever CI run was still going for
+# its previous commits -- no reason to keep validating code that's already
+# been replaced.
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm test

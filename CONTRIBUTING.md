@@ -64,9 +64,11 @@ commits stay fast:
   every push.
 
 Skip either for a deliberate WIP commit/push with `git commit --no-verify` /
-`git push --no-verify`. Neither currently runs in CI on every push, though —
-see `docs/RELEASING.md` for what the CI workflow actually does and doesn't
-enforce today.
+`git push --no-verify` — the Husky hooks are a local convenience, not the
+enforcement layer. Both also run in CI, in `.github/workflows/ci.yml`, on
+every pull request targeting `master` (not on every push — see that file's
+own comments for why). See `docs/RELEASING.md` for what the separate
+release-build workflow does and doesn't cover.
 
 ## What the build scripts do
 

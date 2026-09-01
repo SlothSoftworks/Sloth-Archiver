@@ -7,7 +7,10 @@ happen, not for an end user.
 
 The mechanism itself lives in `.github/workflows/build.yml`; this document is
 the narrative explanation of what that file does and why, kept separate so the
-workflow file itself doesn't have to carry a full essay in its comments.
+workflow file itself doesn't have to carry a full essay in its comments. Pull
+request validation (lint + tests, no packaging) is a separate, much lighter
+workflow, `.github/workflows/ci.yml` — see `CONTRIBUTING.md` for that one;
+this document is about the release path specifically.
 
 ## Index
 
@@ -177,8 +180,12 @@ Not currently supported as a separate path — the workflow either releases
   a full build on every merge (without publishing) specifically to catch
   build breakage immediately. That was deliberately removed to guarantee a
   no-version-bump merge costs nothing — the tradeoff is that a merge which
-  breaks the build silently doesn't get caught until the next real version
-  bump tries to release.
+  breaks the *packaging* build (electron-builder, the PyInstaller freeze,
+  etc.) silently doesn't get caught until the next real version bump tries
+  to release. `.github/workflows/ci.yml` covers a different, cheaper gap —
+  lint + the Vitest suite on every pull request — which catches broken code
+  well before merge, but it never runs `npm run dist`, so a packaging-only
+  failure can still slip through.
 - **Portable Windows build is slow to start** — NSIS's portable target
   re-extracts the entire app on every launch, not just once at install time.
   Not a priority today.
