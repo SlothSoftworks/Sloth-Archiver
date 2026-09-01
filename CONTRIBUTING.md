@@ -54,8 +54,18 @@ npm run test:coverage # with coverage
 npm run lint          # ESLint across the whole repo
 ```
 
-Neither currently runs automatically in CI on every push — see
-`docs/RELEASING.md` for what the CI workflow actually does and doesn't
+Both run locally via Husky hooks, installed automatically by `npm ci`/`npm
+install`'s `prepare` script — split across commit and push so day-to-day
+commits stay fast:
+
+- **`.husky/pre-commit`** runs `npm run lint` (a few seconds) before every
+  commit.
+- **`.husky/pre-push`** runs the full `npm test` suite (~15-20s) before
+  every push.
+
+Skip either for a deliberate WIP commit/push with `git commit --no-verify` /
+`git push --no-verify`. Neither currently runs in CI on every push, though —
+see `docs/RELEASING.md` for what the CI workflow actually does and doesn't
 enforce today.
 
 ## What the build scripts do
@@ -76,6 +86,7 @@ The full dependency chain, from `package.json`'s `scripts`:
 | `build:all:deep` | `clean:venv` first, then `build:all` — a genuinely from-scratch build. This is what CI/`dist` uses; you shouldn't normally need it locally unless something in the venv is stuck. |
 | `electron-build` | Runs `electron-builder` (packages `dist/` into a real installer for your current OS) without publishing anywhere. |
 | `dist` | `build:all:deep` + `electron-build` — produces an actual installer in `dist/`, the same thing a release build does. See `docs/RELEASING.md` for how that connects to an actual GitHub release. |
+| `prepare` | Runs `husky` to install the pre-commit hook. `npm` runs this automatically after `npm install`/`npm ci` — you shouldn't need to run it yourself. |
 
 If you only need to run the app locally, `build:all` is what you want — the
 heavier `build:all:deep`/`dist` scripts exist for producing a real

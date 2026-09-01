@@ -1,7 +1,7 @@
 {
   "name": "sloth-archiver",
   "private": true,
-  "version": "0.25.5",
+  "version": "0.25.6",
   "description": "A desktop app for downloading and archiving videos, with a built-in library and playlist tracking.",
   "author": "Sloth <sloth.software.dev@protonmail.com>",
   "license": "GPL-3.0-or-later",
@@ -48,7 +48,10 @@
       "identity": null
     },
     "win": {
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
     "linux": {
       "target": "AppImage",
@@ -75,7 +78,8 @@
     "build:all:deep": "npm run clean:venv && npm run build:all",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "prepare": "husky"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -106,6 +110,7 @@
     "ffmpeg-static": "^5.3.0",
     "ffprobe-static": "^3.1.0",
     "globals": "^17.9.0",
+    "husky": "^9.1.7",
     "jsdom": "^30.0.1",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.30.1",
