@@ -4,6 +4,11 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [0.25.6] - 2026-08-31
+TEST BUILD :/
+- item1
+- item 2
+
 ## [0.25.3] — 2026-08-31
 
 First documented release. Feature set at this point:
