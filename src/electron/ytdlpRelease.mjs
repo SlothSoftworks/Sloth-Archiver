@@ -453,18 +453,6 @@ export async function fetchAndVerifyRelease({ release, assetName, workDir, publi
     onLog?.(`[ytdlp-release] downloading ${assetName} (${release.tag})`);
     await downloadFile(assetDownloadUrl(release.tag, assetName), assetPath);
 
-    // TEMPORARY manual test hook -- flips one byte of the just-downloaded
-    // asset so the checksum step below is exercised against real tampered
-    // data, proving the fail-closed path actually rejects and refuses to
-    // install rather than just being untested code. Inert unless the env var
-    // is set. Revert this block once the manual test is done.
-    if (process.env.SLOTH_DEBUG_TAMPER_YTDLP) {
-        const tampered = fs.readFileSync(assetPath);
-        tampered[0] ^= 0xff;
-        fs.writeFileSync(assetPath, tampered);
-        onLog?.('[ytdlp-release] TEST: tampered with downloaded asset on purpose');
-    }
-
     onLog?.('[ytdlp-release] downloading SHA2-256SUMS and SHA2-256SUMS.sig');
     const [sumsText, sigBase64OrBinary] = await Promise.all([
         downloadText(assetDownloadUrl(release.tag, 'SHA2-256SUMS')),
