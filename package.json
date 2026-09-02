@@ -1,7 +1,7 @@
 {
   "name": "sloth-archiver",
   "private": true,
-  "version": "0.25.6",
+  "version": "0.26.0",
   "description": "A desktop app for downloading and archiving videos, with a built-in library and playlist tracking.",
   "author": "Sloth <sloth.software.dev@protonmail.com>",
   "license": "GPL-3.0-or-later",
@@ -70,7 +70,7 @@
     "dist": "npm run build:all:deep && npm run electron-build",
     "build:renderer": "vite build",
     "build:copy:electron": "node scripts/copy-electron.mjs",
-    "build:ytdlp:bin": "node scripts/build-ytdlp-bin.mjs",
+    "build:ytdlp:bin": "node scripts/fetch-ytdlp-bin.mjs",
     "build:copy:ffmpeg": "node scripts/copy-ffmpeg.mjs",
     "build:electron": "npm run build:copy:electron && npm run build:ytdlp:bin && npm run build:copy:ffmpeg",
     "build:all": "npm run build:renderer && npm run build:electron",

@@ -252,25 +252,19 @@ jobs:
           node-version: 24
           cache: npm
 
-      # build-ytdlp-bin.mjs freezes yt-dlp into a standalone binary via a
-      # local venv + PyInstaller -- needs a real Python on PATH on every
-      # platform, not just whatever the runner image happens to ship.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
-          cache-dependency-path: src/python/requirements-build.txt
-
       - run: npm ci
 
-      # Build only -- no network/GitHub calls happen during this step, it's
-      # purely local packaging. Deliberately NOT electron-builder's own
-      # `--publish` flow: its GitHub publisher has its own internal retry
-      # behavior around creating/uploading, and a retry there (e.g. after a
-      # transient network hiccup) has been the suspected cause of a single
-      # run ending up with duplicate release state before. Publishing is
-      # done explicitly below instead, as plain `gh` calls this workflow
-      # fully controls.
+      # Build only -- this step no longer publishes anything itself. It does
+      # make one read-only network call now (build:ytdlp:bin fetches and
+      # GPG-verifies yt-dlp's own signed release asset from GitHub, see
+      # scripts/fetch-ytdlp-bin.mjs), but that's an idempotent GET against an
+      # already-published release, unrelated to the actual risk this
+      # separation guards against: electron-builder's own `--publish` flow
+      # has internal retry behavior around *creating/uploading* a release,
+      # and a retry there (e.g. after a transient network hiccup) has been
+      # the suspected cause of a single run ending up with duplicate release
+      # state before. Publishing is done explicitly below instead, as plain
+      # `gh` calls this workflow fully controls.
       - name: Build
         run: npm run dist
 

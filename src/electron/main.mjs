@@ -8,7 +8,8 @@ import http from 'node:http';
 import os from 'node:os';
 
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
-import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
+import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
+import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
 import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
@@ -65,7 +66,6 @@ const ffprobeBinaryPath = path.join(ffmpegDir, ffprobeBinaryName);
 // on in both dev and packaged builds.
 const bundledYtdlpBinDir = isDev ? path.resolve(__dirname, '../ytdlp-bin') : path.join(process.resourcesPath, 'ytdlp-bin');
 const userDataYtdlpBinDir = path.join(app.getPath('userData'), 'ytdlp-bin');
-const pythonSrcDir = isDev ? path.resolve(__dirname, '../../src/python') : path.join(process.resourcesPath, 'python-src');
 
 function ensureYtdlpBinInUserData() {
     if (!fs.existsSync(userDataYtdlpBinDir)) {
@@ -1816,19 +1816,27 @@ ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thu
 });
 
 ipcMain.handle('ytdlp:checkForUpdate', async () => {
-    const [latest, current] = await Promise.all([
-        getLatestYtdlpVersionFromPyPI(),
+    // GitHub Releases -- the same source performYtdlpUpdate actually fetches
+    // and verifies the binary from below -- rather than PyPI, which was only
+    // ever a proxy for "what version is latest" and could in principle
+    // disagree with the real update source.
+    const [release, current] = await Promise.all([
+        resolveLatestRelease(),
         getCurrentYtdlpVersion(ytdlpPath),
     ]);
-    return { current, latest, updateAvailable: isNewerVersion(latest, current) };
+    return { current, latest: release.tag, updateAvailable: isNewerVersion(release.tag, current) };
 });
 
 ipcMain.handle('ytdlp:startUpdate', async () => {
-    const send = (stage) => BrowserWindow.getAllWindows()[0]?.webContents.send('ytdlpUpdateProgress', { stage });
+    // The second arg rides along on the same 'ytdlpUpdateProgress' broadcast
+    // channel as `stage` -- unlike a thrown Error's own properties (e.g.
+    // err.code below), which don't survive the trip from ipcMain.handle's
+    // throw to ipcRenderer.invoke's rejection, this is a plain
+    // structured-cloned object and arrives at the renderer intact.
+    const send = (stage, extra) => BrowserWindow.getAllWindows()[0]?.webContents.send('ytdlpUpdateProgress', { stage, ...extra });
     try {
         const result = await performYtdlpUpdate({
             userDataDir: app.getPath('userData'),
-            pythonSrcDir,
             liveYtdlpBinDir: userDataYtdlpBinDir,
             ytdlpBinaryName,
             isDownloadActive: () => activeDownloadCount > 0,
@@ -1839,7 +1847,7 @@ ipcMain.handle('ytdlp:startUpdate', async () => {
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         log('[ytdlp-update] update failed:', message);
-        send('error');
+        send('error', { verificationFailure: err?.code === YTDLP_VERIFICATION_ERROR_CODE });
         throw err instanceof Error ? err : new Error(message);
     }
 });

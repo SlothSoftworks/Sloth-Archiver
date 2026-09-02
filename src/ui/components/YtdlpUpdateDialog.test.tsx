@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import YtdlpUpdateDialog from './YtdlpUpdateDialog';
 import { YtdlpUpdaterProvider } from '../hooks/useYtdlpUpdater';
 
-let registeredCallback: ((data: { stage: string }) => void) | null = null;
+let registeredCallback: ((data: { stage: string; verificationFailure?: boolean }) => void) | null = null;
 
 beforeEach(() => {
   registeredCallback = null;
@@ -69,8 +69,8 @@ describe('YtdlpUpdateDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Update' }));
     await waitFor(() => expect(screen.queryByText('yt-dlp update available')).not.toBeInTheDocument());
 
-    act(() => registeredCallback?.({ stage: 'building' }));
-    await waitFor(() => expect(screen.getByText('Building (this can take a minute)...')).toBeInTheDocument());
+    act(() => registeredCallback?.({ stage: 'installing' }));
+    await waitFor(() => expect(screen.getByText('Installing...')).toBeInTheDocument());
   });
 
   it('shows the failure overlay with Retry/Quit when the update fails', async () => {
@@ -101,5 +101,23 @@ describe('YtdlpUpdateDialog', () => {
     // clickable elements that sit inside an aria-hidden ancestor like this.
     expect(screen.getByRole('button', { name: 'Retry', hidden: true })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Quit', hidden: true })).toBeInTheDocument();
+    expect(screen.queryByText(/problem with yt-dlp's own release download/)).not.toBeInTheDocument();
+  });
+
+  it('shows a verification-failure notice when the failure was a checksum/signature mismatch', async () => {
+    const user = userEvent.setup();
+    (window.electronAPI.checkForYtdlpUpdate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      current: '2026.7.4', latest: '2026.7.5', updateAvailable: true,
+    });
+    (window.electronAPI.startYtdlpUpdate as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      registeredCallback?.({ stage: 'error', verificationFailure: true });
+      throw new Error('Checksum mismatch for yt-dlp_macos.zip: expected abc, got def');
+    });
+    renderDialog();
+    await waitFor(() => expect(screen.getByText('yt-dlp update available')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+    await waitFor(() => expect(screen.getByText('Update failed')).toBeInTheDocument());
+    expect(screen.getByText(/problem with yt-dlp's own release download, not with this app/)).toBeInTheDocument();
   });
 });

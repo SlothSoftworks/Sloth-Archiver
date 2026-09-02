@@ -23,7 +23,7 @@ import {
   Typography,
 } from '@mui/material';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import { useYtdlpUpdater, type YtdlpUpdateStage } from '../hooks/useYtdlpUpdater';
+import { useYtdlpUpdater, IN_PROGRESS_STAGES } from '../hooks/useYtdlpUpdater';
 import { useThemeMode } from '../hooks/useThemeMode.tsx';
 import { POPULAR_CONVERT_FORMATS, SUGGESTED_EXTRA_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { MAX_SIMULTANEOUS_DOWNLOADS_CEILING } from '../../utils/constants.ts';
@@ -50,15 +50,6 @@ const COOKIE_BROWSER_LABELS: Record<string, string> = {
 // (utils/constants.ts); main.mjs keeps its own copy of the same number,
 // since main-process and renderer never cross-import in this codebase.
 const MAX_SIMULTANEOUS_DOWNLOADS_OPTIONS = Array.from({ length: MAX_SIMULTANEOUS_DOWNLOADS_CEILING }, (_, i) => i + 1);
-
-const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
-  'checking',
-  'fetching-python-runtime',
-  'installing-pyinstaller',
-  'fetching-yt-dlp',
-  'building',
-  'verifying',
-]);
 
 // Divider styles for the 2-column option grids below -- a real border keeps
 // each item visually distinct instead of relying on spacing alone. An item

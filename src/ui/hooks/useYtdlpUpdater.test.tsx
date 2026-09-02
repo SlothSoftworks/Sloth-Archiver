@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { YtdlpUpdaterProvider, useYtdlpUpdater, type YtdlpUpdateStage } from './useYtdlpUpdater';
 
-let registeredCallback: ((data: { stage: YtdlpUpdateStage }) => void) | null = null;
+let registeredCallback: ((data: { stage: YtdlpUpdateStage; verificationFailure?: boolean }) => void) | null = null;
 
 beforeEach(() => {
   registeredCallback = null;
@@ -28,9 +28,26 @@ describe('useYtdlpUpdater', () => {
 
   it('updates stage (and its label) when the main process reports progress', () => {
     const { result } = renderUpdater();
-    act(() => registeredCallback?.({ stage: 'building' }));
-    expect(result.current.stage).toBe('building');
-    expect(result.current.stageLabel).toBe('Building (this can take a minute)...');
+    act(() => registeredCallback?.({ stage: 'installing' }));
+    expect(result.current.stage).toBe('installing');
+    expect(result.current.stageLabel).toBe('Installing...');
+  });
+
+  it('sets verificationFailure from an error-stage broadcast that carries it, and clears it on the next startUpdate', async () => {
+    (window.electronAPI.startYtdlpUpdate as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true, version: '2026.7.5' });
+    const { result } = renderUpdater();
+
+    act(() => registeredCallback?.({ stage: 'error', verificationFailure: true }));
+    expect(result.current.verificationFailure).toBe(true);
+
+    await act(async () => { await result.current.startUpdate(); });
+    expect(result.current.verificationFailure).toBe(false);
+  });
+
+  it('does not set verificationFailure for an error-stage broadcast that omits it', () => {
+    const { result } = renderUpdater();
+    act(() => registeredCallback?.({ stage: 'error' }));
+    expect(result.current.verificationFailure).toBe(false);
   });
 
   it('checkForUpdate populates version info and toggles checking', async () => {

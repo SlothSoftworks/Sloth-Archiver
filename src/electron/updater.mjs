@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import https from 'https';
 import { spawn } from 'child_process';
+import { resolveLatestRelease, mapPlatformToAssetName, detectMusl, fetchAndVerifyRelease } from './ytdlpRelease.mjs';
 
 // Every command below talks to the network (PyPI, GitHub); a stalled
 // connection (a dropped packet with no RST, a proxy/AV product holding the
@@ -339,13 +340,22 @@ async function verifyAndSwap({ builtDir, liveDir, binaryName, onLog }) {
     return verify.stdout.trim();
 }
 
+// This Python/PyInstaller update path is retired -- no longer called by
+// main.mjs's ytdlp:startUpdate handler, which now calls performYtdlpUpdate
+// (below, the former performYtdlpUpdateViaGitHub) instead. Kept here, fully
+// intact and still independently testable, only until one full shipped
+// release cycle has run on the new path with no reported issues -- at which
+// point this, ensurePythonRuntime, ensurePyinstaller, rebuildYtdlp,
+// findPythonRuntimeAsset, pythonExePath, and the other Python-era helpers
+// above all get deleted together.
+//
 // onLog is optional (main.mjs passes its own log() -> userData/main.log,
 // already viewable via Options -> "Open error log") -- every step below logs
 // the command it's about to run and how it ended (including a timeout, see
 // run()/probe()/fetchJson()/downloadFile() above), so a stuck or failed
 // update actually leaves a trail instead of nothing -- an installed app has
 // no console to watch otherwise.
-export async function performYtdlpUpdate({ userDataDir, pythonSrcDir, liveYtdlpBinDir, ytdlpBinaryName, isDownloadActive, onProgress, onLog }) {
+export async function performYtdlpUpdateLegacy({ userDataDir, pythonSrcDir, liveYtdlpBinDir, ytdlpBinaryName, isDownloadActive, onProgress, onLog }) {
     if (isDownloadActive && isDownloadActive()) {
         throw new Error('A download is currently in progress. Finish it before applying a yt-dlp update.');
     }
@@ -366,6 +376,48 @@ export async function performYtdlpUpdate({ userDataDir, pythonSrcDir, liveYtdlpB
     const newVersion = await verifyAndSwap({ builtDir, liveDir: liveYtdlpBinDir, binaryName: ytdlpBinaryName, onLog });
 
     fs.rmSync(stagingWorkDir, { recursive: true, force: true });
+    onProgress?.('done');
+    onLog?.(`[ytdlp-update] update complete -> ${newVersion}`);
+    return { version: newVersion };
+}
+
+// Replacement for performYtdlpUpdateLegacy above: fetches and GPG-verifies
+// yt-dlp's own official release binary (see ytdlpRelease.mjs) instead of
+// rebuilding it locally from unpinned pip installs. This is what main.mjs's
+// ytdlp:startUpdate handler actually calls now.
+//
+// isDownloadActive/onProgress/onLog carry the exact same meaning as
+// performYtdlpUpdateLegacy's own -- a download in progress still blocks
+// starting an update (and still aborts one already in flight if a download
+// starts mid-way), and progress/log callbacks still exist so the renderer's
+// overlay and userData/main.log stay informative. verifyAndSwap is reused
+// completely unchanged: it was always generic over "a directory containing
+// a working binary," regardless of how that directory was produced.
+export async function performYtdlpUpdate({ userDataDir, liveYtdlpBinDir, ytdlpBinaryName, isDownloadActive, onProgress, onLog }) {
+    if (isDownloadActive && isDownloadActive()) {
+        throw new Error('A download is currently in progress. Finish it before applying a yt-dlp update.');
+    }
+
+    onProgress?.('checking');
+    onLog?.('[ytdlp-update] starting update (GitHub release)');
+    const workDir = path.join(userDataDir, 'ytdlp-update-work');
+
+    const release = await resolveLatestRelease();
+    const assetName = mapPlatformToAssetName({ isMusl: detectMusl() });
+    onLog?.(`[ytdlp-update] resolved latest release ${release.tag}, asset ${assetName}`);
+
+    // fetchAndVerifyRelease itself emits 'fetching' -> 'verifying' ->
+    // 'installing' as it downloads, checksum/signature-verifies, and
+    // unzips -- no separate onProgress calls needed for that part here.
+    const extractedDir = await fetchAndVerifyRelease({ release, assetName, workDir, onProgress, onLog });
+
+    if (isDownloadActive && isDownloadActive()) {
+        throw new Error('A download started while the update was downloading. Finish it, then try applying the update again.');
+    }
+
+    const newVersion = await verifyAndSwap({ builtDir: extractedDir, liveDir: liveYtdlpBinDir, binaryName: ytdlpBinaryName, onLog });
+
+    fs.rmSync(workDir, { recursive: true, force: true });
     onProgress?.('done');
     onLog?.(`[ytdlp-update] update complete -> ${newVersion}`);
     return { version: newVersion };
