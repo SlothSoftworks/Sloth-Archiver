@@ -68,8 +68,9 @@ function useYtdlpUpdaterState() {
     try {
       const result = await window.electronAPI.checkForYtdlpUpdate();
       setCurrentVersion(result.current);
-      setLatestVersion(result.latest);
+      setLatestVersion(result.latest ?? '');
       setUpdateAvailable(result.updateAvailable);
+      setCheckError(result.latest === null ? 'Could not check for the latest version.' : null);
       return result;
     } catch (err) {
       setCheckError(err instanceof Error ? err.message : 'Failed to check for updates.');

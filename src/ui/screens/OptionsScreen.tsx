@@ -444,8 +444,8 @@ export default function OptionsScreen() {
               </Tooltip>
             </Stack>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              yt-dlp needs to change whenever YouTube does. Updating rebuilds it locally on this
-              machine, which can take a minute or two the first time.
+              yt-dlp needs to change whenever YouTube does. Updating downloads and verifies
+              yt-dlp's own signed release build -- this only takes a few seconds.
             </Typography>
             <Dialog open={ytdlpInfoOpen} onClose={() => setYtdlpInfoOpen(false)} maxWidth="xs" fullWidth>
               <DialogTitle>What is yt-dlp?</DialogTitle>
@@ -479,11 +479,11 @@ export default function OptionsScreen() {
                 label={currentVersion ? `Current: ${currentVersion}` : 'Version unknown'}
                 variant="outlined"
               />
-              {!checking && !updateAvailable && !!currentVersion &&
+              {!checking && !updateAvailable && !!currentVersion && !!latestVersion &&
                 <Chip label="Up to date" color="success" variant="outlined" />}
+              {!checking && checkError &&
+                <Chip label={checkError} color="error" variant="outlined" />}
             </Stack>
-            {checkError &&
-              <Typography variant="body2" color="error" sx={{ mt: 1 }}>{checkError}</Typography>}
           </Grid>
 
           <Grid size={{ xs: 12, sm: 6 }} sx={dividerTop}>

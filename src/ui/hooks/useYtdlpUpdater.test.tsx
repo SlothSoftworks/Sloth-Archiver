@@ -68,6 +68,20 @@ describe('useYtdlpUpdater', () => {
     expect(result.current.checkError).toBeNull();
   });
 
+  it('checkForUpdate still shows the current version and surfaces an error when the latest release could not be resolved (e.g. offline)', async () => {
+    (window.electronAPI.checkForYtdlpUpdate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      current: '2026.7.4', latest: null, updateAvailable: false,
+    });
+    const { result } = renderUpdater();
+
+    await act(async () => { await result.current.checkForUpdate(); });
+
+    expect(result.current.currentVersion).toBe('2026.7.4');
+    expect(result.current.latestVersion).toBe('');
+    expect(result.current.updateAvailable).toBe(false);
+    expect(result.current.checkError).toBe('Could not check for the latest version.');
+  });
+
   it('checkForUpdate sets checkError and clears checking on failure', async () => {
     (window.electronAPI.checkForYtdlpUpdate as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network down'));
     const { result } = renderUpdater();

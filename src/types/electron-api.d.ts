@@ -58,7 +58,7 @@ declare global {
             getDownloadDir: () => Promise<{ downloadDir: string }>
             setDownloadDir: (dir: string) => Promise<{ success: boolean; downloadDir: string }>
             checkFileExists: (filePath: string) => Promise<boolean>
-            checkForYtdlpUpdate: () => Promise<{ current: string; latest: string; updateAvailable: boolean }>
+            checkForYtdlpUpdate: () => Promise<{ current: string; latest: string | null; updateAvailable: boolean }>
             startYtdlpUpdate: () => Promise<{ success: boolean; version: string }>
             onYtdlpUpdateProgress: (callback: (data: { stage: string }) => void) => void
             removeYtdlpUpdateProgressListener: () => void

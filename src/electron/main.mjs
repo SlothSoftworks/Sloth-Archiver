@@ -25,7 +25,7 @@ export { looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetsca
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
-    const msg = args.map(String).join(" ");
+    const msg = `${new Date().toISOString()} ${args.map(String).join(" ")}`;
     fs.appendFileSync(logFile, msg + "\n");
     console.log(msg);
 }
@@ -35,10 +35,10 @@ function log(...args) {
 // from the Options tab (see errorLog:* handlers below) instead of silently
 // dying or spamming an invisible console.
 process.on('uncaughtException', (err) => {
-    log('[uncaughtException]', new Date().toISOString(), err && err.stack ? err.stack : String(err));
+    log('[uncaughtException]', err && err.stack ? err.stack : String(err));
 });
 process.on('unhandledRejection', (reason) => {
-    log('[unhandledRejection]', new Date().toISOString(), reason && reason.stack ? reason.stack : String(reason));
+    log('[unhandledRejection]', reason && reason.stack ? reason.stack : String(reason));
 });
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1816,15 +1816,19 @@ ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thu
 });
 
 ipcMain.handle('ytdlp:checkForUpdate', async () => {
+    const current = await getCurrentYtdlpVersion(ytdlpPath);
+
     // GitHub Releases -- the same source performYtdlpUpdate actually fetches
     // and verifies the binary from below -- rather than PyPI, which was only
     // ever a proxy for "what version is latest" and could in principle
     // disagree with the real update source.
-    const [release, current] = await Promise.all([
-        resolveLatestRelease(),
-        getCurrentYtdlpVersion(ytdlpPath),
-    ]);
-    return { current, latest: release.tag, updateAvailable: isNewerVersion(release.tag, current) };
+    try {
+        const release = await resolveLatestRelease();
+        return { current, latest: release.tag, updateAvailable: isNewerVersion(release.tag, current) };
+    } catch (err) {
+        log('[ytdlp-check] failed to resolve the latest release (offline?):', err instanceof Error ? err.message : String(err));
+        return { current, latest: null, updateAvailable: false };
+    }
 });
 
 ipcMain.handle('ytdlp:startUpdate', async () => {
@@ -1893,7 +1897,7 @@ ipcMain.handle('system:openFileExternally', async (e, filepath) => {
 // can't write to main.log directly -- no fs access under
 // contextIsolation/sandbox -- so they're forwarded here.
 ipcMain.handle('errorLog:report', async (e, { message, stack }) => {
-    log('[rendererError]', new Date().toISOString(), stack || message || 'Unknown renderer error');
+    log('[rendererError]', stack || message || 'Unknown renderer error');
 });
 
 ipcMain.handle('errorLog:getInfo', async () => {
