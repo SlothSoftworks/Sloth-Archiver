@@ -308,8 +308,15 @@ describe('unzip', () => {
       expect(fs.readFileSync(path.join(destDir, 'dir', 'stored.txt'), 'utf-8')).toBe('hello stored');
       expect(fs.readFileSync(path.join(destDir, 'dir', 'deflated.txt'), 'utf-8')).toBe('hello deflated, '.repeat(50));
       expect(fs.readFileSync(path.join(destDir, 'launcher'), 'utf-8')).toBe('#!/bin/sh\necho hi\n');
-      expect(fs.statSync(path.join(destDir, 'launcher')).mode & 0o777).toBe(0o755);
-      expect(fs.statSync(path.join(destDir, 'dir', 'stored.txt')).mode & 0o777).toBe(0o644);
+      // Windows has no real POSIX mode bits -- fs.chmodSync there only ever
+      // toggles the read-only flag, so unzip()'s exec-bit restoration (itself
+      // best-effort there, see its own comment) can never reproduce an exact
+      // 0o755/0o644 on this platform. Skip the octal assertion on win32
+      // rather than asserting a mode Windows is structurally unable to hold.
+      if (process.platform !== 'win32') {
+        expect(fs.statSync(path.join(destDir, 'launcher')).mode & 0o777).toBe(0o755);
+        expect(fs.statSync(path.join(destDir, 'dir', 'stored.txt')).mode & 0o777).toBe(0o644);
+      }
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

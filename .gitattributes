@@ -1,0 +1,5 @@
+# yt-dlp's real signed release manifest, committed verbatim as a test
+# fixture -- its exact bytes are what the accompanying .sig was computed
+# over, so git must never rewrite its line endings (e.g. LF -> CRLF via
+# core.autocrlf on Windows), or GPG signature verification against it fails.
+src/electron/__fixtures__/ytdlp-release/SHA2-256SUMS -text eol=lf
