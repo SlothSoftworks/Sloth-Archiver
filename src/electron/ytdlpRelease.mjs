@@ -167,8 +167,8 @@ export function detectMusl() {
 // it, resolves yt-dlp's real latest GitHub release once. Callers must call
 // this exactly once per operation and thread the single result through every
 // subsequent step (the asset URL, the SHA2-256SUMS URL, the .sig URL) --
-// resolving "latest" more than once per operation is what let the old
-// PyPI-vs-pip-install approach drift to two different versions mid-update.
+// resolving "latest" more than once per operation risks two steps drifting
+// to different versions if a new release lands in between.
 export async function resolveLatestRelease({ pin } = {}) {
     if (pin) {
         return { tag: pin };
@@ -318,11 +318,10 @@ export function verifyDetachedSignature({ data, signature, publicKeyArmored }) {
 // Scoped to exactly what a GitHub-Releases-hosted, PyInstaller-onedir build
 // actually produces: single-disk, under 100MB, "stored" (0) or "deflate" (8)
 // compression only, no encryption. Confirmed directly against the real
-// yt-dlp_macos.zip asset that these official builds contain zero symlinks
-// (unlike this project's own local PyInstaller onedir output, which needs
-// dereferencing) -- so no symlink handling here on purpose; if a future
-// yt-dlp release ever changes that, extraction will fail loudly (an
-// unhandled entry type) rather than silently mis-copy a symlink as a file.
+// yt-dlp_macos.zip asset that these official builds contain zero symlinks --
+// so no symlink handling here on purpose; if a future yt-dlp release ever
+// changes that, extraction will fail loudly (an unhandled entry type)
+// rather than silently mis-copy a symlink as a file.
 
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_DIR_SIGNATURE = 0x02014b50;
@@ -498,9 +497,7 @@ export async function fetchAndVerifyRelease({ release, assetName, workDir, publi
     // (e.g. yt-dlp_macos.zip's launcher is literally called `yt-dlp_macos`,
     // confirmed against the real asset), not the fixed `yt-dlp`/`yt-dlp.exe`
     // name every spawn call site in this app expects (main.mjs's
-    // ytdlpBinaryName). Rename it into place here, once, so every caller of
-    // fetchAndVerifyRelease gets a directory shaped exactly like this
-    // project's own previous local PyInstaller build already was.
+    // ytdlpBinaryName). Rename it into place here, once.
     renameLauncherToCanonicalName(extractDir, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
 
     return extractDir;

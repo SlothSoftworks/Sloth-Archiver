@@ -33,10 +33,7 @@ npm run dev
 
 `build:all` needs to be re-run whenever you change renderer source
 (`src/ui/`) **or** main-process source (`src/electron/`) — there's no hot
-reload here, `dev` just loads whatever was most recently built. `build:all`
-is fast for a code-only change; it does *not* re-freeze `yt-dlp` or
-re-copy `ffmpeg` unless you explicitly ask it to (see below) — those are
-the slow, rarely-needed steps.
+reload here, `dev` just loads whatever was most recently built.
 
 > `npm run dev:vite` also exists, but it's not a way to preview the real
 > app — it's an isolated Vite dev server for hot-swapping visual/theme/design
