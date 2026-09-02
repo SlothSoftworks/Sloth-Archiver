@@ -10,9 +10,8 @@ const finalDist = path.join(rootDir, 'dist', 'ytdlp-bin');
 
 // Pinned so every SlothArchiver release bundles a known, reproducible
 // yt-dlp version rather than "whatever GitHub's latest release happened to
-// be at build time" -- the direct replacement for
-// requirements-build.txt's own version pin. Bump this by hand in the same
-// commit as any other dependency-version bump.
+// be at build time." Bump this by hand in the same commit as any other
+// dependency-version bump.
 const PINNED_YTDLP_TAG = '2026.08.19';
 
 fs.rmSync(workDir, { recursive: true, force: true });

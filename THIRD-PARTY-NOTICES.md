@@ -14,9 +14,10 @@ redistributed here.
   unrestricted; no attribution is legally required, and this notice is
   included as a courtesy.
 - **Project:** <https://github.com/yt-dlp/yt-dlp>
-- **How it's bundled:** built from source at release time (not the official
-  prebuilt binary) via PyInstaller, from the exact version pinned in
-  `src/python/requirements-build.txt`.
+- **How it's bundled:** yt-dlp's own official prebuilt release binary,
+  fetched and GPG-verified against yt-dlp's published signature at build
+  time (see `scripts/fetch-ytdlp-bin.mjs`), from the exact release tag
+  pinned there.
 
 ## FFmpeg / FFprobe
 

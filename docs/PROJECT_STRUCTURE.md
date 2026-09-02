@@ -22,7 +22,6 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 |---|---|
 | `src/ui/` | The renderer — the React interface. |
 | `src/electron/` | The Electron main process — all privileged logic (filesystem, subprocesses, IPC). |
-| `src/python/` | The `yt-dlp` entrypoint script and pinned Python requirements used to build the bundled `yt-dlp` binary. |
 | `src/types/` | Shared TypeScript type declarations for the renderer, notably the full type contract for the preload bridge. |
 | `src/utils/` | Small renderer-side helper modules with no Electron/Node dependency (URL parsing, formatting, a debounce hook). |
 | `scripts/` | Node scripts that assemble the pieces needed for a working build/install (see [below](#bundled-low-level-dependencies-and-the-build-pipeline)). |
@@ -51,7 +50,7 @@ subprocess access at all — its only way to do anything real is through
 
 ## The Electron main process (`src/electron`)
 
-This is where essentially all of the app's actual logic lives. Five files:
+This is where essentially all of the app's actual logic lives. Six files:
 
 ### `main.mjs`
 
@@ -61,7 +60,7 @@ external tools (`yt-dlp`, `ffmpeg`, `ffprobe`). It's easiest to think of it as
 several loosely-grouped areas rather than one thing:
 
 - **Startup/runtime plumbing** — resolving where the bundled `yt-dlp`/`ffmpeg`/
-  `ffprobe`/`deno` binaries actually live (this differs between a local dev run
+  `ffprobe` binaries actually live (this differs between a local dev run
   and a packaged install — see [below](#bundled-low-level-dependencies-and-the-build-pipeline)),
   starting a small local HTTP server the browser window loads its UI from instead
   of a `file://` load, and registering the custom `app-video://` protocol used to
@@ -117,13 +116,23 @@ pure filesystem logic, called *by* `main.mjs`'s handlers.
 ### `updater.mjs`
 
 The self-updater for the bundled `yt-dlp` binary, kept separate from `main.mjs`
-because it's a genuinely distinct pipeline: checking the latest available
-`yt-dlp` version, fetching a portable Python runtime if one isn't already staged,
-installing PyInstaller into it, re-freezing `yt-dlp` from source with that
-runtime, sanity-checking the result actually runs, and atomically swapping it
-into place. This is effectively a smaller, on-device rerun of the same freeze
-process `scripts/build-ytdlp-bin.mjs` does at build time (see below) — the two
-are intentionally kept in sync.
+because it's a genuinely distinct pipeline: resolving the latest release,
+fetching and verifying it (via `ytdlpRelease.mjs`, below), sanity-checking the
+result actually runs, and atomically swapping it into place. This is
+effectively a smaller, on-device rerun of the same fetch process
+`scripts/fetch-ytdlp-bin.mjs` does at build time (see below) — the two share
+`ytdlpRelease.mjs` directly rather than being kept manually in sync.
+
+### `ytdlpRelease.mjs`
+
+The actual fetch/verify logic `updater.mjs` and `scripts/fetch-ytdlp-bin.mjs`
+both call into: resolving a release from GitHub, downloading the right
+platform asset, checking its SHA-256 against yt-dlp's published
+`SHA2-256SUMS`, verifying that file's own GPG signature against a vendored
+copy of yt-dlp's public key, and unzipping the result. Deliberately zero third-party dependencies — the packaged app ships with no
+`node_modules` at all — so this hand-rolls just enough of a ZIP reader and an
+OpenPGP-signature parser to do the job, delegating all actual cryptography to
+Node's built-in `crypto` module.
 
 ### `utils/constants.mjs`
 
@@ -176,26 +185,24 @@ A few things worth internalizing from this:
 
 ## Bundled low-level dependencies and the build pipeline
 
-The app depends on three external tools it never assumes the user already has
-installed: `yt-dlp`, `ffmpeg`/`ffprobe`, and `deno` (a small JS runtime `yt-dlp`
-needs to solve certain sites' anti-bot challenges). All three are bundled inside
-the packaged app rather than downloaded at runtime, assembled by scripts run as
-part of the build:
+The app depends on two external tools it never assumes the user already has
+installed: `yt-dlp` and `ffmpeg`/`ffprobe`. The JS runtime `yt-dlp` needs to
+solve certain sites' anti-bot challenges is Electron's own bundled Node
+runtime (`--js-runtimes node:<process.execPath>`, see `main.mjs`'s
+`jsRuntimeArgs`) rather than a separately bundled binary. Both remaining
+tools are bundled inside the packaged app rather than downloaded at runtime,
+assembled by scripts run as part of the build:
 
 | Script | What it produces |
 |---|---|
-| `scripts/build-ytdlp-bin.mjs` | Builds `yt-dlp` itself, from source — creates a local Python virtual environment, installs the exact `yt-dlp` version pinned in `src/python/requirements-build.txt` (plus its own JS-challenge-solver package and PyInstaller), and freezes `src/python/ytdlp_entrypoint.py` into a standalone native executable. This is a real local build step, not a download of a prebuilt binary — it's what lets the app avoid depending on a system Python install, and it's the same freeze process `updater.mjs` reruns later for in-app self-updates. |
+| `scripts/fetch-ytdlp-bin.mjs` | Downloads yt-dlp's own official prebuilt release binary and GPG-verifies it (via `ytdlpRelease.mjs`, see above) before unpacking it into `dist/ytdlp-bin/` — not a build from source. This is the same fetch/verify path `updater.mjs` reruns later for in-app self-updates. |
 | `scripts/copy-ffmpeg.mjs` | Copies the `ffmpeg`/`ffprobe` binaries already fetched by their own npm packages into the build output, preserving the right executable name/extension per platform. |
-| `scripts/copy-deno.mjs` | Same idea, for the `deno` binary. |
 | `scripts/copy-electron.mjs` | Copies the main-process source (`src/electron/`) into the build output as-is — it's plain JS, so this is a copy, not a compile. |
-| `scripts/clean-venv.mjs` | Deletes the local Python virtual environment `build-ytdlp-bin.mjs` creates, so a full rebuild starts from a clean environment rather than reusing a possibly stale or (on Windows) account-locked one. |
 
 These are chained together by `package.json`'s own `build:*` npm scripts (renderer
-build, then each of the copy/build steps above, in order), and the final packaging
-step (`electron-builder`) bundles the resulting `dist/ytdlp-bin/`, `dist/ffmpeg/`,
-and `dist/deno/` folders into the installed app as extra, read-only resources —
-alongside a copy of the Python entrypoint script and requirements file (used
-later, entirely on the user's own machine, if they ever trigger a self-update).
+build, then each of the fetch/copy steps above, in order), and the final packaging
+step (`electron-builder`) bundles the resulting `dist/ytdlp-bin/` and `dist/ffmpeg/`
+folders into the installed app as extra, read-only resources.
 
 At runtime, `main.mjs` resolves the real path to each of these differently
 depending on whether it's running from a local dev checkout or an installed,
@@ -215,6 +222,6 @@ elevated permissions.
 | Adding a brand-new capability the UI needs from the main process | `main.mjs` (add the handler) → `preload.cjs` (expose it) → `src/types/electron-api.d.ts` (type it) |
 | Changing a screen or adding a new one | `src/ui/screens/` |
 | Changing shared, stateful UI logic (the bulk queue, download progress, search) | `src/ui/hooks/` |
-| Touching the self-update flow | `updater.mjs` |
-| Changing how `yt-dlp`/`ffmpeg`/`deno` get bundled at build time | the relevant `scripts/*.mjs` file |
+| Touching the self-update flow | `updater.mjs`, or `ytdlpRelease.mjs` for the fetch/verify logic itself |
+| Changing how `yt-dlp`/`ffmpeg` get bundled at build time | the relevant `scripts/*.mjs` file |
 | Adjusting persisted settings (a new Options-tab toggle, etc.) | the settings handlers in `main.mjs`, plus wherever it's read in `src/ui/screens/OptionsScreen.tsx` |
