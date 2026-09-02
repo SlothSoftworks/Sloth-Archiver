@@ -60,6 +60,9 @@ import {
   findFinalFile,
   findRawDownloadedFile,
   assertValidHttpUrl,
+  isValidClipTimestamp,
+  resolveAppOrLibraryPath,
+  rememberAppPath,
 } from './main.mjs';
 
 fs.mkdirSync(electronMocks.mockUserDataDir, { recursive: true });
@@ -318,6 +321,58 @@ describe('assertValidHttpUrl', () => {
 
   it('includes the caller-supplied label in the error message', () => {
     expect(() => assertValidHttpUrl('not a url', 'playlist URL')).toThrow(/playlist URL/);
+  });
+});
+
+describe('isValidClipTimestamp', () => {
+  it('accepts every shape the renderer\'s own timestamp formatters can produce', () => {
+    expect(isValidClipTimestamp('5')).toBe(true);
+    expect(isValidClipTimestamp('45')).toBe(true);
+    expect(isValidClipTimestamp('5:30')).toBe(true);
+    expect(isValidClipTimestamp('12:34')).toBe(true);
+    expect(isValidClipTimestamp('12:34:56')).toBe(true);
+    expect(isValidClipTimestamp('100000:00:00')).toBe(true); // very long video, unbounded hours
+  });
+
+  it('rejects malformed groups and non-string/empty input', () => {
+    expect(isValidClipTimestamp('')).toBe(false);
+    expect(isValidClipTimestamp('1:2')).toBe(false); // groups after the first must be 2 digits
+    expect(isValidClipTimestamp('12:345')).toBe(false);
+    expect(isValidClipTimestamp('1:2:3:4')).toBe(false); // too many groups
+    expect(isValidClipTimestamp(null)).toBe(false);
+    expect(isValidClipTimestamp(undefined)).toBe(false);
+  });
+
+  it('rejects a value shaped to reach ffmpeg as an injected option', () => {
+    expect(isValidClipTimestamp('-1')).toBe(false);
+    expect(isValidClipTimestamp('--exec=touch pwned')).toBe(false);
+  });
+});
+
+describe('resolveAppOrLibraryPath', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-library-'));
+  const libraryFile = path.join(dir, 'video.mp4');
+  fs.writeFileSync(libraryFile, 'data');
+
+  it('resolves a path inside the configured library', () => {
+    expect(resolveAppOrLibraryPath(dir, libraryFile)).toBe(path.resolve(libraryFile));
+  });
+
+  it('rejects a path outside the library that was never handed to the renderer', () => {
+    expect(resolveAppOrLibraryPath(dir, '/etc/passwd')).toBeNull();
+  });
+
+  it('accepts a path outside the library once rememberAppPath has recorded it', () => {
+    const outside = path.join(os.tmpdir(), `sloth-archiver-test-download-${Date.now()}.mp4`);
+    expect(resolveAppOrLibraryPath(dir, outside)).toBeNull();
+    rememberAppPath(outside);
+    expect(resolveAppOrLibraryPath(dir, outside)).toBe(path.resolve(outside));
+  });
+
+  it('ignores a falsy path rather than remembering it', () => {
+    rememberAppPath('');
+    rememberAppPath(null);
+    expect(resolveAppOrLibraryPath(dir, '')).toBeNull();
   });
 });
 

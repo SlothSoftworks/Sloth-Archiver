@@ -920,13 +920,15 @@ ipcMain.handle('dialog:openFolder', async (e, options) => dialog.showOpenDialog(
 ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options) => {
     const { downloadDir } = readSettings();
     const baseDir = downloadDir || app.getPath('downloads');
-    return dialog.showSaveDialog({
+    const result = await dialog.showSaveDialog({
         title: 'Save Video',
         buttonLabel: 'Save',
         defaultPath: path.join(baseDir, defaultName),
         filters: getSupportedVideoFilters(),
         ...options
     });
+    if (!result.canceled && result.filePath) rememberAppPath(result.filePath);
+    return result;
 })
 
 ipcMain.handle('getVideoInfoPython', async (event, url) => {
@@ -1309,7 +1311,9 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
 
             if (!postprocess) {
                 finishDownload();
-                send({ type: 'done', payload: { filename: findFinalFile(options.outputPath) } });
+                const finalFile = findFinalFile(options.outputPath);
+                rememberAppPath(finalFile);
+                send({ type: 'done', payload: { filename: finalFile } });
                 return;
             }
 
@@ -1341,6 +1345,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
 
                 fs.rmSync(rawDir, { recursive: true, force: true });
                 finishDownload();
+                rememberAppPath(postprocessOutputPath);
                 send({ type: 'done', payload: { filename: postprocessOutputPath } });
             } catch (err) {
                 // Our own direct ffmpeg pass, not yt-dlp -- still worth the
@@ -1368,6 +1373,48 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
 // 'progressUpdate' above rather than overloading that pipeline's meaning --
 // one shared broadcast channel here, same "one at a time" assumption as
 // elsewhere in this app.
+
+// The handlers below need to trust an inputPath/outputPath that isn't always
+// inside the configured library -- e.g. embedding metadata into a file just
+// downloaded from the plain Downloader tab, or a clip exported to wherever a
+// save dialog put it. Rather than trust the renderer's word for where those
+// live, the main process remembers the exact paths it itself just handed
+// back (a save dialog's chosen path, a finished download's resolved file)
+// and only accepts those, plus anything inside the library. A bounded set
+// rather than a single "last path" since multiple downloads/exports can be
+// in flight or recently finished at once.
+const RECENT_APP_PATHS_LIMIT = 200;
+const recentAppPaths = new Set();
+export function rememberAppPath(filePath) {
+    if (!filePath) return;
+    recentAppPaths.delete(filePath); // re-insert to bump recency
+    recentAppPaths.add(filePath);
+    if (recentAppPaths.size > RECENT_APP_PATHS_LIMIT) {
+        recentAppPaths.delete(recentAppPaths.values().next().value);
+    }
+}
+
+// Resolves candidatePath if it's inside the configured library or one of the
+// paths remembered above; null otherwise. Sibling to resolveInsideLibrary
+// (library.mjs), for callers below whose legitimate paths aren't always
+// inside libraryDir.
+export function resolveAppOrLibraryPath(libraryDir, candidatePath) {
+    return resolveInsideLibrary(libraryDir, candidatePath)
+        || (candidatePath && recentAppPaths.has(candidatePath) ? path.resolve(candidatePath) : null);
+}
+
+// Matches every shape FfmpegUtilitiesPanel.tsx's own timestamp helpers can
+// produce: formatClipTimestampInput (typed input, anywhere from a bare
+// seconds value up to HH:MM:SS) and formatSecondsAsClipTimestamp (the
+// "set from current playback position" default fill, always HH:MM:SS with
+// unbounded hours for a very long video). Rejects anything else -- start/end
+// are spliced directly into ffmpeg's -ss/-to argv slots, so this is what
+// stands between a crafted string and an injected ffmpeg option.
+const CLIP_TIMESTAMP_PATTERN = /^\d{1,6}(:\d{2}){0,2}$/;
+export function isValidClipTimestamp(value) {
+    return typeof value === 'string' && CLIP_TIMESTAMP_PATTERN.test(value);
+}
+
 function sendFfmpegUtilityProgress(msg) {
     BrowserWindow.getAllWindows()[0]?.webContents.send('ffmpegUtilityProgress', msg);
 }
@@ -1396,25 +1443,33 @@ function sendPreviewGenerationProgress(percent) {
 ipcMain.handle('dialog:saveExportedFile', async (e, { defaultName, extensions, inputPath }) => {
     const { downloadDir } = readSettings();
     const baseDir = (inputPath && path.dirname(inputPath)) || downloadDir || app.getPath('downloads');
-    return dialog.showSaveDialog({
+    const result = await dialog.showSaveDialog({
         title: 'Save File',
         buttonLabel: 'Save',
         defaultPath: path.join(baseDir, sanitizeForFilesystem(defaultName)),
         filters: [{ name: 'File', extensions }, ...allVideoFilter],
     });
+    if (!result.canceled && result.filePath) rememberAppPath(result.filePath);
+    return result;
 });
 
 ipcMain.handle('library:extractMp3', async (e, { inputPath, outputPath }) => {
+    const { libraryDir } = readSettings();
+    const resolvedInput = resolveInsideLibrary(libraryDir, inputPath);
+    const resolvedOutput = resolveAppOrLibraryPath(libraryDir, outputPath);
+    if (!resolvedInput || !resolvedOutput) {
+        return { success: false, message: 'Refusing to read or write outside the configured library folder.' };
+    }
     try {
-        const duration = await getMediaDurationSeconds(inputPath);
+        const duration = await getMediaDurationSeconds(resolvedInput);
         await runFfmpegWithProgress({
-            inputPath,
-            outputPath,
+            inputPath: resolvedInput,
+            outputPath: resolvedOutput,
             codecArgs: ['-vn', '-c:a', 'libmp3lame', '-b:a', '192k'],
             totalDurationSeconds: duration,
             onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
         });
-        return { success: true, outputPath };
+        return { success: true, outputPath: resolvedOutput };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
@@ -1436,30 +1491,38 @@ ipcMain.handle('library:ensurePlayablePreview', async (e, { filePath }) => {
 });
 
 ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, format, forceReencode = false }) => {
+    const { libraryDir } = readSettings();
+    const resolvedInput = resolveInsideLibrary(libraryDir, inputPath);
+    const resolvedOutput = resolveAppOrLibraryPath(libraryDir, outputPath);
+    if (!resolvedInput || !resolvedOutput) {
+        return { success: false, message: 'Refusing to read or write outside the configured library folder.' };
+    }
     try {
-        const duration = await getMediaDurationSeconds(inputPath);
+        const duration = await getMediaDurationSeconds(resolvedInput);
         await convertWithFallback({
-            inputPath,
-            outputPath,
+            inputPath: resolvedInput,
+            outputPath: resolvedOutput,
             format,
             totalDurationSeconds: duration,
             onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
             forceReencode,
         });
-        return { success: true, outputPath };
+        return { success: true, outputPath: resolvedOutput };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
 });
 
 // start/end are passed straight through to ffmpeg's own -ss/-to, which
-// already accepts the flexible time formats the UI's fields take -- no need
-// to parse/validate them ourselves. Both as output options (after -i), so
-// they're unambiguous timestamps in the source's timeline -- slower to seek
-// than input-side -ss, but -c copy never decodes video either way, so it's
-// only an I/O cost. -c copy snaps to the nearest keyframe rather than an
-// exact frame, a documented tradeoff; frame-accurate re-encoded cuts are a
-// deliberately separate, not-yet-offered option.
+// already accepts the flexible time formats the UI's fields take -- so they
+// pass through unparsed, but isValidClipTimestamp below still gates them
+// against the shape this app's own UI can ever actually produce, since
+// they're spliced directly into ffmpeg's argv. Both as output options
+// (after -i), so they're unambiguous timestamps in the source's timeline --
+// slower to seek than input-side -ss, but -c copy never decodes video either
+// way, so it's only an I/O cost. -c copy snaps to the nearest keyframe
+// rather than an exact frame, a documented tradeoff; frame-accurate
+// re-encoded cuts are a deliberately separate, not-yet-offered option.
 // Arbitrary-output-path clip export: unlike library:createClip below, this
 // never touches clips.json and writes wherever the caller (a save dialog)
 // picked, for player instances with no "library video entry" to attach a
@@ -1467,13 +1530,22 @@ ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, forma
 // its "also save as a file" checkbox). Shares clipAndConvert with
 // library:createClip so format/forceReencode behave identically either way.
 ipcMain.handle('library:extractClip', async (e, { inputPath, outputPath, start, end, format, forceReencode = false }) => {
+    const { libraryDir } = readSettings();
+    const resolvedInput = resolveInsideLibrary(libraryDir, inputPath);
+    const resolvedOutput = resolveAppOrLibraryPath(libraryDir, outputPath);
+    if (!resolvedInput || !resolvedOutput) {
+        return { success: false, message: 'Refusing to read or write outside the configured library folder.' };
+    }
+    if (!isValidClipTimestamp(start) || !isValidClipTimestamp(end)) {
+        return { success: false, message: 'Invalid clip start/end timestamp.' };
+    }
     try {
         const targetFormat = format && format !== 'source' ? format : null;
         const startSeconds = parseClipTimestampSeconds(start);
         const endSeconds = parseClipTimestampSeconds(end);
         await clipAndConvert({
-            inputPath,
-            outputPath,
+            inputPath: resolvedInput,
+            outputPath: resolvedOutput,
             start,
             startSeconds,
             end,
@@ -1482,7 +1554,7 @@ ipcMain.handle('library:extractClip', async (e, { inputPath, outputPath, start, 
             onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
             forceReencode,
         });
-        return { success: true, outputPath };
+        return { success: true, outputPath: resolvedOutput };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
@@ -1506,12 +1578,16 @@ function parseClipTimestampSeconds(value) {
 ipcMain.handle('library:createClip', async (e, { videoDir, inputPath, start, end, format, clipName, forceReencode = false }) => {
     const { libraryDir } = readSettings();
     const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
-    if (!resolvedVideoDir) {
-        return { success: false, message: 'Refusing to write outside the configured library folder.' };
+    const resolvedInput = resolveInsideLibrary(libraryDir, inputPath);
+    if (!resolvedVideoDir || !resolvedInput) {
+        return { success: false, message: 'Refusing to read or write outside the configured library folder.' };
+    }
+    if (!isValidClipTimestamp(start) || !isValidClipTimestamp(end)) {
+        return { success: false, message: 'Invalid clip start/end timestamp.' };
     }
     try {
         const targetFormat = format === 'source' ? null : format;
-        const ext = targetFormat || path.extname(inputPath).slice(1) || 'mp4';
+        const ext = targetFormat || path.extname(resolvedInput).slice(1) || 'mp4';
         const outputPath = buildClipFilePath(resolvedVideoDir, clipName, ext);
         if (fs.existsSync(outputPath)) {
             return { success: false, message: 'A clip with this name already exists for this video.' };
@@ -1521,7 +1597,7 @@ ipcMain.handle('library:createClip', async (e, { videoDir, inputPath, start, end
         const startSeconds = parseClipTimestampSeconds(start);
         const endSeconds = parseClipTimestampSeconds(end);
         await clipAndConvert({
-            inputPath,
+            inputPath: resolvedInput,
             outputPath,
             start,
             startSeconds,
@@ -1639,14 +1715,23 @@ ipcMain.handle('library:convertClip', async (e, { videoDir, clipId, format, forc
 // always re-encoded to mjpeg since webp isn't a valid embedded-cover codec
 // for ID3/mov -- everything else stays -c copy, no quality loss.
 ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thumbnailPath, kind }) => {
+    // Broader than resolveInsideLibrary alone: this is also used from the
+    // plain Downloader tab (OtherPlatformDownloadCard.tsx), where inputPath
+    // is a file that was never added to the library -- just downloaded to
+    // wherever dialog:saveVideoFile put it.
+    const { libraryDir } = readSettings();
+    const resolvedInput = resolveAppOrLibraryPath(libraryDir, inputPath);
+    if (!resolvedInput) {
+        return { success: false, message: 'Refusing to modify a file outside the configured library folder.' };
+    }
     // Downloader-tab callers only have yt-dlp's remote thumbnail URL, not a
     // pre-cached local file -- fetch it here into a temp file whenever
     // thumbnailPath looks like a URL instead of a local path.
     let downloadedThumbnailPath = null;
     try {
-        const ext = path.extname(inputPath);
-        const tempPath = `${inputPath.slice(0, -ext.length)}.new${ext}`;
-        const duration = await getMediaDurationSeconds(inputPath);
+        const ext = path.extname(resolvedInput);
+        const tempPath = `${resolvedInput.slice(0, -ext.length)}.new${ext}`;
+        const duration = await getMediaDurationSeconds(resolvedInput);
         const metadataArgs = Object.entries(metadataTags || {})
             .filter(([, value]) => !!value)
             .flatMap(([key, value]) => ['-metadata', `${key}=${value}`]);
@@ -1659,6 +1744,14 @@ ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thu
                 log('[embed-metadata] thumbnail fetch failed', String(err));
                 thumbnailPath = null;
             }
+        } else if (thumbnailPath) {
+            // Not a URL -- a locally-cached thumbnail is always inside the
+            // library (channel-icon.*/video-thumbnail.*, see thumbnails.mjs),
+            // so unlike inputPath there's no "just downloaded" case to allow
+            // for here. An unresolvable path degrades to "no cover art"
+            // rather than failing the whole embed, same as a failed fetch
+            // above.
+            thumbnailPath = resolveInsideLibrary(libraryDir, thumbnailPath);
         }
 
         const hasThumbnail = !!thumbnailPath && fs.existsSync(thumbnailPath);
@@ -1680,15 +1773,15 @@ ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thu
             : [];
 
         await runFfmpegWithProgress({
-            inputPath,
+            inputPath: resolvedInput,
             outputPath: tempPath,
             extraInputArgs: hasThumbnail ? ['-i', thumbnailPath] : [],
             codecArgs: ['-c', 'copy', ...streamMapArgs, ...coverArgs, ...metadataArgs],
             totalDurationSeconds: duration,
             onProgress: (percent) => sendFfmpegUtilityProgress({ type: 'progress', percent }),
         });
-        fs.rmSync(inputPath, { force: true });
-        fs.renameSync(tempPath, inputPath);
+        fs.rmSync(resolvedInput, { force: true });
+        fs.renameSync(tempPath, resolvedInput);
         return { success: true };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
