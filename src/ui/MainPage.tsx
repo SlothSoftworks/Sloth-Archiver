@@ -27,6 +27,7 @@ import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
 import BulkAddSidePanel, { BulkAddToggleButton } from './components/BulkAddSidePanel';
 import { useLibraryNotification } from './hooks/useLibraryNotifications';
 import { useYtdlpUpdater } from './hooks/useYtdlpUpdater';
+import buttonIcon from '../../assets/button_icon.png';
 
 const REPO_URL = 'https://github.com/lltrash94/SlothArchiver';
 
@@ -195,6 +196,9 @@ export function BasicTabs() {
           </Stack>
         </DialogTitle>
         <DialogContent>
+          <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+            <Box component="img" src={buttonIcon} alt="" sx={{ width: 64, height: 64 }} />
+          </Box>
           <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5, mb: 2 }}>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
               Dependencies
