@@ -3,10 +3,8 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 export type YtdlpUpdateStage =
   | 'idle'
   | 'checking'
-  | 'fetching-python-runtime'
-  | 'installing-pyinstaller'
-  | 'fetching-yt-dlp'
-  | 'building'
+  | 'fetching'
+  | 'installing'
   | 'verifying'
   | 'done'
   | 'error';
@@ -14,14 +12,23 @@ export type YtdlpUpdateStage =
 const STAGE_LABELS: Record<YtdlpUpdateStage, string> = {
   idle: '',
   checking: 'Checking for updates...',
-  'fetching-python-runtime': 'Setting up build tools (first time only)...',
-  'installing-pyinstaller': 'Setting up build tools (first time only)...',
-  'fetching-yt-dlp': 'Fetching latest yt-dlp...',
-  building: 'Building (this can take a minute)...',
+  fetching: 'Downloading latest yt-dlp...',
+  installing: 'Installing...',
   verifying: 'Verifying...',
   done: 'Update complete',
   error: 'Update failed',
 };
+
+// Every stage that means "an update is actively in flight" -- shared by
+// YtdlpUpdateDialog.tsx (the full-view overlay) and OptionsScreen.tsx (the
+// button/chip state), exported once here rather than each duplicating its
+// own copy of this set.
+export const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
+  'checking',
+  'fetching',
+  'installing',
+  'verifying',
+]);
 
 // A single instance of this state lives at the app root (see
 // YtdlpUpdaterProvider below) so there's exactly one 'ytdlpUpdateProgress'
@@ -38,10 +45,17 @@ function useYtdlpUpdaterState() {
 
   const [stage, setStage] = useState<YtdlpUpdateStage>('idle');
   const [updateError, setUpdateError] = useState<string | null>(null);
+  // Set from the 'error'-stage progress broadcast (see main.mjs's
+  // ytdlp:startUpdate handler) rather than from the rejected startUpdate()
+  // call below -- a thrown Error's own properties don't survive the IPC
+  // trip, but this rides along on the same structured-cloned broadcast that
+  // already carries `stage`.
+  const [verificationFailure, setVerificationFailure] = useState(false);
 
   useEffect(() => {
-    window.electronAPI.onYtdlpUpdateProgress(({ stage }: { stage: string }) => {
+    window.electronAPI.onYtdlpUpdateProgress(({ stage, verificationFailure }: { stage: string; verificationFailure?: boolean }) => {
       setStage(stage as YtdlpUpdateStage);
+      if (stage === 'error') setVerificationFailure(!!verificationFailure);
     });
     return () => {
       window.electronAPI.removeYtdlpUpdateProgressListener();
@@ -54,8 +68,9 @@ function useYtdlpUpdaterState() {
     try {
       const result = await window.electronAPI.checkForYtdlpUpdate();
       setCurrentVersion(result.current);
-      setLatestVersion(result.latest);
+      setLatestVersion(result.latest ?? '');
       setUpdateAvailable(result.updateAvailable);
+      setCheckError(result.latest === null ? 'Could not check for the latest version.' : null);
       return result;
     } catch (err) {
       setCheckError(err instanceof Error ? err.message : 'Failed to check for updates.');
@@ -67,6 +82,7 @@ function useYtdlpUpdaterState() {
 
   const startUpdate = async () => {
     setUpdateError(null);
+    setVerificationFailure(false);
     setStage('checking');
     try {
       await window.electronAPI.startYtdlpUpdate();
@@ -94,6 +110,7 @@ function useYtdlpUpdaterState() {
     stage,
     stageLabel: STAGE_LABELS[stage],
     updateError,
+    verificationFailure,
     checkForUpdate,
     startUpdate,
     quit,

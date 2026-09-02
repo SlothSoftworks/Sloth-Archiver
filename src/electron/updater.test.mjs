@@ -1,16 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
 
-// child_process.spawn and https.get are mocked rather than exercised for
-// real -- getCurrentYtdlpVersion/getLatestYtdlpVersionFromPyPI are thin
-// wrappers around them, and this is the boundary where a fake process/
-// response can stand in cheaply and deterministically. performYtdlpUpdate
-// and its unexported helpers (rebuildYtdlp, ensurePythonRuntime,
-// ensurePyinstaller, verifyAndSwap, findPythonRuntimeAsset) are a much
-// bigger multi-step orchestration over spawn/https/fs together -- covering
-// those meaningfully would mean re-implementing most of the module as a
-// mock, for low return relative to the size of this pass. Left for a later,
-// dedicated integration-style pass rather than force-fit here.
+// child_process.spawn is mocked rather than exercised for real --
+// getCurrentYtdlpVersion is a thin wrapper around it, and this is the
+// boundary where a fake process can stand in cheaply and deterministically.
+// performYtdlpUpdate and its unexported helpers (verifyAndSwap,
+// copyDereferenced) are a bigger multi-step orchestration over
+// ytdlpRelease.mjs/spawn/fs together -- covering those meaningfully would
+// mean re-implementing most of the module as a mock, for low return relative
+// to the size of this pass. Left for a later, dedicated integration-style
+// pass rather than force-fit here.
 function makeFakeChildProcess() {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -76,57 +75,5 @@ describe('getCurrentYtdlpVersion', () => {
     });
 
     await expect(getCurrentYtdlpVersion('/missing/yt-dlp')).rejects.toThrow(/Failed to read current yt-dlp version/);
-  });
-});
-
-describe('getLatestYtdlpVersionFromPyPI', () => {
-  it('parses the version out of a successful PyPI response', async () => {
-    vi.doMock('https', () => ({
-      default: {
-        get: (url, options, callback) => {
-          const res = new EventEmitter();
-          res.statusCode = 200;
-          res.headers = {};
-          res.resume = vi.fn();
-          callback(res);
-          queueMicrotask(() => {
-            res.emit('data', JSON.stringify({ info: { version: '2026.7.4' } }));
-            res.emit('end');
-          });
-          const req = new EventEmitter();
-          req.setTimeout = vi.fn();
-          return req;
-        },
-      },
-    }));
-    vi.resetModules();
-    const { getLatestYtdlpVersionFromPyPI: freshGetLatest } = await import('./updater.mjs');
-
-    await expect(freshGetLatest()).resolves.toBe('2026.7.4');
-    vi.doUnmock('https');
-    vi.resetModules();
-  });
-
-  it('rejects on a non-200 status', async () => {
-    vi.doMock('https', () => ({
-      default: {
-        get: (url, options, callback) => {
-          const res = new EventEmitter();
-          res.statusCode = 500;
-          res.headers = {};
-          res.resume = vi.fn();
-          callback(res);
-          const req = new EventEmitter();
-          req.setTimeout = vi.fn();
-          return req;
-        },
-      },
-    }));
-    vi.resetModules();
-    const { getLatestYtdlpVersionFromPyPI: freshGetLatest } = await import('./updater.mjs');
-
-    await expect(freshGetLatest()).rejects.toThrow(/failed with status 500/);
-    vi.doUnmock('https');
-    vi.resetModules();
   });
 });

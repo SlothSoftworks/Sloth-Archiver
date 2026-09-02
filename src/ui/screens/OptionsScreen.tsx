@@ -23,7 +23,7 @@ import {
   Typography,
 } from '@mui/material';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import { useYtdlpUpdater, type YtdlpUpdateStage } from '../hooks/useYtdlpUpdater';
+import { useYtdlpUpdater, IN_PROGRESS_STAGES } from '../hooks/useYtdlpUpdater';
 import { useThemeMode } from '../hooks/useThemeMode.tsx';
 import { POPULAR_CONVERT_FORMATS, SUGGESTED_EXTRA_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { MAX_SIMULTANEOUS_DOWNLOADS_CEILING } from '../../utils/constants.ts';
@@ -50,15 +50,6 @@ const COOKIE_BROWSER_LABELS: Record<string, string> = {
 // (utils/constants.ts); main.mjs keeps its own copy of the same number,
 // since main-process and renderer never cross-import in this codebase.
 const MAX_SIMULTANEOUS_DOWNLOADS_OPTIONS = Array.from({ length: MAX_SIMULTANEOUS_DOWNLOADS_CEILING }, (_, i) => i + 1);
-
-const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
-  'checking',
-  'fetching-python-runtime',
-  'installing-pyinstaller',
-  'fetching-yt-dlp',
-  'building',
-  'verifying',
-]);
 
 // Divider styles for the 2-column option grids below -- a real border keeps
 // each item visually distinct instead of relying on spacing alone. An item
@@ -453,8 +444,8 @@ export default function OptionsScreen() {
               </Tooltip>
             </Stack>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              yt-dlp needs to change whenever YouTube does. Updating rebuilds it locally on this
-              machine, which can take a minute or two the first time.
+              yt-dlp needs to change whenever YouTube does. Updating downloads and verifies
+              yt-dlp's own signed release build -- this only takes a few seconds.
             </Typography>
             <Dialog open={ytdlpInfoOpen} onClose={() => setYtdlpInfoOpen(false)} maxWidth="xs" fullWidth>
               <DialogTitle>What is yt-dlp?</DialogTitle>
@@ -488,11 +479,11 @@ export default function OptionsScreen() {
                 label={currentVersion ? `Current: ${currentVersion}` : 'Version unknown'}
                 variant="outlined"
               />
-              {!checking && !updateAvailable && !!currentVersion &&
+              {!checking && !updateAvailable && !!currentVersion && !!latestVersion &&
                 <Chip label="Up to date" color="success" variant="outlined" />}
+              {!checking && checkError &&
+                <Chip label={checkError} color="error" variant="outlined" />}
             </Stack>
-            {checkError &&
-              <Typography variant="body2" color="error" sx={{ mt: 1 }}>{checkError}</Typography>}
           </Grid>
 
           <Grid size={{ xs: 12, sm: 6 }} sx={dividerTop}>

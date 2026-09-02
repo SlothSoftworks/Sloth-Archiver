@@ -165,8 +165,8 @@ Not currently supported as a separate path — the workflow either releases
   push and release creation both fail with a permissions error.
 - **Settings → Actions → General → Actions permissions** should allow the
   standard actions this workflow uses (`actions/checkout`,
-  `actions/setup-node`, `actions/setup-python`) to run — the default "Allow
-  all actions and reusable workflows" is fine.
+  `actions/setup-node`) to run — the default "Allow all actions and reusable
+  workflows" is fine.
 - No code-signing secrets exist or are required today — every installer ships
   unsigned (`mac.identity: null`, no Windows certificate configured). Windows
   shows a SmartScreen "Unknown Publisher" warning and macOS shows a Gatekeeper
@@ -180,9 +180,10 @@ Not currently supported as a separate path — the workflow either releases
   a full build on every merge (without publishing) specifically to catch
   build breakage immediately. That was deliberately removed to guarantee a
   no-version-bump merge costs nothing — the tradeoff is that a merge which
-  breaks the *packaging* build (electron-builder, the PyInstaller freeze,
-  etc.) silently doesn't get caught until the next real version bump tries
-  to release. `.github/workflows/ci.yml` covers a different, cheaper gap —
+  breaks the *packaging* build (electron-builder, fetching/verifying the
+  `yt-dlp` release binary, etc.) silently doesn't get caught until the next
+  real version bump tries to release. `.github/workflows/ci.yml` covers a
+  different, cheaper gap —
   lint + the Vitest suite on every pull request — which catches broken code
   well before merge, but it never runs `npm run dist`, so a packaging-only
   failure can still slip through.
@@ -190,10 +191,12 @@ Not currently supported as a separate path — the workflow either releases
   re-extracts the entire app on every launch, not just once at install time.
   Not a priority today.
 - **Apple Silicon vs. Intel mac builds are two separate native jobs**, not
-  one universal2 binary — a true universal binary needs more work than this
-  (the PyInstaller-frozen `yt-dlp` binary can't cross-compile between
-  architectures, so producing one means running that build twice and merging
-  the results with `lipo`).
+  one universal2 binary. `yt-dlp`'s own official macOS release is already a
+  universal2 binary, so that's no longer what's blocking this — the
+  remaining work is auditing `ffmpeg-static`/`ffprobe-static`'s per-arch
+  bundling and switching electron-builder over to its own universal-build
+  mode. Tracked as a must-fix item before this project stops using separate
+  mac jobs.
 - **Linux support is new** — the `AppImage` target and the `ubuntu-latest`
   build job were both added the same day as this document; treat it as
   less battle-tested than the Windows/macOS paths until it's been through a

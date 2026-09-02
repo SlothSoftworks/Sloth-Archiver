@@ -12,19 +12,10 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
-import { useYtdlpUpdater, type YtdlpUpdateStage } from '../hooks/useYtdlpUpdater';
-
-const IN_PROGRESS_STAGES = new Set<YtdlpUpdateStage>([
-  'checking',
-  'fetching-python-runtime',
-  'installing-pyinstaller',
-  'fetching-yt-dlp',
-  'building',
-  'verifying',
-]);
+import { useYtdlpUpdater, IN_PROGRESS_STAGES } from '../hooks/useYtdlpUpdater';
 
 export default function YtdlpUpdateDialog() {
-  const { updateAvailable, currentVersion, latestVersion, stage, stageLabel, updateError, checkForUpdate, startUpdate, quit } = useYtdlpUpdater();
+  const { updateAvailable, currentVersion, latestVersion, stage, stageLabel, updateError, verificationFailure, checkForUpdate, startUpdate, quit } = useYtdlpUpdater();
 
   useEffect(() => {
     checkForUpdate();
@@ -54,8 +45,8 @@ export default function YtdlpUpdateDialog() {
         <DialogTitle>yt-dlp update available</DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ mb: 2 }}>
-            A newer version of yt-dlp is available ({currentVersion} → {latestVersion}). Updating rebuilds yt-dlp
-            locally on this machine, which can take a minute or two the first time.
+            A newer version of yt-dlp is available ({currentVersion} → {latestVersion}). Updating downloads and
+            verifies yt-dlp's own signed release build -- this only takes a few seconds.
           </DialogContentText>
           <DialogContentText color="error">
             yt-dlp is a required dependency -- if you cancel, the app will close.
@@ -77,6 +68,13 @@ export default function YtdlpUpdateDialog() {
           <Stack spacing={2} alignItems="center" sx={{ maxWidth: 480, textAlign: 'center', px: 3 }}>
             <Typography variant="h6">Update failed</Typography>
             <Typography variant="body2">{updateError}</Typography>
+            {verificationFailure &&
+              <Typography variant="body2" sx={{ color: 'warning.main' }}>
+                This looks like a problem with yt-dlp's own release download, not with this app -- the downloaded
+                file didn't match yt-dlp's published checksum/signature. This is usually a corrupted download, so
+                retrying often fixes it; if it keeps happening, it may be worth checking yt-dlp's official release
+                page directly before retrying again.
+              </Typography>}
             <Typography variant="body2" color="error">
               yt-dlp is a required dependency -- if you quit instead of retrying, the app will close.
             </Typography>

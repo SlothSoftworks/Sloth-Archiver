@@ -111,8 +111,8 @@ describe('electronAPI event subscriptions', () => {
     const callback = vi.fn();
     electronAPI.onYtdlpUpdateProgress(callback);
     expect(on).toHaveBeenCalledWith('ytdlpUpdateProgress', expect.any(Function));
-    on.mock.calls[0][1](/* _event */ {}, { stage: 'building' });
-    expect(callback).toHaveBeenCalledWith({ stage: 'building' });
+    on.mock.calls[0][1](/* _event */ {}, { stage: 'installing' });
+    expect(callback).toHaveBeenCalledWith({ stage: 'installing' });
 
     removeAllListeners.mockClear();
     electronAPI.removeYtdlpUpdateProgressListener();

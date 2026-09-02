@@ -9,9 +9,6 @@ actually contains.
 ## Prerequisites
 
 - **Node.js 24** (matches what CI builds with — see `.github/workflows/build.yml`)
-- **Python 3.11**, with `venv` available — used to freeze `yt-dlp` into a
-  standalone binary as part of the build (see [What the build scripts
-  do](#what-the-build-scripts-do) below)
 - `npm`
 
 ## Setup
@@ -36,10 +33,7 @@ npm run dev
 
 `build:all` needs to be re-run whenever you change renderer source
 (`src/ui/`) **or** main-process source (`src/electron/`) — there's no hot
-reload here, `dev` just loads whatever was most recently built. `build:all`
-is fast for a code-only change; it does *not* re-freeze `yt-dlp` or
-re-copy `ffmpeg` unless you explicitly ask it to (see below) — those are
-the slow, rarely-needed steps.
+reload here, `dev` just loads whatever was most recently built.
 
 > `npm run dev:vite` also exists, but it's not a way to preview the real
 > app — it's an isolated Vite dev server for hot-swapping visual/theme/design
@@ -80,16 +74,12 @@ The full dependency chain, from `package.json`'s `scripts`:
 | `dev:vite` | Isolated visual/theme/design work only — not connected to the real app (see above). |
 | `build:renderer` | Compiles the React UI with Vite into `dist/renderer/`. |
 | `build:copy:electron` | Copies `src/electron/` (plain JS, no compile step) into `dist/electron/`. |
-| `build:ytdlp:bin` | The slow one: creates a local Python venv, installs the exact `yt-dlp` version pinned in `src/python/requirements-build.txt`, and freezes `src/python/ytdlp_entrypoint.py` into a standalone native executable via PyInstaller. This is a real build from source, not a downloaded prebuilt binary — it's also what the app's own in-app "update yt-dlp" feature re-runs later on a user's machine. |
+| `build:ytdlp:bin` | Downloads yt-dlp's own official prebuilt release binary and GPG-verifies it against yt-dlp's published signature and checksums before unpacking it into `dist/ytdlp-bin/` — not a build from source. This is also what the app's own in-app "update yt-dlp" feature re-runs later on a user's machine. |
 | `build:copy:ffmpeg` | Copies the `ffmpeg`/`ffprobe` binaries already fetched by the `ffmpeg-static`/`ffprobe-static` npm packages into `dist/ffmpeg/`. |
-| `clean:venv` | Deletes the local Python venv `build:ytdlp:bin` creates, so the next build starts from a clean environment instead of a possibly-stale one. |
 | `build:electron` | Runs `build:copy:electron` → `build:ytdlp:bin` → `build:copy:ffmpeg`, in order. |
-| `build:all` | `build:renderer` + `build:electron` — everything needed to run the app locally via `dev`. |
-| `build:all:deep` | `clean:venv` first, then `build:all` — a genuinely from-scratch build. This is what CI/`dist` uses; you shouldn't normally need it locally unless something in the venv is stuck. |
+| `build:all` | `build:renderer` + `build:electron` — everything needed to run the app locally via `dev`, and also what CI/`dist` uses. |
 | `electron-build` | Runs `electron-builder` (packages `dist/` into a real installer for your current OS) without publishing anywhere. |
-| `dist` | `build:all:deep` + `electron-build` — produces an actual installer in `dist/`, the same thing a release build does. See `docs/RELEASING.md` for how that connects to an actual GitHub release. |
+| `dist` | `build:all` + `electron-build` — produces an actual installer in `dist/`, the same thing a release build does. See `docs/RELEASING.md` for how that connects to an actual GitHub release. |
 | `prepare` | Runs `husky` to install the pre-commit hook. `npm` runs this automatically after `npm install`/`npm ci` — you shouldn't need to run it yourself. |
 
-If you only need to run the app locally, `build:all` is what you want — the
-heavier `build:all:deep`/`dist` scripts exist for producing a real
-installer, not for day-to-day development.
+If you only need to run the app locally, `build:all` is what you want.

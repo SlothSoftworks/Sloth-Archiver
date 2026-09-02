@@ -147,6 +147,20 @@ describe('OptionsScreen', () => {
     expect(window.electronAPI.startYtdlpUpdate).toHaveBeenCalled();
   });
 
+  it('falls back to showing the current version when checking for the latest release fails (e.g. offline)', async () => {
+    const user = userEvent.setup();
+    (window.electronAPI.checkForYtdlpUpdate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      current: '2026.7.4', latest: null, updateAvailable: false,
+    });
+    renderScreen();
+
+    await user.click(screen.getByRole('button', { name: 'Check for updates' }));
+    expect(await screen.findByText('Current: 2026.7.4')).toBeInTheDocument();
+    expect(screen.queryByText('Version unknown')).not.toBeInTheDocument();
+    expect(screen.queryByText('Up to date')).not.toBeInTheDocument();
+    expect(screen.getByText('Could not check for the latest version.')).toBeInTheDocument();
+  });
+
   it('the error log button is disabled until an error has actually been logged', async () => {
     const user = userEvent.setup();
     (window.electronAPI.getErrorLogInfo as ReturnType<typeof vi.fn>).mockResolvedValue({ exists: true, path: '/log' });
