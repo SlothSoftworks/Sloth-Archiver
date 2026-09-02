@@ -59,6 +59,7 @@ import {
   buildDownloadArgs,
   findFinalFile,
   findRawDownloadedFile,
+  assertValidHttpUrl,
 } from './main.mjs';
 
 fs.mkdirSync(electronMocks.mockUserDataDir, { recursive: true });
@@ -283,6 +284,40 @@ describe('buildDownloadArgs', () => {
     resetSettingsAndCookies();
     const args = buildDownloadArgs({ videoUrl: 'https://youtube.com/watch?v=x', outputPath: 'o', resolution: '720' });
     expect(args[args.length - 1]).toBe('https://youtube.com/watch?v=x');
+  });
+
+  // Without a '--' separator, a videoUrl starting with '-' (e.g. '--exec=...')
+  // would be parsed by yt-dlp as an option instead of a URL.
+  it('inserts a "--" separator immediately before the video URL', () => {
+    resetSettingsAndCookies();
+    const args = buildDownloadArgs({ videoUrl: 'https://youtube.com/watch?v=x', outputPath: 'o', resolution: '720' });
+    expect(args[args.length - 2]).toBe('--');
+    expect(args[args.length - 1]).toBe('https://youtube.com/watch?v=x');
+  });
+});
+
+describe('assertValidHttpUrl', () => {
+  it('accepts http(s) URLs and returns the parsed URL', () => {
+    expect(assertValidHttpUrl('https://youtube.com/watch?v=x').href).toBe('https://youtube.com/watch?v=x');
+    expect(() => assertValidHttpUrl('http://example.com')).not.toThrow();
+  });
+
+  it('rejects a value that would be parsed by yt-dlp as an option', () => {
+    expect(() => assertValidHttpUrl('--exec=touch pwned')).toThrow(/Invalid/);
+  });
+
+  it('rejects non-http(s) schemes such as file: and data:', () => {
+    expect(() => assertValidHttpUrl('file:///etc/passwd')).toThrow(/http/);
+    expect(() => assertValidHttpUrl('data:text/plain,hi')).toThrow(/http/);
+  });
+
+  it('rejects unparseable input', () => {
+    expect(() => assertValidHttpUrl('not a url')).toThrow(/Invalid/);
+    expect(() => assertValidHttpUrl('')).toThrow(/Invalid/);
+  });
+
+  it('includes the caller-supplied label in the error message', () => {
+    expect(() => assertValidHttpUrl('not a url', 'playlist URL')).toThrow(/playlist URL/);
   });
 });
 

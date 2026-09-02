@@ -113,7 +113,7 @@ export function isDeadVideoInfo(response) {
 // "formats came back empty" path for a YouTube URL.
 function classifyEmptyFormatsFailure(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv }) {
     return new Promise((resolve) => {
-        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url], { env: ytdlpSpawnEnv() });
+        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), '--', url], { env: ytdlpSpawnEnv() });
         let stderrOutput = '';
         let settled = false;
         // Only runs on a path that already failed once, so a real dead-video
@@ -225,7 +225,7 @@ export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRunti
         // the *playlist* here, not the video -- this call is only ever used
         // for single-video lookups (playlists have their own dedicated
         // --flat-playlist fetch in main.mjs's fetchPlaylistEntries).
-        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ignore-no-formats-error', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), url], { env: ytdlpSpawnEnv() });
+        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ignore-no-formats-error', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), '--', url], { env: ytdlpSpawnEnv() });
         let data = '';
         let error = '';
 

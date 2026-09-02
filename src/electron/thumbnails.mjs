@@ -50,7 +50,7 @@ function fetchChannelAvatarUrl(channelId, { ytdlpPath, ffmpegDir, cookiesArgs, j
         const channelUrl = `https://www.youtube.com/channel/${channelId}`;
         const script = spawn(ytdlpPath, [
             '-J', '--no-warnings', '--flat-playlist', '--playlist-end', '1',
-            '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), channelUrl,
+            '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), '--', channelUrl,
         ], { env: ytdlpSpawnEnv() });
         let data = '';
         script.on('error', () => resolve(null));

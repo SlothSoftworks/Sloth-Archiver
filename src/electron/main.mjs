@@ -106,6 +106,26 @@ export function ytdlpSpawnEnv() {
     return { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
 }
 
+// Defense-in-depth for every IPC handler that hands a caller-supplied URL to
+// yt-dlp. The renderer already validates (DownloaderScreen.tsx/BulkAddDialog
+// via utils.ts's isValidUrl), but that's a UI nicety, not an IPC boundary --
+// anything that reaches these handlers directly bypasses it. Rejecting
+// non-http(s) here means a value like "--exec=..." or "file:///etc/passwd"
+// never reaches yt-dlp's argv in the first place, on top of (not instead of)
+// the '--' separator inserted before every URL argument below.
+export function assertValidHttpUrl(url, label = 'URL') {
+    let parsed;
+    try {
+        parsed = new URL(url);
+    } catch {
+        throw new Error(`Invalid ${label}.`);
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error(`Invalid ${label}: only http:// and https:// links are supported.`);
+    }
+    return parsed;
+}
+
 const { readSettings, writeSettings } = createSettingsStore(settingsPath);
 export const cookiesArgs = makeCookiesArgs(readSettings, cookiesPath);
 const { readVideoInfoCache, writeVideoInfoCache } = createVideoInfoCache(videoInfoCachePath);
@@ -483,7 +503,7 @@ function fetchPlaylistEntries(playlistUrl) {
     return new Promise((resolve, reject) => {
         const script = spawn(ytdlpPath, [
             '-J', '--no-warnings', '--flat-playlist',
-            '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), playlistUrl,
+            '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), '--', playlistUrl,
         ], { env: ytdlpSpawnEnv() });
         let data = '';
         let error = '';
@@ -526,6 +546,7 @@ function fetchPlaylistEntries(playlistUrl) {
 
 ipcMain.handle('library:fetchPlaylistEntries', async (e, playlistUrl) => {
     try {
+        assertValidHttpUrl(playlistUrl, 'playlist URL');
         const playlist = await fetchPlaylistEntries(playlistUrl);
         // Snapshot saved every time a playlist is fetched (see
         // library.mjs's writePlaylistSnapshot).
@@ -838,9 +859,12 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options)
     });
 })
 
-ipcMain.handle('getVideoInfoPython', async (event, url) => fetchVideoInfo(url, {
-    ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS, onLog: log,
-}));
+ipcMain.handle('getVideoInfoPython', async (event, url) => {
+    assertValidHttpUrl(url, 'video URL');
+    return fetchVideoInfo(url, {
+        ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS, onLog: log,
+    });
+});
 
 export function needsDirectFfmpegPass({ format, resolution }) {
     if (resolution && resolution.toLowerCase() === 'mp3') return true;
@@ -929,7 +953,7 @@ export function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteM
         args.push('--force-overwrites');
     }
 
-    args.push(videoUrl);
+    args.push('--', videoUrl);
     return args;
 }
 
@@ -1028,11 +1052,23 @@ ipcMain.handle('cancelDownload', (event, requestId) => {
 });
 
 ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
-    activeDownloadCount++;
     // requestId is echoed onto every message on this shared/unscoped
     // broadcast channel -- generated renderer-side, so every consumer of
     // this handler can filter to just its own in-flight download.
     const send = (msg) => BrowserWindow.getAllWindows()[0]?.webContents.send('progressUpdate', { ...msg, requestId: options.requestId });
+
+    try {
+        assertValidHttpUrl(options.videoUrl, 'video URL');
+    } catch (err) {
+        // Reported over the same 'progressUpdate' channel every other
+        // download failure uses, rather than a rejected promise -- the
+        // renderer only ever listens for this handler's outcome there (see
+        // useDownloadVideo.tsx), never on this call's own return value.
+        send({ type: 'error', payload: { message: err.message, kind: ERROR_KINDS.UNKNOWN, retryable: false } });
+        return;
+    }
+
+    activeDownloadCount++;
 
     // MP3 extraction and format recode need our own ffmpeg pass afterward,
     // so yt-dlp downloads to a raw intermediate file in a dedicated temp
