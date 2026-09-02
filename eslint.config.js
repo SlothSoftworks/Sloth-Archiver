@@ -42,4 +42,15 @@ export default tseslint.config(
       globals: globals.node,
     },
   },
+  // The one CommonJS file in this otherwise all-ESM app: Electron's
+  // sandboxed preload loader doesn't support import/export syntax.
+  {
+    extends: [js.configs.recommended],
+    files: ['**/*.cjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'commonjs',
+      globals: globals.node,
+    },
+  },
 )

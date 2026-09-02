@@ -87,7 +87,7 @@ several loosely-grouped areas rather than one thing:
 - **Misc system/dialog handlers** — file/folder pickers, opening a file in its
   folder or in the OS default app, error-log read/write, app version/quit.
 
-### `preload.mjs`
+### `preload.cjs`
 
 The bridge between the renderer and everything above. It runs in a special,
 privileged-but-limited context and does exactly one thing: expose two fixed
@@ -139,7 +139,7 @@ through the same narrow path — there's no direct route:
 ```mermaid
 sequenceDiagram
     participant UI as Renderer (React)
-    participant Bridge as preload.mjs
+    participant Bridge as preload.cjs
     participant Main as main.mjs (IPC handler)
     participant Lib as library.mjs
     participant Tool as yt-dlp / ffmpeg (child process)
@@ -212,7 +212,7 @@ elevated permissions.
 |---|---|
 | Changing what a download button does, or adding a resolution/format option | `main.mjs` (the video-info/download handlers) |
 | Changing how a video/version/playlist is stored or read back | `library.mjs` |
-| Adding a brand-new capability the UI needs from the main process | `main.mjs` (add the handler) → `preload.mjs` (expose it) → `src/types/electron-api.d.ts` (type it) |
+| Adding a brand-new capability the UI needs from the main process | `main.mjs` (add the handler) → `preload.cjs` (expose it) → `src/types/electron-api.d.ts` (type it) |
 | Changing a screen or adding a new one | `src/ui/screens/` |
 | Changing shared, stateful UI logic (the bulk queue, download progress, search) | `src/ui/hooks/` |
 | Touching the self-update flow | `updater.mjs` |

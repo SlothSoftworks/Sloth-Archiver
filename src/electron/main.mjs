@@ -154,6 +154,40 @@ export function mimeTypeForPath(filePath) {
     return 'application/octet-stream';
 }
 
+// A last line of defense in case attacker-controlled markup or script ever
+// reaches the renderer (e.g. through a bug in how remote video metadata gets
+// displayed) -- most of these directives just describe what the app already
+// only ever does:
+//   - script-src 'self': the bundled JS is the only script source; nothing
+//     inline, nothing eval'd, nothing from a CDN.
+//   - style-src needs 'unsafe-inline' because MUI/Emotion inject <style>
+//     tags at runtime for every component's CSS-in-JS -- there's no nonce
+//     wired up for that, and CSS injection (unlike script injection) can't
+//     itself run code, so this is a deliberately accepted trade-off rather
+//     than an oversight.
+//   - img-src allows any https host (plus the local app-video:// scheme)
+//     because thumbnails come from whichever platform a video was fetched
+//     from (YouTube, SoundCloud, TikTok, Instagram, ...), not one fixed CDN.
+//   - media-src is scoped to this origin and app-video:// -- video playback
+//     never loads from a remote URL directly.
+//   - frame-src only allows the one iframe embed this app ever creates.
+//   - connect-src 'self' because the renderer never calls fetch/XHR itself;
+//     every network request goes through the main process over IPC.
+const CONTENT_SECURITY_POLICY = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https: app-video:",
+    "media-src 'self' app-video:",
+    "font-src 'self'",
+    "frame-src https://www.youtube-nocookie.com",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+].join('; ');
+
 // Serves the renderer bundle over a real loopback HTTP origin, replacing
 // mainWindow.loadFile()'s file:// origin. A custom app:// protocol
 // (standard/secure: true) does NOT work here: Chromium's Referer-generation
@@ -180,7 +214,10 @@ function startRendererServer() {
                     res.end('Not Found');
                     return;
                 }
-                res.writeHead(200, { 'Content-Type': mimeTypeForPath(resolvedPath) });
+                // Sent on every response, not just the HTML document -- a
+                // browser only ever enforces it for the document response,
+                // so it's a harmless no-op on the JS/CSS asset responses.
+                res.writeHead(200, { 'Content-Type': mimeTypeForPath(resolvedPath), 'Content-Security-Policy': CONTENT_SECURITY_POLICY });
                 res.end(data);
             });
         });
@@ -830,13 +867,46 @@ app.on("ready", async () => {
         width: 1280,
         height: 720,
         webPreferences: {
-            preload: path.join(__dirname, 'preload.mjs'),
+            preload: path.join(__dirname, 'preload.cjs'),
             contextIsolation: true,
             nodeIntegration: false,
-            sandbox: false,
+            // Safe to enable: the preload script only touches contextBridge
+            // and ipcRenderer, both of which work fine sandboxed.
+            sandbox: true,
         },
     });
-    mainWindow.loadURL(`http://127.0.0.1:${port}/index.html`);
+
+    // Every link the app itself renders (a video's original URL, the repo
+    // link, a linkified description) is meant to open in the user's real
+    // browser, not as a new Electron window -- a new Electron window would
+    // otherwise inherit this one's preload script and IPC access. http(s)
+    // links are handed off to the OS's default browser; everything else
+    // (including a window.open() with no real destination) is just refused.
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        try {
+            const { protocol: urlProtocol } = new URL(url);
+            if (urlProtocol === 'http:' || urlProtocol === 'https:') {
+                shell.openExternal(url);
+            }
+        } catch {
+            // Not a parseable URL -- nothing to open.
+        }
+        return { action: 'deny' };
+    });
+
+    // This app is a single-page app that never navigates away from its own
+    // loaded document (in-app routing changes only the URL hash, which isn't
+    // a navigation as far as Electron is concerned). Any other top-level
+    // navigation attempt -- e.g. a compromised page trying to replace the
+    // whole window with attacker-controlled content -- is refused outright.
+    const rendererOrigin = `http://127.0.0.1:${port}`;
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+        if (!url.startsWith(`${rendererOrigin}/`) && url !== rendererOrigin) {
+            event.preventDefault();
+        }
+    });
+
+    mainWindow.loadURL(`${rendererOrigin}/index.html`);
     if (isDev) mainWindow.webContents.openDevTools();
 })
 

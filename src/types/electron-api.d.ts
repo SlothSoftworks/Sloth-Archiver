@@ -123,7 +123,7 @@ declare global {
         electronAPIPythonDownload: {
             startDownloadPython: (options: T) => Promise<T>;
             // Returns the listener it attached -- pass it back into
-            // removeProgressListener to remove just this one (see preload.mjs).
+            // removeProgressListener to remove just this one (see preload.cjs).
             onProgressUpdate: (callback: (data: T) => void) => T;
             removeProgressListener: (listener: T) => void;
             cancelDownload: (requestId: string) => Promise<{ cancelled: boolean }>;

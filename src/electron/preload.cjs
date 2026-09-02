@@ -1,4 +1,10 @@
-import { contextBridge, ipcRenderer } from 'electron';
+// CommonJS, not ESM like the rest of this app's Electron code -- Electron's
+// sandboxed preload environment (sandbox: true) loads the preload script
+// through its own lightweight script loader, which only understands
+// require()/module.exports, not import/export syntax. A '.mjs' preload
+// throws "Cannot use import statement outside a module" the moment the
+// window opens under a sandboxed BrowserWindow.
+const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     pickFolder: (options) => ipcRenderer.invoke('dialog:openFolder', options),
@@ -95,4 +101,3 @@ contextBridge.exposeInMainWorld('electronAPIPythonDownload', {
     },
     removeProgressListener: (listener) => ipcRenderer.removeListener('progressUpdate', listener),
 });
-
