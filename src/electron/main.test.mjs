@@ -63,6 +63,8 @@ import {
   isValidClipTimestamp,
   resolveAppOrLibraryPath,
   rememberAppPath,
+  makeCookiesArgs,
+  reapStaleCookieCopies,
 } from './main.mjs';
 
 fs.mkdirSync(electronMocks.mockUserDataDir, { recursive: true });
@@ -114,14 +116,25 @@ describe('looksLikeNetscapeFormat', () => {
 });
 
 describe('convertHeaderCookiesToNetscape', () => {
-  it('converts a raw cookie-header string into Netscape lines for both youtube.com and google.com', () => {
+  it('converts a raw cookie-header string into Netscape lines scoped to youtube.com only', () => {
     const result = convertHeaderCookiesToNetscape('a=1; b=2');
     const { valid } = validateNetscapeLines(result);
     expect(valid).toBe(2); // distinct cookie names: a, b
     expect(result).toContain('.youtube.com\tTRUE\t/\tTRUE\t');
-    expect(result).toContain('.google.com\tTRUE\t/\tTRUE\t');
+    expect(result).not.toContain('google.com');
     expect(result).toContain('\ta\t1');
     expect(result).toContain('\tb\t2');
+  });
+
+  it('stamps a short (~30 day), not multi-year, expiry', () => {
+    const result = convertHeaderCookiesToNetscape('a=1');
+    const expiry = Number(result.split('\t')[4]);
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const thirtyOneDays = 60 * 60 * 24 * 31;
+    const oneYear = 60 * 60 * 24 * 365;
+    expect(expiry - nowSeconds).toBeGreaterThan(0);
+    expect(expiry - nowSeconds).toBeLessThan(thirtyOneDays);
+    expect(expiry - nowSeconds).toBeLessThan(oneYear);
   });
 
   it('collapses embedded line breaks before parsing (wrapped-copy paste damage)', () => {
@@ -423,10 +436,30 @@ describe('cookiesArgs', () => {
     expect(cookiesArgs()).toEqual([]);
   });
 
-  it('returns --cookies pointing at the saved cookies file when one exists', () => {
+  it('returns --cookies pointing at a fresh per-call copy, never the canonical file directly', () => {
+    resetSettingsAndCookies();
+    fs.writeFileSync(cookiesPath, '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1\tname\tvalue\n');
+    const [flag, copyPath] = cookiesArgs();
+    try {
+      expect(flag).toBe('--cookies');
+      expect(copyPath).not.toBe(cookiesPath);
+      expect(fs.readFileSync(copyPath, 'utf-8')).toBe(fs.readFileSync(cookiesPath, 'utf-8'));
+    } finally {
+      fs.rmSync(copyPath, { force: true });
+    }
+  });
+
+  it('gives each call its own copy, so concurrent runs cannot corrupt or race one another', () => {
     resetSettingsAndCookies();
     fs.writeFileSync(cookiesPath, '# Netscape HTTP Cookie File\n');
-    expect(cookiesArgs()).toEqual(['--cookies', cookiesPath]);
+    const [, copyPathA] = cookiesArgs();
+    const [, copyPathB] = cookiesArgs();
+    try {
+      expect(copyPathA).not.toBe(copyPathB);
+    } finally {
+      fs.rmSync(copyPathA, { force: true });
+      fs.rmSync(copyPathB, { force: true });
+    }
   });
 
   it('returns --cookies-from-browser when browser mode is configured with a supported browser', () => {
@@ -439,5 +472,53 @@ describe('cookiesArgs', () => {
     resetSettingsAndCookies();
     fs.writeFileSync(settingsPath, JSON.stringify({ cookiesMode: 'browser', cookiesBrowser: 'not-a-real-browser' }));
     expect(cookiesArgs()).toEqual([]);
+  });
+});
+
+describe('makeCookiesArgs (with an injected tmpDir)', () => {
+  it('never touches the canonical cookiesPath, only reads it', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-cookies-'));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-cookiescopy-'));
+    try {
+      const cookiesFile = path.join(dir, 'cookies.txt');
+      fs.writeFileSync(cookiesFile, 'original content');
+      const originalMtime = fs.statSync(cookiesFile).mtimeMs;
+      const args = makeCookiesArgs(() => ({ cookiesMode: 'file' }), cookiesFile, tmpDir);
+      const [, copyPath] = args();
+      expect(path.dirname(copyPath)).toBe(tmpDir);
+      expect(fs.readFileSync(cookiesFile, 'utf-8')).toBe('original content');
+      expect(fs.statSync(cookiesFile).mtimeMs).toBe(originalMtime);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('reapStaleCookieCopies', () => {
+  it('deletes only its own old copies, leaving recent copies and unrelated files alone', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-reap-'));
+    try {
+      const oldCopy = path.join(tmpDir, 'sloth-archiver-cookies-old.txt');
+      const recentCopy = path.join(tmpDir, 'sloth-archiver-cookies-recent.txt');
+      const unrelated = path.join(tmpDir, 'some-other-file.txt');
+      fs.writeFileSync(oldCopy, 'x');
+      fs.writeFileSync(recentCopy, 'x');
+      fs.writeFileSync(unrelated, 'x');
+      const oldTime = new Date(Date.now() - 60 * 60 * 1000); // 1 hour ago
+      fs.utimesSync(oldCopy, oldTime, oldTime);
+
+      reapStaleCookieCopies(10 * 60 * 1000, tmpDir); // 10 minute max age
+
+      expect(fs.existsSync(oldCopy)).toBe(false);
+      expect(fs.existsSync(recentCopy)).toBe(true);
+      expect(fs.existsSync(unrelated)).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not throw when the temp directory is missing', () => {
+    expect(() => reapStaleCookieCopies(1000, '/no/such/directory')).not.toThrow();
   });
 });

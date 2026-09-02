@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import {
   Alert,
   Autocomplete,
@@ -27,6 +27,8 @@ import { useYtdlpUpdater, type YtdlpUpdateStage } from '../hooks/useYtdlpUpdater
 import { useThemeMode } from '../hooks/useThemeMode.tsx';
 import { POPULAR_CONVERT_FORMATS, SUGGESTED_EXTRA_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { MAX_SIMULTANEOUS_DOWNLOADS_CEILING } from '../../utils/constants.ts';
+import { formatEpochLabel } from '../../utils/utils.ts';
+import BulkDeleteConfirmDialog from '../components/BulkDeleteConfirmDialog';
 
 // Display labels for yt-dlp's --cookies-from-browser browser keys -- kept
 // here rather than main.mjs's SUPPORTED_COOKIE_BROWSERS (the source of truth
@@ -102,6 +104,15 @@ export default function OptionsScreen() {
   const isUpdating = IN_PROGRESS_STAGES.has(stage);
   const [cookieLoaded, setCookieLoaded] = useState(false);
   const [cookieCount, setCookieCount] = useState(0);
+  const [cookiePath, setCookiePath] = useState('');
+  const [cookieSavedAtEpoch, setCookieSavedAtEpoch] = useState<number | null>(null);
+  const [offerDeleteCookieOpen, setOfferDeleteCookieOpen] = useState(false);
+  const [deletingOfferedCookie, setDeletingOfferedCookie] = useState(false);
+  // Set on the toggle-to-browser-mode click (handleModeChange), consumed by
+  // handleSelectBrowser once a browser is actually picked -- that's the
+  // point the mode switch is truly persisted (see its own comment) and the
+  // only point this offer should fire, not on every later browser reselect.
+  const arrivedAtBrowserModeFromFile = useRef(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [ytdlpInfoOpen, setYtdlpInfoOpen] = useState(false);
   const [cookieText, setCookieText] = useState('');
@@ -125,6 +136,8 @@ export default function OptionsScreen() {
     const status = await window.electronAPI.getCookieStatus();
     setCookieLoaded(status.loaded);
     setCookieCount(status.cookieCount);
+    setCookiePath(status.path || '');
+    setCookieSavedAtEpoch(status.savedAtEpoch ?? null);
   };
 
   const refreshCookiesConfig = async () => {
@@ -269,9 +282,13 @@ export default function OptionsScreen() {
   // though nothing was actually selected.
   const handleModeChange = async (_e: MouseEvent<HTMLElement>, mode: 'file' | 'browser' | null) => {
     if (!mode || mode === cookiesMode) return;
+    if (mode === 'browser' && cookiesMode === 'file') {
+      arrivedAtBrowserModeFromFile.current = true;
+    }
     setCookiesModeState(mode);
     setBrowserSavedMessage('');
     if (mode === 'file') {
+      arrivedAtBrowserModeFromFile.current = false;
       setCookiesBrowserState('');
       await window.electronAPI.setCookiesConfig({ cookiesMode: 'file', cookiesBrowser: '' });
     }
@@ -282,6 +299,21 @@ export default function OptionsScreen() {
     await window.electronAPI.setCookiesConfig({ cookiesMode: 'browser', cookiesBrowser: browser });
     const label = COOKIE_BROWSER_LABELS[browser] || browser;
     setBrowserSavedMessage(`Downloads will now pull cookies live from ${label}.`);
+    // Only offer once per genuine paste-mode -> browser-mode transition, not
+    // on every later reselection between browsers while already in browser
+    // mode -- see the ref's own comment.
+    if (arrivedAtBrowserModeFromFile.current) {
+      arrivedAtBrowserModeFromFile.current = false;
+      if (cookieLoaded) setOfferDeleteCookieOpen(true);
+    }
+  };
+
+  const handleConfirmOfferedDelete = async () => {
+    setDeletingOfferedCookie(true);
+    await window.electronAPI.deleteCookie();
+    await refreshStatus();
+    setDeletingOfferedCookie(false);
+    setOfferDeleteCookieOpen(false);
   };
 
   // Explicit "Clear" -- reverts the selection back to none of the browsers
@@ -514,6 +546,11 @@ export default function OptionsScreen() {
                     variant="outlined"
                   />
                 </Stack>
+                {cookieLoaded &&
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                    Stored at {cookiePath}
+                    {cookieSavedAtEpoch != null && ` · saved ${formatEpochLabel(cookieSavedAtEpoch)}`}
+                  </Typography>}
                 {savedMessage &&
                   <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>{savedMessage}</Typography>}
               </>
@@ -603,6 +640,16 @@ export default function OptionsScreen() {
           <Button variant="contained" onClick={handleSave}>Save</Button>
         </DialogActions>
       </Dialog>
+
+      <BulkDeleteConfirmDialog
+        open={offerDeleteCookieOpen}
+        title="Delete the stored cookie file?"
+        description="Downloads now pull cookies live from your browser, so the pasted cookie file is no longer used. Delete it, or keep it in case you switch back to Paste mode later."
+        deleting={deletingOfferedCookie}
+        error={null}
+        onCancel={() => setOfferDeleteCookieOpen(false)}
+        onConfirm={handleConfirmOfferedDelete}
+      />
     </Box>
   );
 }

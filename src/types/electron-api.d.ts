@@ -52,7 +52,7 @@ declare global {
             openFileExternally: (filePath: string) => Promise<void>
             saveCookie: (cookieText: string) => Promise<{ success: boolean; cookieCount: number; skipped: number }>
             deleteCookie: () => Promise<{ success: boolean }>
-            getCookieStatus: () => Promise<{ loaded: boolean; cookieCount: number }>
+            getCookieStatus: () => Promise<{ loaded: boolean; cookieCount: number; path?: string; savedAtEpoch?: number }>
             getCookiesConfig: () => Promise<{ cookiesMode: 'file' | 'browser'; cookiesBrowser: string; supportedBrowsers: string[] }>
             setCookiesConfig: (payload: { cookiesMode: 'file' | 'browser'; cookiesBrowser: string }) => Promise<{ success: boolean; cookiesMode: 'file' | 'browser'; cookiesBrowser: string }>
             getDownloadDir: () => Promise<{ downloadDir: string }>

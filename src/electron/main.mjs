@@ -11,7 +11,7 @@ import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs'
 import { getLatestYtdlpVersionFromPyPI, getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection } from './settings.mjs';
-import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS } from './cookies.mjs';
+import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
 import { ensurePlayablePreview } from './previewCache.mjs';
@@ -20,7 +20,7 @@ import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_
 
 // Re-exported so main.test.mjs (and anything else importing these from
 // './main.mjs') keeps working -- these are defined in cookies.mjs/videoInfo.mjs.
-export { looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, buildResolutions, reshapeVideoInfo, isDeadVideoInfo };
+export { looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, buildResolutions, reshapeVideoInfo, isDeadVideoInfo, makeCookiesArgs, reapStaleCookieCopies };
 
 const logFile = path.join(app.getPath("userData"), "main.log");
 function log(...args) {
@@ -128,6 +128,26 @@ export function assertValidHttpUrl(url, label = 'URL') {
 
 const { readSettings, writeSettings } = createSettingsStore(settingsPath);
 export const cookiesArgs = makeCookiesArgs(readSettings, cookiesPath);
+
+// cookies.txt holds a live, authenticated Google/YouTube session -- fixed up
+// on every startup (not just at write time, see cookies:save below) so an
+// existing file from before this app started restricting permissions gets
+// corrected on upgrade too.
+if (fs.existsSync(cookiesPath)) {
+    try {
+        fs.chmodSync(cookiesPath, 0o600);
+    } catch (err) {
+        log('[cookies] failed to restrict cookies.txt permissions', String(err));
+    }
+}
+
+// Per-run cookie-jar copies (see makeCookiesArgs, cookies.mjs) age out on
+// their own rather than being cleaned up by whichever process created them
+// -- swept once now (catching anything an earlier, uncleanly-terminated run
+// left behind) and periodically thereafter. unref() so this timer never
+// keeps the app alive on its own.
+reapStaleCookieCopies();
+setInterval(reapStaleCookieCopies, 10 * 60 * 1000).unref();
 const { readVideoInfoCache, writeVideoInfoCache } = createVideoInfoCache(videoInfoCachePath);
 const { ensureChannelIcon, ensureVideoThumbnail, ensurePlaylistThumbnail } = createThumbnailFetchers({
     ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, onLog: log,
@@ -815,7 +835,9 @@ ipcMain.handle('cookies:save', async (event, cookieText) => {
         throw new Error('No valid cookies could be parsed from that text.');
     }
 
-    fs.writeFileSync(cookiesPath, content, 'utf-8');
+    // mode: 0o600 -- this holds a live, authenticated session; no reason
+    // for it to be group/world-readable under a typical umask.
+    fs.writeFileSync(cookiesPath, content, { encoding: 'utf-8', mode: 0o600 });
     return { success: true, cookieCount: valid, skipped: invalid };
 });
 
@@ -831,7 +853,10 @@ ipcMain.handle('cookies:status', async () => {
         return { loaded: false, cookieCount: 0 };
     }
     const { valid } = validateNetscapeLines(fs.readFileSync(cookiesPath, 'utf-8'));
-    return { loaded: true, cookieCount: valid };
+    // path/savedAtEpoch back the Options screen's "where is this and how
+    // old is it" disclosure, alongside the existing loaded/count chip.
+    const { mtimeMs } = fs.statSync(cookiesPath);
+    return { loaded: true, cookieCount: valid, path: cookiesPath, savedAtEpoch: mtimeMs };
 });
 
 ipcMain.handle('cookies:getConfig', async () => {
