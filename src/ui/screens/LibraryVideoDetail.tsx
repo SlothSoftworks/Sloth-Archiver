@@ -71,6 +71,10 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const [createVersionError, setCreateVersionError] = useState<string | null>(null);
   const [refreshingMetadata, setRefreshingMetadata] = useState(false);
   const [refreshMetadataError, setRefreshMetadataError] = useState<string | null>(null);
+  // Set by the checkAndRepairEpochFiles effect below when either downloaded
+  // file is missing and couldn't be repaired -- null means either nothing's
+  // downloaded, or everything checked out fine.
+  const [fileWarning, setFileWarning] = useState<{ video: boolean; audio: boolean } | null>(null);
   // 'initial' vs 'swap' decides which backend call the isDone effect below
   // makes -- both flows reuse the same useDownloadVideo() instance below
   // (startDownload resets isDone/isError/progress on every call, so reusing
@@ -166,6 +170,49 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video.epochs]);
+
+  // downloadedFilePath/downloadedAudioFilePath (metadata.json) are absolute
+  // paths captured once at download time and never recomputed -- if the
+  // library folder ever gets reorganized outside a deliberate move-aware
+  // flow (a user moving folders by hand, e.g. into DefaultLibrary/, or, once
+  // built, a "move between sublibraries" feature that doesn't yet rewrite
+  // these fields itself), the stored path silently goes stale and every
+  // consumer below (playback, open file location, every ffmpeg action) fails
+  // on it. This runs on demand -- scoped to just the one epoch actually
+  // being viewed, not a library-wide scan -- checks and best-effort repairs
+  // it, and only surfaces fileWarning for whatever's still missing after
+  // that attempt.
+  //
+  // Depends on the metadata fields themselves (not just video.videoDir/
+  // selectedEpoch): those two identifiers can still be pointing at the
+  // *previous* video/epoch in the same render pass the two effects above
+  // update them in (state updates from an effect only land on the next
+  // render) -- keying on the fields this check actually reads guarantees it
+  // only ever runs once they're truly current, and naturally re-runs itself
+  // once more after its own repair (converging immediately, since the second
+  // pass finds the now-fixed path already on disk).
+  useEffect(() => {
+    if (!selectedEpoch || (!metadata.downloadedFilePath && !metadata.downloadedAudioFilePath)) {
+      setFileWarning(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const result = await window.electronAPI.checkAndRepairEpochFiles(video.videoDir, selectedEpoch);
+      if (cancelled || !result.success) return;
+      if (result.videoRepaired || result.audioRepaired) {
+        setMetadata((prev) => ({
+          ...prev,
+          ...(result.videoRepaired ? { downloadedFilePath: result.metadata!.downloadedFilePath } : {}),
+          ...(result.audioRepaired ? { downloadedAudioFilePath: result.metadata!.downloadedAudioFilePath } : {}),
+        }));
+        onLibraryChanged();
+      }
+      setFileWarning(result.videoMissing || result.audioMissing ? { video: !!result.videoMissing, audio: !!result.audioMissing } : null);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video.videoDir, selectedEpoch, metadata.downloadedFilePath, metadata.downloadedAudioFilePath]);
 
   const handleSelectEpoch = (epoch: string) => {
     const found = video.epochs.find((e) => e.epoch === epoch);
@@ -778,6 +825,24 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
         </Stack>
       </Stack>
       )}
+
+      <Dialog open={!!fileWarning} onClose={() => setFileWarning(null)}>
+        <DialogTitle>
+          {fileWarning?.video && fileWarning?.audio ? 'Video and audio files not found'
+            : fileWarning?.audio ? 'Audio file not found' : 'Video file not found'}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            The downloaded {fileWarning?.video && fileWarning?.audio ? 'video and audio files' : fileWarning?.audio ? 'audio file' : 'video file'} for
+            this version couldn't be found where this library entry expects {fileWarning?.video && fileWarning?.audio ? 'them' : 'it'} to be --
+            it may have been moved or deleted outside the app. Try re-downloading this version, or restore the file
+            to its original location yourself and reopen this video.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setFileWarning(null)} variant="contained">OK</Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={deleteDialogOpen} onClose={() => !deleting && setDeleteDialogOpen(false)}>
         <DialogTitle>Delete this video?</DialogTitle>

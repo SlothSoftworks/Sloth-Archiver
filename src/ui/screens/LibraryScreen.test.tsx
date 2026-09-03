@@ -17,6 +17,12 @@ function render(ui: ReactElement) {
   return rtlRender(<MemoryRouter><BulkAddProvider>{ui}</BulkAddProvider></MemoryRouter>);
 }
 
+// For the deep-link (?tag=) tests below -- same wrapper as render() but
+// starting on a specific route instead of the default "/".
+function renderAt(path: string, ui: ReactElement) {
+  return rtlRender(<MemoryRouter initialEntries={[path]}><BulkAddProvider>{ui}</BulkAddProvider></MemoryRouter>);
+}
+
 // LibraryVideoDetail is the biggest, most complex file in the app (its own
 // dedicated test file covers it) -- mocked out here so LibraryScreen's tests
 // stay scoped to its own navigation/state logic, and to confirm the props it
@@ -84,6 +90,11 @@ beforeEach(() => {
     refreshLibraryIndex: vi.fn().mockResolvedValue({ channels: makeChannels() }),
     refreshChannelIcon: vi.fn(),
     openDirectory: vi.fn(),
+    listLibraryTags: vi.fn().mockResolvedValue({ tags: [{ tagName: 'DefaultLibrary', folderName: 'DefaultLibrary', createdEpoch: 1 }] }),
+    createLibraryTag: vi.fn().mockResolvedValue({ success: true, tag: { tagName: 'Music', folderName: 'Music', createdEpoch: 2 } }),
+    getActiveLibraryTag: vi.fn().mockResolvedValue({ activeLibraryTag: 'DefaultLibrary', activeLibraryTagDir: '/lib/DefaultLibrary' }),
+    setActiveLibraryTag: vi.fn().mockResolvedValue({ success: true, activeLibraryTag: 'DefaultLibrary' }),
+    findLibraryVideo: vi.fn().mockResolvedValue({ found: false }),
     onLibraryBackgroundUpdate: vi.fn(),
     removeLibraryBackgroundUpdateListener: vi.fn(),
     deleteLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
@@ -211,13 +222,13 @@ describe('LibraryScreen', () => {
     await waitFor(() => expect(window.electronAPI.refreshLibraryIndex).toHaveBeenCalled());
   });
 
-  it('opening the library folder calls openDirectory with the configured path', async () => {
+  it('opening the library folder calls openDirectory with the active sublibrary\'s resolved path', async () => {
     const user = userEvent.setup();
     render(<LibraryScreen />);
     await screen.findByText('Channel A');
 
     await user.click(screen.getByRole('button', { name: 'Open library folder' }));
-    expect(window.electronAPI.openDirectory).toHaveBeenCalledWith('/lib');
+    expect(window.electronAPI.openDirectory).toHaveBeenCalledWith('/lib/DefaultLibrary');
   });
 
   it('refreshing a channel icon calls refreshChannelIcon with the channel folder/id', async () => {
@@ -465,6 +476,39 @@ describe('LibraryScreen', () => {
       await user.click(await screen.findByText('Channel A'));
 
       expect(screen.queryByText(/item.*selected/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('deep link with ?tag=', () => {
+    it('switches to the linked sublibrary before resolving the video, when it differs from the active one', async () => {
+      (window.electronAPI.listLibraryTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+        tags: [
+          { tagName: 'DefaultLibrary', folderName: 'DefaultLibrary', createdEpoch: 1 },
+          { tagName: 'Music', folderName: 'Music', createdEpoch: 2 },
+        ],
+      });
+      (window.electronAPI.findLibraryVideo as ReturnType<typeof vi.fn>).mockResolvedValue({
+        found: true, videoDir: '/lib/Channel A/vidA',
+      });
+
+      renderAt('/library/video/vidA?tag=Music', <LibraryScreen />);
+
+      await waitFor(() => expect(window.electronAPI.setActiveLibraryTag).toHaveBeenCalledWith('Music'));
+      // The lookup itself is scoped to the linked tag too -- not whatever
+      // was active when the link was clicked.
+      expect(window.electronAPI.findLibraryVideo).toHaveBeenCalledWith('vidA', 'Music');
+      expect(await screen.findByText('Detail: vidA')).toBeInTheDocument();
+    });
+
+    it('does not switch when the linked tag is already the active one', async () => {
+      (window.electronAPI.findLibraryVideo as ReturnType<typeof vi.fn>).mockResolvedValue({
+        found: true, videoDir: '/lib/Channel A/vidA',
+      });
+
+      renderAt('/library/video/vidA?tag=DefaultLibrary', <LibraryScreen />);
+
+      expect(await screen.findByText('Detail: vidA')).toBeInTheDocument();
+      expect(window.electronAPI.setActiveLibraryTag).not.toHaveBeenCalled();
     });
   });
 });

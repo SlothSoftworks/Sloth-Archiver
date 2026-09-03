@@ -23,7 +23,10 @@ import {
   PLAYLISTS_DIR_NAME,
   CLIPS_DIR_NAME,
   DEFAULT_LIBRARY_DIR_NAME,
-  defaultLibraryDir,
+  libraryTagDir,
+  listLibraryTags,
+  createLibraryTag,
+  checkAndRepairEpochFiles,
   buildClipFilePath,
   recordClip,
   listClips,
@@ -153,7 +156,7 @@ describe('writeLibraryEntry', () => {
   });
 
   it('lazily creates DefaultLibrary/library.json on first write, with tagName/createdEpoch', () => {
-    const metadataPath = path.join(defaultLibraryDir(libraryDir), 'library.json');
+    const metadataPath = path.join(libraryTagDir(libraryDir), 'library.json');
     expect(fs.existsSync(metadataPath)).toBe(false);
 
     writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
@@ -165,7 +168,7 @@ describe('writeLibraryEntry', () => {
 
   it('does not overwrite library.json on a later write', () => {
     writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
-    const metadataPath = path.join(defaultLibraryDir(libraryDir), 'library.json');
+    const metadataPath = path.join(libraryTagDir(libraryDir), 'library.json');
     const first = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
 
     writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'def456', uploader: 'Other Channel' }) });
@@ -540,7 +543,7 @@ describe('scanLibrary', () => {
   });
 
   it('skips the reserved playlists directory', async () => {
-    fs.mkdirSync(path.join(defaultLibraryDir(libraryDir), PLAYLISTS_DIR_NAME), { recursive: true });
+    fs.mkdirSync(path.join(libraryTagDir(libraryDir), PLAYLISTS_DIR_NAME), { recursive: true });
     const index = await scanLibrary(libraryDir);
     expect(index.channels).toEqual([]);
   });
@@ -600,6 +603,111 @@ describe('scanLibrary', () => {
 
     expect(index.channels[0].videos[0].clipCount).toBe(2);
   });
+
+});
+
+describe('checkAndRepairEpochFiles', () => {
+  // Simulates exactly what happened when the DefaultLibrary migration
+  // landed on top of an already-populated library: metadata.json still
+  // points at the file's old, pre-move location, but the real file is
+  // sitting right there in the epoch's own current, correct folder.
+  function writeStaleMetadataFile(epochDir, patch) {
+    const metadataPath = path.join(epochDir, 'metadata.json');
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    Object.assign(metadata, patch);
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+  }
+
+  it('refuses to check a videoDir outside the configured library folder', () => {
+    expect(() => checkAndRepairEpochFiles({ libraryDir, videoDir: '/etc', epoch: '1' }))
+      .toThrow(/outside the configured library folder/);
+  });
+
+  it('repairs a stale downloadedFilePath to the real file sitting in the current epoch folder', () => {
+    const { epochDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    const realPath = path.join(epochDir, 'video.mp4');
+    fs.writeFileSync(realPath, 'fake video bytes');
+    const staleOldPath = '/some/old/location/that/no/longer/exists/video.mp4';
+    writeStaleMetadataFile(epochDir, { downloadedFilePath: staleOldPath, downloadedResolution: '1080', downloadedFormat: 'mp4' });
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    expect(result.videoRepaired).toBe(true);
+    expect(result.videoMissing).toBe(false);
+    expect(result.metadata.downloadedFilePath).toBe(realPath);
+    // Repaired on disk too, not just in the returned result -- any other
+    // consumer reading metadata.json directly must see the fix as well.
+    expect(readMetadata(videoDir, epoch).downloadedFilePath).toBe(realPath);
+  });
+
+  it('repairs a stale downloadedAudioFilePath the same way', () => {
+    const { epochDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    const realPath = path.join(epochDir, 'audio.mp3');
+    fs.writeFileSync(realPath, 'fake audio bytes');
+    writeStaleMetadataFile(epochDir, { downloadedAudioFilePath: '/old/audio.mp3' });
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    expect(result.audioRepaired).toBe(true);
+    expect(result.audioMissing).toBe(false);
+    expect(result.metadata.downloadedAudioFilePath).toBe(realPath);
+  });
+
+  it('reports videoMissing (and leaves the stored path untouched) when no matching file exists', () => {
+    const { epochDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    const staleOldPath = '/genuinely/gone/video.mp4';
+    writeStaleMetadataFile(epochDir, { downloadedFilePath: staleOldPath });
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    // Never invents a path and never nulls one out just because it
+    // couldn't find it -- could just as easily be temporarily-unmounted
+    // removable media, not a real deletion.
+    expect(result.videoRepaired).toBe(false);
+    expect(result.videoMissing).toBe(true);
+    expect(result.metadata.downloadedFilePath).toBe(staleOldPath);
+    expect(readMetadata(videoDir, epoch).downloadedFilePath).toBe(staleOldPath);
+  });
+
+  it('does not mistake swapLibraryDownload\'s transient video.new.<ext> temp file for the real one', () => {
+    const { epochDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    // Mid-swap temp file only -- no real video.<ext> exists yet.
+    fs.writeFileSync(path.join(epochDir, 'video.new.mp4'), 'in-progress swap bytes');
+    const staleOldPath = '/old/video.mp4';
+    writeStaleMetadataFile(epochDir, { downloadedFilePath: staleOldPath });
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    expect(result.videoRepaired).toBe(false);
+    expect(result.videoMissing).toBe(true);
+  });
+
+  it('leaves an already-valid downloadedFilePath alone (no unnecessary write, no false repair flag)', () => {
+    const { epochDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    const realPath = path.join(epochDir, 'video.mp4');
+    fs.writeFileSync(realPath, 'fake video bytes');
+    recordLibraryDownload({ videoDir, epoch, filePath: realPath, resolution: '1080', format: 'mp4' });
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    expect(result.videoRepaired).toBe(false);
+    expect(result.videoMissing).toBe(false);
+    expect(result.metadata.downloadedFilePath).toBe(realPath);
+  });
+
+  it('reports neither missing nor repaired when nothing was ever downloaded', () => {
+    const { videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    expect(result).toMatchObject({ videoRepaired: false, audioRepaired: false, videoMissing: false, audioMissing: false });
+  });
 });
 
 describe('getLibraryIndex / refreshLibraryIndex caching', () => {
@@ -626,6 +734,67 @@ describe('getLibraryIndex / refreshLibraryIndex caching', () => {
     expect(refreshed).not.toBe(first);
     // A subsequent getLibraryIndex call for the same dir now reuses the refreshed one.
     expect(getLibraryIndex(libraryDir)).toBe(refreshed);
+  });
+
+  it('starts a new scan when only the libraryTag changes, same libraryDir', async () => {
+    createLibraryTag(libraryDir, 'Music');
+    writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ uploader: 'Default Channel' }) });
+    writeLibraryEntry({ libraryDir, libraryTag: 'Music', videoMetaData: baseVideoMetaData({ uploader: 'Music Channel' }) });
+
+    const defaultIndex = await getLibraryIndex(libraryDir, DEFAULT_LIBRARY_DIR_NAME);
+    const musicIndex = await getLibraryIndex(libraryDir, 'Music');
+
+    expect(defaultIndex).not.toBe(musicIndex);
+    expect(defaultIndex.channels.map((c) => c.displayName)).toEqual(['Default Channel']);
+    expect(musicIndex.channels.map((c) => c.displayName)).toEqual(['Music Channel']);
+    // Re-requesting the first tag still hits the cache rather than re-scanning.
+    expect(getLibraryIndex(libraryDir, DEFAULT_LIBRARY_DIR_NAME)).toBe(getLibraryIndex(libraryDir, DEFAULT_LIBRARY_DIR_NAME));
+  });
+});
+
+describe('listLibraryTags / createLibraryTag', () => {
+  it('returns [] for a libraryDir with nothing written yet', () => {
+    expect(listLibraryTags(libraryDir)).toEqual([]);
+  });
+
+  it('lists DefaultLibrary once something has been written to it', () => {
+    writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const tags = listLibraryTags(libraryDir);
+    expect(tags).toHaveLength(1);
+    expect(tags[0]).toMatchObject({ tagName: DEFAULT_LIBRARY_DIR_NAME, folderName: DEFAULT_LIBRARY_DIR_NAME });
+    expect(typeof tags[0].createdEpoch).toBe('number');
+  });
+
+  it('ignores a sibling folder with no library.json', () => {
+    fs.mkdirSync(path.join(libraryDir, 'Not A Library'), { recursive: true });
+    expect(listLibraryTags(libraryDir)).toEqual([]);
+  });
+
+  it('createLibraryTag creates the folder + library.json eagerly, sorted oldest-first', () => {
+    const tag = createLibraryTag(libraryDir, 'Music');
+    expect(tag.folderName).toBe('Music');
+    expect(fs.existsSync(path.join(libraryDir, 'Music', 'library.json'))).toBe(true);
+
+    createLibraryTag(libraryDir, 'Later Tag');
+    const tags = listLibraryTags(libraryDir);
+    expect(tags.map((t) => t.folderName)).toEqual(['Music', 'Later Tag']);
+  });
+
+  it('createLibraryTag sanitizes the requested name the same way channel names are', () => {
+    const tag = createLibraryTag(libraryDir, 'My/Tag');
+    expect(tag.folderName).toBe('My_Tag');
+  });
+
+  it('createLibraryTag refuses a name that already exists, valid tag or not', () => {
+    createLibraryTag(libraryDir, 'Music');
+    expect(() => createLibraryTag(libraryDir, 'Music')).toThrow(/already exists/);
+
+    fs.mkdirSync(path.join(libraryDir, 'Random Folder'), { recursive: true });
+    expect(() => createLibraryTag(libraryDir, 'Random Folder')).toThrow(/already exists/);
+  });
+
+  it('createLibraryTag throws when no libraryDir is configured', () => {
+    expect(() => createLibraryTag('', 'Music')).toThrow(/No library folder is configured/);
   });
 });
 

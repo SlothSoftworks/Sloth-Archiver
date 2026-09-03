@@ -109,6 +109,10 @@ beforeEach(() => {
     createClip: vi.fn().mockResolvedValue({ success: true, clip: { id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 5 } }),
     deleteClip: vi.fn().mockResolvedValue({ success: true }),
     convertClip: vi.fn().mockResolvedValue({ success: true, clip: { id: 'clip1', fileName: 'My Clip.mkv', title: 'My Clip', createdAt: 0, durationSeconds: 5 } }),
+    // Defaults to "everything checked out fine" so the file-check effect
+    // (fired on mount/epoch-change whenever a downloaded path is set) is a
+    // no-op for every test that isn't specifically exercising it.
+    checkAndRepairEpochFiles: vi.fn().mockResolvedValue({ success: true, videoRepaired: false, audioRepaired: false, videoMissing: false, audioMissing: false }),
   };
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),
@@ -480,5 +484,57 @@ describe('LibraryVideoDetail', () => {
 
     await waitFor(() => expect(onVersionsChanged).toHaveBeenCalled());
     expect(onDeleted).not.toHaveBeenCalled();
+  });
+
+  describe('on-demand file check (checkAndRepairEpochFiles)', () => {
+    it('checks the current epoch\'s files on mount when something is downloaded', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedAudioFilePath: '/v/audio.mp3' });
+      renderDetail(video);
+
+      await waitFor(() => expect(window.electronAPI.checkAndRepairEpochFiles).toHaveBeenCalledWith('/lib/Channel A/vidA', '100'));
+    });
+
+    it('never calls the check when nothing has been downloaded', async () => {
+      const video = makeVideo();
+      renderDetail(video);
+      await screen.findByText('Alpha Video');
+
+      expect(window.electronAPI.checkAndRepairEpochFiles).not.toHaveBeenCalled();
+    });
+
+    it('pops up a warning when the video file is missing and cannot be repaired', async () => {
+      (window.electronAPI.checkAndRepairEpochFiles as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true, videoRepaired: false, audioRepaired: false, videoMissing: true, audioMissing: false,
+      });
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4' });
+      renderDetail(video);
+
+      expect(await screen.findByText('Video file not found')).toBeInTheDocument();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'OK' }));
+      await waitFor(() => expect(screen.queryByText('Video file not found')).not.toBeInTheDocument());
+    });
+
+    it('pops up a combined warning when both video and audio are missing', async () => {
+      (window.electronAPI.checkAndRepairEpochFiles as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true, videoRepaired: false, audioRepaired: false, videoMissing: true, audioMissing: true,
+      });
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedAudioFilePath: '/v/audio.mp3' });
+      renderDetail(video);
+
+      expect(await screen.findByText('Video and audio files not found')).toBeInTheDocument();
+    });
+
+    it('silently applies a repaired path and notifies onLibraryChanged, without any warning popup', async () => {
+      (window.electronAPI.checkAndRepairEpochFiles as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true, videoRepaired: true, audioRepaired: false, videoMissing: false, audioMissing: false,
+        metadata: baseMetadata({ downloadedFilePath: '/lib/Channel A/vidA/100/video.mp4' }),
+      });
+      const video = makeVideo({ downloadedFilePath: '/v/old/video.mp4' });
+      const { onLibraryChanged } = renderDetail(video);
+
+      await waitFor(() => expect(onLibraryChanged).toHaveBeenCalled());
+      expect(screen.queryByText(/not found/)).not.toBeInTheDocument();
+    });
   });
 });

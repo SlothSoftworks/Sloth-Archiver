@@ -11,6 +11,8 @@ beforeEach(() => {
     fetchPlaylistEntries: vi.fn(),
     getVideoInfoPython: vi.fn(() => new Promise(() => {})),
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
+    listLibraryTags: vi.fn().mockResolvedValue({ tags: [] }),
+    getActiveLibraryTag: vi.fn().mockResolvedValue({ activeLibraryTag: 'DefaultLibrary', activeLibraryTagDir: '' }),
   };
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),

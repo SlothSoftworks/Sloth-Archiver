@@ -30,6 +30,8 @@ beforeEach(() => {
     overrideLibraryEntry: vi.fn(),
     addLibraryVersion: vi.fn(),
     deleteVideoInfoCacheEntry: vi.fn().mockResolvedValue({ success: true, existed: true }),
+    listLibraryTags: vi.fn().mockResolvedValue({ tags: [] }),
+    getActiveLibraryTag: vi.fn().mockResolvedValue({ activeLibraryTag: 'DefaultLibrary', activeLibraryTagDir: '' }),
   };
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),
@@ -128,7 +130,7 @@ describe('DownloaderScreen', () => {
     await user.click(within(screen.getByLabelText('Add to library')).getByRole('button'));
 
     await waitFor(() => expect(screen.getByText('Added to library')).toBeInTheDocument());
-    expect(window.electronAPI.addLibraryEntry).toHaveBeenCalledWith(videoResponse);
+    expect(window.electronAPI.addLibraryEntry).toHaveBeenCalledWith(videoResponse, 'DefaultLibrary');
     expect(screen.queryByRole('link', { name: 'My Great Video' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('URL')).toHaveValue('');
   });
@@ -143,7 +145,7 @@ describe('DownloaderScreen', () => {
     expect(screen.getByText(/under "Some Channel"/)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Override' }));
-    expect(window.electronAPI.overrideLibraryEntry).toHaveBeenCalledWith(videoResponse, '/d/v1');
+    expect(window.electronAPI.overrideLibraryEntry).toHaveBeenCalledWith(videoResponse, '/d/v1', 'DefaultLibrary');
   });
 
   it('"Add as new version" calls addLibraryVersion instead of overriding', async () => {
@@ -157,6 +159,37 @@ describe('DownloaderScreen', () => {
 
     expect(window.electronAPI.addLibraryVersion).toHaveBeenCalledWith(videoResponse, '/d/v1');
     expect(window.electronAPI.overrideLibraryEntry).not.toHaveBeenCalled();
+  });
+
+  it('scopes the duplicate check and the add itself to the picked target sublibrary, and links "View" to it', async () => {
+    (window.electronAPI.listLibraryTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+      tags: [
+        { tagName: 'DefaultLibrary', folderName: 'DefaultLibrary', createdEpoch: 1 },
+        { tagName: 'Music', folderName: 'Music', createdEpoch: 2 },
+      ],
+    });
+    const user = userEvent.setup();
+    await loadVideo(user);
+    await screen.findByRole('combobox', { name: 'Add to' });
+
+    await user.click(screen.getByRole('combobox', { name: 'Add to' }));
+    await user.click(await screen.findByRole('option', { name: 'Music' }));
+
+    (window.electronAPI.findLibraryVideo as ReturnType<typeof vi.fn>).mockResolvedValue({ found: false });
+    (window.electronAPI.addLibraryEntry as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true, videoDir: '/d', epoch: '1' });
+
+    await user.click(within(screen.getByLabelText('Add to library')).getByRole('button'));
+
+    await waitFor(() => expect(screen.getByText('Added to library')).toBeInTheDocument());
+    // The duplicate check (before the add) and the add itself must both be
+    // scoped to the sublibrary actually picked, not whatever's active --
+    // otherwise a video only present in a different sublibrary would wrongly
+    // look like a duplicate, or land in the wrong place.
+    expect(window.electronAPI.findLibraryVideo).toHaveBeenCalledWith(videoResponse.id, 'Music');
+    expect(window.electronAPI.addLibraryEntry).toHaveBeenCalledWith(videoResponse, 'Music');
+    // The "View" link must carry the same tag, or LibraryScreen's deep link
+    // (scoped to whatever's currently active there) would never find it.
+    expect(screen.getByRole('link', { name: 'View' })).toHaveAttribute('href', expect.stringContaining('tag=Music'));
   });
 
   it('shows an error dialog when adding to the library fails', async () => {
