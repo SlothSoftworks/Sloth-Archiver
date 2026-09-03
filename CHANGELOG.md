@@ -4,6 +4,8 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [0.26.1] — 2026-09-02
+- Add pre push validation for version updates
 
 ## [0.26.0] — 2026-09-02
 

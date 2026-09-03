@@ -20,22 +20,22 @@ itself.
 
 ## Download
 
-<!-- Update the version in these 5 links on every release -- currently 0.26.0.
+<!-- Update the version in these 5 links on every release -- currently 0.26.1.
      Each filename must match exactly what GitHub actually named the asset on
      the release page, NOT the local build's own filename -- GitHub's release
      upload sanitizes spaces in asset names to dots, so the two Windows .exe
      files differ from what "npm run dist" produces locally (e.g. the local
-     "SlothArchiver Setup 0.26.0.exe" becomes the asset
-     "SlothArchiver.Setup.0.26.0.exe"). Check the release's actual assets
+     "SlothArchiver Setup 0.26.1.exe" becomes the asset
+     "SlothArchiver.Setup.0.26.1.exe"). Check the release's actual assets
      list if unsure, don't assume the local build's naming carries over. -->
 
 | Platform | Link |
 |---|---|
-| Windows (installer) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.0/SlothArchiver.Setup.0.26.0.exe) |
-| Windows (portable, no install) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.0/SlothArchiver.0.26.0.exe) |
-| macOS (Apple Silicon) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.0/SlothArchiver-0.26.0-arm64.dmg) |
-| macOS (Intel) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.0/SlothArchiver-0.26.0.dmg) |
-| Linux (AppImage) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.0/SlothArchiver-0.26.0.AppImage) |
+| Windows (installer) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.1/SlothArchiver.Setup.0.26.1.exe) |
+| Windows (portable, no install) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.1/SlothArchiver.0.26.1.exe) |
+| macOS (Apple Silicon) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.1/SlothArchiver-0.26.1-arm64.dmg) |
+| macOS (Intel) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.1/SlothArchiver-0.26.1.dmg) |
+| Linux (AppImage) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.1/SlothArchiver-0.26.1.AppImage) |
 
 All builds are unsigned, so your OS will show a first-run security warning —
 see [Installing](#installing) below.
