@@ -8,7 +8,7 @@
   "type": "module",
   "main": "dist/electron/main.mjs",
   "build": {
-    "appId": "com.lltrash.slotharchiver.app",
+    "appId": "com.slothsoftworks.slotharchiver.app",
     "productName": "SlothArchiver",
     "files": [
       "dist/electron/**/*",

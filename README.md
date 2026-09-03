@@ -1,7 +1,7 @@
 # SlothArchiver
 
-[![Latest Release](https://img.shields.io/github/v/release/lltrash94/Sloth-Archiver)](https://github.com/lltrash94/Sloth-Archiver/releases/latest)
-[![CI](https://github.com/lltrash94/Sloth-Archiver/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/lltrash94/Sloth-Archiver/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/SlothSoftworks/Sloth-Archiver)](https://github.com/SlothSoftworks/Sloth-Archiver/releases/latest)
+[![CI](https://github.com/SlothSoftworks/Sloth-Archiver/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/SlothSoftworks/Sloth-Archiver/actions/workflows/ci.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational)](#download)
 
@@ -31,11 +31,11 @@ itself.
 
 | Platform | Link |
 |---|---|
-| Windows (installer) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver.Setup.0.26.2.exe) |
-| Windows (portable, no install) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver.0.26.2.exe) |
-| macOS (Apple Silicon) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver-0.26.2-arm64.dmg) |
-| macOS (Intel) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver-0.26.2.dmg) |
-| Linux (AppImage) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver-0.26.2.AppImage) |
+| Windows (installer) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver.Setup.0.26.2.exe) |
+| Windows (portable, no install) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver.0.26.2.exe) |
+| macOS (Apple Silicon) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver-0.26.2-arm64.dmg) |
+| macOS (Intel) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver-0.26.2.dmg) |
+| Linux (AppImage) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver-0.26.2.AppImage) |
 
 All builds are unsigned, so your OS will show a first-run security warning —
 see [Installing](#installing) below.
