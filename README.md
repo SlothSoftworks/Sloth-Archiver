@@ -91,9 +91,9 @@ that combination is the whole point of SlothArchiver; A simple catalogued librar
 
 - **No paywall, ever** — every feature below is free today and will stay free in
   future updates. No tiers, no locked resolutions, no daily download caps.
-- **Download video or audio** from YouTube and a growing list of other platforms
-  (SoundCloud, TikTok, Instagram, Facebook, Dailymotion, and more), in the quality
-  you choose.
+- **Download video or audio** from YouTube and virtually any other site yt-dlp
+  supports — 1800+ platforms, including SoundCloud, TikTok, Instagram, Facebook,
+  Dailymotion, and more — in the quality you choose.
 - **A real library, not just a downloads folder** — every video is organized by
   channel, searchable, and keeps a history of versions if you ever re-fetch it.
   Most downloaders stop at "file saved somewhere"; SlothArchiver actually keeps
@@ -169,13 +169,13 @@ all straight from the library view, no other software required.
 
 ![Demo: media utilities](docs/media/media-utilities.gif)
 
-### Download from more than just YouTube
+### Download from virtually any site yt-dlp supports
 
-SoundCloud, TikTok, Instagram, Facebook, Dailymotion, and more — paste a link
-from any of them and SlothArchiver figures out the platform automatically and
-gets you a download, no separate tool needed for each site. This list keeps
-growing as development continues, so expect more platforms to be supported
-over time.
+Not just YouTube — SlothArchiver works with virtually any of the
+[1800+ sites yt-dlp itself supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md),
+including SoundCloud, TikTok, Instagram, Facebook, Dailymotion, and more.
+Paste a link from any of them and SlothArchiver figures out the platform
+automatically and gets you a download, no separate tool needed for each site.
 
 ![Demo: multi-platform downloads](docs/media/multi-platform-downloads.gif)
 
@@ -254,7 +254,7 @@ SlothArchiver is a personal-use, local tool — everything it downloads stays in
 >TL;DR: It's a gray area as far as YouTube is concerned but not illegal. This is a personal, local-only archiving tool — staying within your platform's ToS and your local copyright law is on you.
 
 #### What platforms does SlothArchiver support downloading from?
-At time of writing we support YouTube for downloads, library, and playlists. We support TikTok, Instagram, Twitter, Facebook, SoundCloud, and Dailymotion for pure downloads.
+At time of writing we support YouTube for downloads, library, and playlists. For pure downloads, we support virtually any site [yt-dlp itself supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) — 1800+ platforms — including TikTok, Instagram, Twitter, Facebook, SoundCloud, and Dailymotion, to name a few with dedicated recognition in the app's UI.
 
 #### What operating systems does SlothArchiver run on?
 Currently we support Mac, Linux, and Windows. This is a solo dev operation and I manually create the executables per system, so I expect there could be OS issues as more people try out the software on their systems. If you experience any issues, let me know by raising an issue and detailing it there.
