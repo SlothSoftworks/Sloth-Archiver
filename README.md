@@ -5,8 +5,13 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational)](#download)
 
-**Your own personal, offline video archive — for people too lazy to fight with
+**Your own personal, offline video archive — for people who like to keep their video archiving sweet and simple and not fight with
 Docker, servers, or a complicated setup to get one.**
+
+<p align="center">
+  <img src="assets/icon.png" alt="SlothArchiver" width="200">
+</p>
+
 
 *Free and open source — no subscriptions, no accounts, no server to run.*
 
@@ -52,12 +57,12 @@ your own machine.
 
 ## Why SlothArchiver?
 
-Most tools in this space make you work for a real archive. Self-hosted servers give
+Most tools in this space seem make you work for a real archive. Self-hosted servers give
 you one, but only if you're willing to run Docker, manage a server, and keep a
 machine on around the clock. Lightweight desktop downloaders skip all of that
 setup, but most of them just drop files in a folder and call it done — no real
 organization, nothing actually archived, just a pile of files you have to manage
-yourself — or eventually ask you to pay once you want more than that.
+yourself and the ones that do have some sort of paywall. So I got tired of waiting for the solution and started to develop it myself.
 
 SlothArchiver is built to be the lazy option in the best sense: a normal app you
 install like any other, with zero server to babysit and zero config to get right.
@@ -81,39 +86,6 @@ that.
 
 No other tool in this space currently checks every one of those boxes at once —
 that combination is the whole point of SlothArchiver; A simple catalogued library, organized in one place and fully local.
-
-## Installing
-
-SlothArchiver's builds aren't code-signed (that requires a paid certificate
-this project doesn't have set up) — so the first time you open one, your OS
-will warn you it's from an unidentified/unrecognized developer. This is
-expected for any unsigned app, not a sign anything's actually wrong.
-Here's how to get past each OS's warning:
-
-**Windows** — you'll see "Windows protected your PC" (SmartScreen). Click
-**More info**, then **Run anyway**.
-
-![Windows SmartScreen bypass](docs/media/install-windows-smartscreen.png)
-
-**macOS** — you'll see a message that the app "cannot be opened because it is
-from an unidentified developer," and just double-clicking won't offer a way
-past it. Instead: right-click (or Control-click) the app → **Open** → confirm
-**Open** in the dialog that appears. You only need to do this once — after
-that, it opens normally. If macOS still blocks it, go to **System Settings →
-Privacy & Security**, scroll down, and click **Open Anyway** next to the
-message about SlothArchiver.
-
-![macOS Gatekeeper bypass](docs/media/install-macos-gatekeeper.png)
-
-**Linux (AppImage)** — make it executable first, then run it directly:
-```
-chmod +x SlothArchiver-<version>.AppImage
-./SlothArchiver-<version>.AppImage
-```
-If it fails to launch at all with a FUSE-related error, your distro likely
-needs `libfuse2` installed (common on newer distros that dropped FUSE2 by
-default, e.g. recent Ubuntu/Fedora releases) — install it via your package
-manager and try again.
 
 ## Features
 
@@ -214,6 +186,42 @@ SlothArchiver works through them several at a time in the background, with
 per-item progress, retry, and skip, so one bad link never holds up the rest.
 
 ![Demo: bulk downloading](docs/media/bulk-downloading.gif)
+
+
+
+## Installing
+
+SlothArchiver's builds aren't code-signed (that requires a paid certificate
+this project doesn't have set up) — so the first time you open one, your OS
+will warn you it's from an unidentified/unrecognized developer. This is
+expected for any unsigned app, not a sign anything's actually wrong.
+Here's how to get past each OS's warning:
+
+**Windows** — you'll see "Windows protected your PC" (SmartScreen). Click
+**More info**, then **Run anyway**.
+
+![Windows SmartScreen bypass](docs/media/install-windows-smartscreen.png)
+
+**macOS** — you'll see a message that the app "cannot be opened because it is
+from an unidentified developer," and just double-clicking won't offer a way
+past it. Instead: right-click (or Control-click) the app → **Open** → confirm
+**Open** in the dialog that appears. You only need to do this once — after
+that, it opens normally. If macOS still blocks it, go to **System Settings →
+Privacy & Security**, scroll down, and click **Open Anyway** next to the
+message about SlothArchiver.
+
+![macOS Gatekeeper bypass](docs/media/install-macos-gatekeeper.png)
+
+**Linux (AppImage)** — make it executable first, then run it directly:
+```
+chmod +x SlothArchiver-<version>.AppImage
+./SlothArchiver-<version>.AppImage
+```
+If it fails to launch at all with a FUSE-related error, your distro likely
+needs `libfuse2` installed (common on newer distros that dropped FUSE2 by
+default, e.g. recent Ubuntu/Fedora releases) — install it via your package
+manager and try again.
+
 
 ## How it works
 
