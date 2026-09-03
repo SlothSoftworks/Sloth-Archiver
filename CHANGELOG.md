@@ -5,6 +5,25 @@ do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
 
+## [0.26.0] — 2026-09-02
+
+- **yt-dlp updates are faster and more trustworthy.** Instead of rebuilding
+  yt-dlp from source on your machine, the app now fetches yt-dlp's own
+  official signed release and verifies it before installing. Checking for
+  updates while offline now correctly shows your current version instead of
+  an error.
+- **Cookie-based login is safer to use.** A clear warning now explains the
+  real-account risk before you use it. Pasted cookies expire and prompt for
+  a renewal instead of being trusted indefinitely, and concurrent downloads
+  no longer share the same cookie file, avoiding rare corruption when
+  several downloads run at once.
+- **Tightened several internal security boundaries** — sandboxed the app
+  window against malicious pop-ups/navigation, and locked down the file
+  paths and external process arguments the media-tools and library features
+  use to only what they should actually be able to touch.
+- New app icon.
+
+
 ## [0.25.3] — 2026-08-31
 
 First documented release. Feature set at this point:
