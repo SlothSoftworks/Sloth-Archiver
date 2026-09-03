@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, defaultLibraryDir, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -467,7 +467,7 @@ ipcMain.handle('library:refreshIndex', async () => {
 // loading state and the caller gets back a fresh index once it's done.
 ipcMain.handle('library:refreshChannelIcon', async (e, { channelFolderName, channelId }) => {
     const { libraryDir } = readSettings();
-    const channelDir = path.join(libraryDir, channelFolderName);
+    const channelDir = path.join(defaultLibraryDir(libraryDir), channelFolderName);
     await ensureChannelIcon(channelDir, channelId, { force: true });
     return refreshLibraryIndex(libraryDir);
 });
@@ -697,7 +697,7 @@ ipcMain.handle('library:refreshPlaylist', async (e, playlistId) => {
             freshUploader: fresh.uploader,
             index,
         });
-        const playlistDir = path.join(libraryDir, PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
+        const playlistDir = path.join(defaultLibraryDir(libraryDir), PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
         ensurePlaylistThumbnail(playlistDir, result.entries[0]?.thumbnailUrl);
         return result;
     } catch (err) {

@@ -22,6 +22,8 @@ import {
   enrichPlaylistEntry,
   PLAYLISTS_DIR_NAME,
   CLIPS_DIR_NAME,
+  DEFAULT_LIBRARY_DIR_NAME,
+  defaultLibraryDir,
   buildClipFilePath,
   recordClip,
   listClips,
@@ -132,7 +134,7 @@ describe('writeLibraryEntry', () => {
     const { channelDir, videoDir, epochDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
 
     expect(fs.existsSync(epochDir)).toBe(true);
-    expect(channelDir).toBe(path.join(libraryDir, 'Some Channel'));
+    expect(channelDir).toBe(path.join(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Some Channel'));
     expect(videoDir).toBe(path.join(channelDir, 'abc123'));
 
     expect(metadata.schemaVersion).toBe(3);
@@ -148,6 +150,28 @@ describe('writeLibraryEntry', () => {
   it('defaults resolutions to an empty array when not provided', () => {
     const { metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ resolutions: undefined }) });
     expect(metadata.resolutions).toEqual([]);
+  });
+
+  it('lazily creates DefaultLibrary/library.json on first write, with tagName/createdEpoch', () => {
+    const metadataPath = path.join(defaultLibraryDir(libraryDir), 'library.json');
+    expect(fs.existsSync(metadataPath)).toBe(false);
+
+    writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+
+    const written = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    expect(written.tagName).toBe(DEFAULT_LIBRARY_DIR_NAME);
+    expect(typeof written.createdEpoch).toBe('number');
+  });
+
+  it('does not overwrite library.json on a later write', () => {
+    writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const metadataPath = path.join(defaultLibraryDir(libraryDir), 'library.json');
+    const first = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+
+    writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'def456', uploader: 'Other Channel' }) });
+    const second = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+
+    expect(second).toEqual(first);
   });
 });
 
@@ -516,7 +540,7 @@ describe('scanLibrary', () => {
   });
 
   it('skips the reserved playlists directory', async () => {
-    fs.mkdirSync(path.join(libraryDir, PLAYLISTS_DIR_NAME), { recursive: true });
+    fs.mkdirSync(path.join(defaultLibraryDir(libraryDir), PLAYLISTS_DIR_NAME), { recursive: true });
     const index = await scanLibrary(libraryDir);
     expect(index.channels).toEqual([]);
   });

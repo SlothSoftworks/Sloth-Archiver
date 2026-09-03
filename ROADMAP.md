@@ -17,6 +17,7 @@ README's FAQ for more on that.
   currently supported to, eventually, everything yt-dlp itself supports.
 - **Custom player improvements** — new playback features and general
   improvements to the app's built-in player.
+- **More Library flexibility** — More options to tag and explore libraries in different partitions so you can save and catalogue your downloads in different library navigation views if you choose.
 
 Got a feature you'd like to see? Check the README's FAQ for how to raise it
 as an issue.
