@@ -5,11 +5,10 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  // .venv-build is the Python venv build-ytdlp-bin.mjs creates locally (pip-
-  // installed packages, including vendored/minified JS files from yt-dlp's
-  // own JS-challenge solver and urllib3) -- never source this repo owns, and
-  // not present in a fresh checkout, but picked up by the **/*.{js,mjs} glob
-  // below whenever it exists on disk.
+  // .venv-build is a leftover Python virtualenv some local checkouts may
+  // still have on disk from an old build process this project no longer
+  // uses -- never source this repo owns, and not present in a fresh
+  // checkout, but picked up by the **/*.{js,mjs} glob below if it exists.
   { ignores: ['dist', '.venv-build', 'build'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
@@ -30,9 +29,7 @@ export default tseslint.config(
       ],
     },
   },
-  // Electron main process + build scripts -- plain Node ESM, no bundler/JSX,
-  // previously outside this config's `files` scope entirely (CC-013,
-  // reports/cleanCodeAnalysis.md).
+  // Electron main process + build scripts -- plain Node ESM, no bundler/JSX.
   {
     extends: [js.configs.recommended],
     files: ['**/*.{js,mjs}'],

@@ -20,5 +20,3 @@ export function formatComment(comment: string): React.ReactNode {
       </React.Fragment>
     ));
   }
-
-export default { formatComment }

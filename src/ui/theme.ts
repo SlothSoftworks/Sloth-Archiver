@@ -8,5 +8,3 @@ const darkTheme = createTheme({ palette: { mode: 'dark' } });
 export function getTheme(mode: ThemeMode) {
   return mode === 'dark' ? darkTheme : lightTheme;
 }
-
-export default lightTheme;

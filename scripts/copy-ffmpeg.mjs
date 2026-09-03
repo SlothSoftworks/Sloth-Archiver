@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 import ffmpegPath from 'ffmpeg-static';
@@ -24,6 +25,16 @@ for (const [name, srcPath] of [['ffmpeg', ffmpegPath], ['ffprobe', ffprobeStatic
     const destPath = path.join(outDir, destName);
     fs.copyFileSync(srcPath, destPath);
     fs.chmodSync(destPath, 0o755);
+
+    // Catches a stale/wrong-arch binary left in node_modules (ffmpeg-static's
+    // own postinstall only checks whether a file already exists, not whether
+    // it's the right one) as a loud build-time failure instead of a
+    // confusing runtime spawn error later.
+    try {
+        execFileSync(destPath, ['-version'], { stdio: 'ignore' });
+    } catch (err) {
+        throw new Error(`${destPath} doesn't run on this machine (${err.message}) -- try deleting node_modules/${name}-static and reinstalling.`);
+    }
 }
 
 console.log(`Copied ffmpeg/ffprobe binaries into ${outDir}`);

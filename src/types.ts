@@ -91,18 +91,6 @@ export type PlaylistSnapshot = {
     thumbnailPath: string | null;
 }
 
-export type VideoDataProps = {
-    videoMetaData: {
-        fullTitle: string;
-        description: string;
-        thumbnail: string;
-        resolutions: Resolution[];
-        originalUrl: string;
-        durationString: string;
-        uploadDate: string;
-    }
-  }
-
 export type DownloadProgressMessage = {
     type: string;
     // Echoed back from the DownloadVideoParams that started this download --
