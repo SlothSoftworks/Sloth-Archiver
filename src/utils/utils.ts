@@ -98,6 +98,43 @@ function getBestDownloadedQuality(epochs: { metadata: LibraryVideoMetadata }[]):
   return null;
 }
 
+// Backs the library's video-thumbnail and channel-icon grids
+// (LibraryScreen.tsx). Both already use CSS `auto-fill`/`minmax()` so column
+// count grows with available width, but a flat px floor still caps how big
+// each column can get -- auto-fill only ever packs as many floor-sized
+// columns as fit, then `1fr` distributes just the small leftover remainder
+// among them, so cards converge on the floor value regardless of how wide
+// the window actually is. `clamp()` against a `vw` term ties the floor to
+// viewport width too, growing it on wider windows and capping it at `maxPx`
+// so it doesn't run away on ultrawide/4K; `minPx` is a hard safety floor so
+// columns never shrink to nothing on a tiny window.
+function responsiveGridTemplateColumns(minPx: number, vwPreferred: string, maxPx: number): string {
+  return `repeat(auto-fill, minmax(clamp(${minPx}px, ${vwPreferred}, ${maxPx}px), 1fr))`;
+}
+
+// The library's thumbnail-size slider (LibraryBottomBar.tsx) needs to stay
+// meaningful at any window width, not just its default one. Passing the
+// slider's raw px value as responsiveGridTemplateColumns' `minPx` doesn't
+// work for that: `minPx` only wins while it's bigger than the vw term, so on
+// a wide-enough window the vw term outgrows the slider's entire range and
+// dragging the slider does nothing until it's dragged past that vw value --
+// on a wide monitor that could be most or all of the slider's travel.
+// Instead, express the slider's chosen px size AT THIS reference window
+// width as an equivalent vw percentage, so the vw term itself scales with
+// the slider (not just with the window): at REFERENCE_WIDTH_PX (this app's
+// default `BrowserWindow` width, main.mjs) the result is exactly
+// `thumbnailSize`px, matching the slider's own label; at any other width it
+// scales proportionally, so the same slider position always maps to a
+// different, visibly distinct size and the slider never goes inert. minPx/
+// maxPx below are just safety bounds (tiny/huge windows), not meant to be
+// hit across the slider's normal range.
+const THUMBNAIL_GRID_REFERENCE_WIDTH_PX = 1280;
+
+function thumbnailGridTemplateColumns(thumbnailSize: number): string {
+  const vw = (thumbnailSize / THUMBNAIL_GRID_REFERENCE_WIDTH_PX) * 100;
+  return responsiveGridTemplateColumns(120, `${vw.toFixed(3)}vw`, 720);
+}
+
 // Electron's ipcRenderer.invoke wraps any rejected IPC handler's error in a
 // generic "Error invoking remote method '<channel>': Error: <message>"
 // wrapper before it reaches the renderer -- an implementation detail of the
@@ -109,5 +146,5 @@ function cleanElectronErrorMessage(message: string): string {
   return message.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '');
 }
 
-export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, cleanElectronErrorMessage };
+export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage };
 

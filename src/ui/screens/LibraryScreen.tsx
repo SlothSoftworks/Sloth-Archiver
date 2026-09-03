@@ -11,7 +11,6 @@ import {
   Chip,
   CircularProgress,
   FormControl,
-  Grid,
   IconButton,
   InputLabel,
   MenuItem,
@@ -33,7 +32,7 @@ import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
-import { convertYYYYMMDDStringToDate, buildAppVideoUrl, getBestDownloadedQuality } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns } from '../../utils/utils.ts';
 import LibraryVideoDetail from './LibraryVideoDetail';
 import PlaylistsSection, { type PlaylistBulkBar } from '../components/PlaylistsSection';
 import LibrarySearchBar from '../components/LibrarySearchBar';
@@ -760,7 +759,7 @@ function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selected
       ) : isSearching && filtered.length === 0 && (
         <Typography variant="body2" color="text.secondary">No videos match "{query}".</Typography>
       )}
-      <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${thumbnailSize}px, 1fr))`, gap: 2 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: thumbnailGridTemplateColumns(thumbnailSize), gap: 2 }}>
         {filtered.map(({ video, channelName }) => (
           <VideoCard
             key={video.videoDir}
@@ -813,29 +812,27 @@ function ChannelList({ channels, libraryDir, viewMode, onViewModeChange, onSelec
       ) : isSearching && filtered.length === 0 && (
         <Typography variant="body2" color="text.secondary">No channels match "{query}".</Typography>
       )}
-      <Grid container spacing={2}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: responsiveGridTemplateColumns(260, '20vw', 400), gap: 2 }}>
         {filtered.map((channel) => (
-          <Grid size={{ xs: 12, sm: 6, md: 4 }} key={channel.channelFolderName}>
-            <Card variant="outlined">
-              <CardActionArea onClick={() => onSelectChannel(channel)} sx={{ p: 2 }}>
-                <Stack direction="row" spacing={1.5} alignItems="center">
-                  {channel.channelIconPath ? (
-                    <Avatar src={buildAppVideoUrl(channel.channelIconPath)} alt={channel.displayName} />
-                  ) : (
-                    <FolderIcon color="primary" />
-                  )}
-                  <Box sx={{ minWidth: 0 }}>
-                    <Typography variant="subtitle1" noWrap>{channel.displayName}</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {channel.videos.length} video{channel.videos.length === 1 ? '' : 's'}
-                    </Typography>
-                  </Box>
-                </Stack>
-              </CardActionArea>
-            </Card>
-          </Grid>
+          <Card variant="outlined" key={channel.channelFolderName}>
+            <CardActionArea onClick={() => onSelectChannel(channel)} sx={{ p: 2 }}>
+              <Stack direction="row" spacing={1.5} alignItems="center">
+                {channel.channelIconPath ? (
+                  <Avatar src={buildAppVideoUrl(channel.channelIconPath)} alt={channel.displayName} />
+                ) : (
+                  <FolderIcon color="primary" />
+                )}
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="subtitle1" noWrap>{channel.displayName}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {channel.videos.length} video{channel.videos.length === 1 ? '' : 's'}
+                  </Typography>
+                </Box>
+              </Stack>
+            </CardActionArea>
+          </Card>
         ))}
-      </Grid>
+      </Box>
     </Box>
   );
 }
@@ -894,7 +891,7 @@ function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, 
       </Stack>
       {isSearching && filtered.length === 0 &&
         <Typography variant="body2" color="text.secondary">No videos match "{query}".</Typography>}
-      <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${thumbnailSize}px, 1fr))`, gap: 2 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: thumbnailGridTemplateColumns(thumbnailSize), gap: 2 }}>
         {filtered.map((video) => (
           <VideoCard
             key={video.videoDir}
