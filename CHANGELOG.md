@@ -4,6 +4,22 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [0.26.2] — 2026-09-02
+- **Library thumbnails and channel icons now scale with your window, not
+  just a fixed size.** Both grids used to cap out at a flat pixel size no
+  matter how wide the window got, so a large monitor didn't actually show
+  bigger thumbnails. They now grow with the window instead, and the
+  thumbnail-size slider stays meaningful at any window width instead of
+  losing effect once the window gets wide.
+- **Prep work for upcoming SubLibrary/tag support.** New videos and
+  playlists are now saved one level deeper on disk, inside a `DefaultLibrary`
+  folder — internal groundwork for a future feature that lets you split your
+  library into separate tagged sections. If you're upgrading from an earlier
+  version, your existing library won't show up in the Library tab until you
+  add something new to it — nothing is deleted, your files are exactly where
+  they were, just outside where the app currently looks. A real migration
+  path will ship before this becomes the default experience for everyone.
+
 ## [0.26.1] — 2026-09-02
 - Add pre push validation for version updates
 
