@@ -55,7 +55,11 @@ export type BulkAddItem = {
   playlistId?: string;
 };
 
-type StartOptions = { download: boolean; targetResolution: string };
+// targetLibraryTag is optional -- omitted (single-sublibrary case, or
+// "just use whatever's active"), addLibraryEntry falls back to the active
+// tag server-side. One tag for the whole batch, no per-item override, same
+// as targetResolution above.
+type StartOptions = { download: boolean; targetResolution: string; targetLibraryTag?: string };
 
 // Derived from the item's own stashed fields (not a separate flag, which
 // could drift) -- 'download' means the library entry already exists and
@@ -295,7 +299,7 @@ function useBulkAddQueueState() {
         return;
       }
 
-      const added = await window.electronAPI.addLibraryEntry(videoInfo);
+      const added = await window.electronAPI.addLibraryEntry(videoInfo, optionsRef.current.targetLibraryTag);
 
       if (!optionsRef.current.download) {
         updateItem(item.id, { status: 'done' });

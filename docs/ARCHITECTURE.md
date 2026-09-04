@@ -2,8 +2,9 @@
 
 sloth-archiver is a desktop application (built on Electron, with a React/TypeScript
 interface) for downloading and archiving video and audio content — primarily from
-YouTube, with support for several other platforms — into a personal, local library
-on the user's own machine. It wraps the well-known `yt-dlp` tool for the actual
+YouTube, with download support for virtually any other site yt-dlp itself
+supports (1800+ platforms) — into a personal, local library on the user's own
+machine. It wraps the well-known `yt-dlp` tool for the actual
 extraction/download work and `ffmpeg` for local media processing, and adds a
 persistent, browsable library on top: versioned entries, playlists, search, and a
 built-in player.

@@ -4,6 +4,25 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [0.27.0] — 2026-09-03
+- **Split your library into separate sublibraries.** Create as many as you
+  want from the Library tab, switch between them, and pick which one a new
+  download or bulk add lands in. Move any video — every saved version, its
+  clips, and its channel's icon if needed — to a different sublibrary at any
+  time, individually or several at once from the bulk-selection bar. This is
+  the feature the `DefaultLibrary` groundwork from 0.26.2 was preparing for.
+- **Tag your videos, and filter the library by tag.** Add one or more tags to
+  a video from its detail view (next to its quality badge), or tag several
+  videos at once from the bulk-selection bar. A filter icon next to the sort
+  control lets you narrow the library down to videos carrying every tag you
+  select, layered on top of your current search and sort.
+- **A video whose downloaded file goes missing — moved, renamed, or deleted
+  outside the app — now recovers automatically where possible.** Opening it
+  triggers a quick check that repairs the stored file link if a matching
+  file is found nearby; if nothing's found, a clear warning tells you to
+  re-download it or locate it yourself instead of the player just failing
+  silently.
+
 ## [0.26.2] — 2026-09-02
 - **Library thumbnails and channel icons now scale with your window, not
   just a fixed size.** Both grids used to cap out at a flat pixel size no

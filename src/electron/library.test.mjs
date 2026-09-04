@@ -13,6 +13,7 @@ import {
   swapLibraryDownload,
   deleteLibraryEntry,
   deleteLocalFiles,
+  moveLibraryEntry,
   overrideLibraryEntry,
   scanLibrary,
   getLibraryIndex,
@@ -23,7 +24,15 @@ import {
   PLAYLISTS_DIR_NAME,
   CLIPS_DIR_NAME,
   DEFAULT_LIBRARY_DIR_NAME,
-  defaultLibraryDir,
+  libraryTagDir,
+  listLibraryTags,
+  createLibraryTag,
+  listVideoTags,
+  setVideoTag,
+  addTagToVideos,
+  removeVideosFromTags,
+  transferVideoTags,
+  checkAndRepairEpochFiles,
   buildClipFilePath,
   recordClip,
   listClips,
@@ -152,20 +161,20 @@ describe('writeLibraryEntry', () => {
     expect(metadata.resolutions).toEqual([]);
   });
 
-  it('lazily creates DefaultLibrary/library.json on first write, with tagName/createdEpoch', () => {
-    const metadataPath = path.join(defaultLibraryDir(libraryDir), 'library.json');
+  it('lazily creates DefaultLibrary/library.json on first write, with sublibraryName/createdEpoch', () => {
+    const metadataPath = path.join(libraryTagDir(libraryDir), 'library.json');
     expect(fs.existsSync(metadataPath)).toBe(false);
 
     writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
 
     const written = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
-    expect(written.tagName).toBe(DEFAULT_LIBRARY_DIR_NAME);
+    expect(written.sublibraryName).toBe(DEFAULT_LIBRARY_DIR_NAME);
     expect(typeof written.createdEpoch).toBe('number');
   });
 
   it('does not overwrite library.json on a later write', () => {
     writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
-    const metadataPath = path.join(defaultLibraryDir(libraryDir), 'library.json');
+    const metadataPath = path.join(libraryTagDir(libraryDir), 'library.json');
     const first = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
 
     writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'def456', uploader: 'Other Channel' }) });
@@ -268,6 +277,12 @@ describe('deleteLibraryEntry', () => {
     const result = deleteLibraryEntry({ libraryDir, videoDir });
     expect(result.videoDeleted).toBe(true);
     expect(fs.existsSync(videoDir)).toBe(false);
+  });
+
+  it('returns the deleted video\'s videoId, read before the folder is removed', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'tagged-vid' }) });
+    const result = deleteLibraryEntry({ libraryDir, videoDir });
+    expect(result.videoId).toBe('tagged-vid');
   });
 
   it('deletes just one epoch and keeps the video when other epochs remain', () => {
@@ -540,7 +555,7 @@ describe('scanLibrary', () => {
   });
 
   it('skips the reserved playlists directory', async () => {
-    fs.mkdirSync(path.join(defaultLibraryDir(libraryDir), PLAYLISTS_DIR_NAME), { recursive: true });
+    fs.mkdirSync(path.join(libraryTagDir(libraryDir), PLAYLISTS_DIR_NAME), { recursive: true });
     const index = await scanLibrary(libraryDir);
     expect(index.channels).toEqual([]);
   });
@@ -600,6 +615,111 @@ describe('scanLibrary', () => {
 
     expect(index.channels[0].videos[0].clipCount).toBe(2);
   });
+
+});
+
+describe('checkAndRepairEpochFiles', () => {
+  // Simulates exactly what happened when the DefaultLibrary migration
+  // landed on top of an already-populated library: metadata.json still
+  // points at the file's old, pre-move location, but the real file is
+  // sitting right there in the epoch's own current, correct folder.
+  function writeStaleMetadataFile(epochDir, patch) {
+    const metadataPath = path.join(epochDir, 'metadata.json');
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    Object.assign(metadata, patch);
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+  }
+
+  it('refuses to check a videoDir outside the configured library folder', () => {
+    expect(() => checkAndRepairEpochFiles({ libraryDir, videoDir: '/etc', epoch: '1' }))
+      .toThrow(/outside the configured library folder/);
+  });
+
+  it('repairs a stale downloadedFilePath to the real file sitting in the current epoch folder', () => {
+    const { epochDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    const realPath = path.join(epochDir, 'video.mp4');
+    fs.writeFileSync(realPath, 'fake video bytes');
+    const staleOldPath = '/some/old/location/that/no/longer/exists/video.mp4';
+    writeStaleMetadataFile(epochDir, { downloadedFilePath: staleOldPath, downloadedResolution: '1080', downloadedFormat: 'mp4' });
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    expect(result.videoRepaired).toBe(true);
+    expect(result.videoMissing).toBe(false);
+    expect(result.metadata.downloadedFilePath).toBe(realPath);
+    // Repaired on disk too, not just in the returned result -- any other
+    // consumer reading metadata.json directly must see the fix as well.
+    expect(readMetadata(videoDir, epoch).downloadedFilePath).toBe(realPath);
+  });
+
+  it('repairs a stale downloadedAudioFilePath the same way', () => {
+    const { epochDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    const realPath = path.join(epochDir, 'audio.mp3');
+    fs.writeFileSync(realPath, 'fake audio bytes');
+    writeStaleMetadataFile(epochDir, { downloadedAudioFilePath: '/old/audio.mp3' });
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    expect(result.audioRepaired).toBe(true);
+    expect(result.audioMissing).toBe(false);
+    expect(result.metadata.downloadedAudioFilePath).toBe(realPath);
+  });
+
+  it('reports videoMissing (and leaves the stored path untouched) when no matching file exists', () => {
+    const { epochDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    const staleOldPath = '/genuinely/gone/video.mp4';
+    writeStaleMetadataFile(epochDir, { downloadedFilePath: staleOldPath });
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    // Never invents a path and never nulls one out just because it
+    // couldn't find it -- could just as easily be temporarily-unmounted
+    // removable media, not a real deletion.
+    expect(result.videoRepaired).toBe(false);
+    expect(result.videoMissing).toBe(true);
+    expect(result.metadata.downloadedFilePath).toBe(staleOldPath);
+    expect(readMetadata(videoDir, epoch).downloadedFilePath).toBe(staleOldPath);
+  });
+
+  it('does not mistake swapLibraryDownload\'s transient video.new.<ext> temp file for the real one', () => {
+    const { epochDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    // Mid-swap temp file only -- no real video.<ext> exists yet.
+    fs.writeFileSync(path.join(epochDir, 'video.new.mp4'), 'in-progress swap bytes');
+    const staleOldPath = '/old/video.mp4';
+    writeStaleMetadataFile(epochDir, { downloadedFilePath: staleOldPath });
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    expect(result.videoRepaired).toBe(false);
+    expect(result.videoMissing).toBe(true);
+  });
+
+  it('leaves an already-valid downloadedFilePath alone (no unnecessary write, no false repair flag)', () => {
+    const { epochDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    const realPath = path.join(epochDir, 'video.mp4');
+    fs.writeFileSync(realPath, 'fake video bytes');
+    recordLibraryDownload({ videoDir, epoch, filePath: realPath, resolution: '1080', format: 'mp4' });
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    expect(result.videoRepaired).toBe(false);
+    expect(result.videoMissing).toBe(false);
+    expect(result.metadata.downloadedFilePath).toBe(realPath);
+  });
+
+  it('reports neither missing nor repaired when nothing was ever downloaded', () => {
+    const { videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+
+    const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
+
+    expect(result).toMatchObject({ videoRepaired: false, audioRepaired: false, videoMissing: false, audioMissing: false });
+  });
 });
 
 describe('getLibraryIndex / refreshLibraryIndex caching', () => {
@@ -626,6 +746,244 @@ describe('getLibraryIndex / refreshLibraryIndex caching', () => {
     expect(refreshed).not.toBe(first);
     // A subsequent getLibraryIndex call for the same dir now reuses the refreshed one.
     expect(getLibraryIndex(libraryDir)).toBe(refreshed);
+  });
+
+  it('starts a new scan when only the libraryTag changes, same libraryDir', async () => {
+    createLibraryTag(libraryDir, 'Music');
+    writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ uploader: 'Default Channel' }) });
+    writeLibraryEntry({ libraryDir, libraryTag: 'Music', videoMetaData: baseVideoMetaData({ uploader: 'Music Channel' }) });
+
+    const defaultIndex = await getLibraryIndex(libraryDir, DEFAULT_LIBRARY_DIR_NAME);
+    const musicIndex = await getLibraryIndex(libraryDir, 'Music');
+
+    expect(defaultIndex).not.toBe(musicIndex);
+    expect(defaultIndex.channels.map((c) => c.displayName)).toEqual(['Default Channel']);
+    expect(musicIndex.channels.map((c) => c.displayName)).toEqual(['Music Channel']);
+    // Re-requesting the first tag still hits the cache rather than re-scanning.
+    expect(getLibraryIndex(libraryDir, DEFAULT_LIBRARY_DIR_NAME)).toBe(getLibraryIndex(libraryDir, DEFAULT_LIBRARY_DIR_NAME));
+  });
+});
+
+describe('listLibraryTags / createLibraryTag', () => {
+  it('returns [] for a libraryDir with nothing written yet', () => {
+    expect(listLibraryTags(libraryDir)).toEqual([]);
+  });
+
+  it('lists DefaultLibrary once something has been written to it', () => {
+    writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const tags = listLibraryTags(libraryDir);
+    expect(tags).toHaveLength(1);
+    expect(tags[0]).toMatchObject({ tagName: DEFAULT_LIBRARY_DIR_NAME, folderName: DEFAULT_LIBRARY_DIR_NAME });
+    expect(typeof tags[0].createdEpoch).toBe('number');
+  });
+
+  it('ignores a sibling folder with no library.json', () => {
+    fs.mkdirSync(path.join(libraryDir, 'Not A Library'), { recursive: true });
+    expect(listLibraryTags(libraryDir)).toEqual([]);
+  });
+
+  it('createLibraryTag creates the folder + library.json eagerly, sorted oldest-first', () => {
+    const tag = createLibraryTag(libraryDir, 'Music');
+    expect(tag.folderName).toBe('Music');
+    expect(fs.existsSync(path.join(libraryDir, 'Music', 'library.json'))).toBe(true);
+
+    createLibraryTag(libraryDir, 'Later Tag');
+    const tags = listLibraryTags(libraryDir);
+    expect(tags.map((t) => t.folderName)).toEqual(['Music', 'Later Tag']);
+  });
+
+  it('createLibraryTag sanitizes the requested name the same way channel names are', () => {
+    const tag = createLibraryTag(libraryDir, 'My/Tag');
+    expect(tag.folderName).toBe('My_Tag');
+  });
+
+  it('createLibraryTag refuses a name that already exists, valid tag or not', () => {
+    createLibraryTag(libraryDir, 'Music');
+    expect(() => createLibraryTag(libraryDir, 'Music')).toThrow(/already exists/);
+
+    fs.mkdirSync(path.join(libraryDir, 'Random Folder'), { recursive: true });
+    expect(() => createLibraryTag(libraryDir, 'Random Folder')).toThrow(/already exists/);
+  });
+
+  it('createLibraryTag throws when no libraryDir is configured', () => {
+    expect(() => createLibraryTag('', 'Music')).toThrow(/No library folder is configured/);
+  });
+
+  it('reads a pre-rename manifest (old tagName field, no sublibraryName) the same as a new one', () => {
+    const dir = libraryTagDir(libraryDir, 'Legacy');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'library.json'), JSON.stringify({ tagName: 'Legacy', createdEpoch: 123 }), 'utf-8');
+
+    const tags = listLibraryTags(libraryDir);
+    expect(tags).toContainEqual({ tagName: 'Legacy', folderName: 'Legacy', createdEpoch: 123 });
+  });
+});
+
+describe('video tags (listVideoTags / setVideoTag / addTagToVideos)', () => {
+  it('listVideoTags returns {} for a sublibrary with no tags yet', () => {
+    writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    expect(listVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME)).toEqual({});
+  });
+
+  it('setVideoTag applies a new tag, creating the key on first use', () => {
+    const { tags } = setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid1', applied: true });
+    expect(tags).toEqual({ TVshows: ['vid1'] });
+    expect(listVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME)).toEqual({ TVshows: ['vid1'] });
+  });
+
+  it('setVideoTag applying an already-applied tag does not duplicate the videoId', () => {
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid1', applied: true });
+    const { tags } = setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid1', applied: true });
+    expect(tags.TVshows).toEqual(['vid1']);
+  });
+
+  it('setVideoTag removes a videoId, keeping the tag key when other videos remain under it', () => {
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid1', applied: true });
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid2', applied: true });
+
+    const { tags } = setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid1', applied: false });
+    expect(tags).toEqual({ TVshows: ['vid2'] });
+  });
+
+  it('setVideoTag removing the last videoId under a tag deletes the tag key entirely', () => {
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid1', applied: true });
+    const { tags } = setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid1', applied: false });
+    expect(tags).toEqual({});
+  });
+
+  it('addTagToVideos appends every given videoId into one tag, deduping against what is already there', () => {
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'games', videoId: 'vid1', applied: true });
+    const { tags } = addTagToVideos({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'games', videoIds: ['vid1', 'vid2', 'vid3'] });
+    expect(tags.games).toEqual(['vid1', 'vid2', 'vid3']);
+  });
+
+  it('addTagToVideos creates the tag key if it does not exist yet', () => {
+    const { tags } = addTagToVideos({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'brandNew', videoIds: ['vid1', 'vid2'] });
+    expect(tags.brandNew).toEqual(['vid1', 'vid2']);
+  });
+
+  it('setVideoTag also lazily creates the sublibrary folder, same as writeLibraryEntry does', () => {
+    expect(fs.existsSync(libraryTagDir(libraryDir))).toBe(false);
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'games', videoId: 'vid1', applied: true });
+    expect(fs.existsSync(libraryTagDir(libraryDir))).toBe(true);
+  });
+
+  it('the tags map is read via the sublibraryName-keyed manifest and does not disturb it', () => {
+    createLibraryTag(libraryDir, 'Music');
+    setVideoTag({ libraryDir, libraryTag: 'Music', tagName: 'games', videoId: 'vid1', applied: true });
+    const manifest = JSON.parse(fs.readFileSync(path.join(libraryTagDir(libraryDir, 'Music'), 'library.json'), 'utf-8'));
+    expect(manifest.sublibraryName).toBe('Music');
+    expect(manifest.tags).toEqual({ games: ['vid1'] });
+  });
+});
+
+describe('removeVideosFromTags', () => {
+  it('prunes the given videoIds out of every tag, in one write', () => {
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid1', applied: true });
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid2', applied: true });
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'games', videoId: 'vid1', applied: true });
+
+    removeVideosFromTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, ['vid1']);
+
+    expect(listVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME)).toEqual({ TVshows: ['vid2'] });
+  });
+
+  it('deletes a tag entirely once removing the given ids empties it', () => {
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid1', applied: true });
+    removeVideosFromTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, ['vid1']);
+    expect(listVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME)).toEqual({});
+  });
+
+  it('is a no-op (no write) when no tag references any of the given ids', () => {
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid1', applied: true });
+    const manifestPath = path.join(libraryTagDir(libraryDir), 'library.json');
+    const before = fs.statSync(manifestPath).mtimeMs;
+
+    removeVideosFromTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, ['unrelated-id']);
+
+    expect(fs.statSync(manifestPath).mtimeMs).toBe(before);
+    expect(listVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME)).toEqual({ TVshows: ['vid1'] });
+  });
+
+  it('is a no-op when given an empty id list or a sublibrary with no manifest yet', () => {
+    expect(() => removeVideosFromTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, [])).not.toThrow();
+    expect(() => removeVideosFromTags(libraryDir, 'NeverCreated', ['vid1'])).not.toThrow();
+  });
+});
+
+describe('transferVideoTags', () => {
+  it('moves matching tag entries from the source manifest to the target, keeping tag names', () => {
+    createLibraryTag(libraryDir, 'Music');
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid1', applied: true });
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'TVshows', videoId: 'vid2', applied: true });
+
+    transferVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Music', ['vid1']);
+
+    expect(listVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME)).toEqual({ TVshows: ['vid2'] });
+    expect(listVideoTags(libraryDir, 'Music')).toEqual({ TVshows: ['vid1'] });
+  });
+
+  it('creates the target tag key if it does not already have that tag', () => {
+    createLibraryTag(libraryDir, 'Music');
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'games', videoId: 'vid1', applied: true });
+
+    transferVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Music', ['vid1']);
+
+    expect(listVideoTags(libraryDir, 'Music')).toEqual({ games: ['vid1'] });
+  });
+
+  it('merges into an existing target tag rather than clobbering it', () => {
+    createLibraryTag(libraryDir, 'Music');
+    setVideoTag({ libraryDir, libraryTag: 'Music', tagName: 'games', videoId: 'already-there', applied: true });
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'games', videoId: 'vid1', applied: true });
+
+    transferVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Music', ['vid1']);
+
+    expect(listVideoTags(libraryDir, 'Music').games.sort()).toEqual(['already-there', 'vid1']);
+  });
+
+  it('lazily creates the target sublibrary folder if it does not exist yet', () => {
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'games', videoId: 'vid1', applied: true });
+    expect(fs.existsSync(libraryTagDir(libraryDir, 'Music'))).toBe(false);
+
+    transferVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Music', ['vid1']);
+
+    expect(fs.existsSync(libraryTagDir(libraryDir, 'Music'))).toBe(true);
+  });
+
+  it('removes an emptied tag key from the source manifest entirely', () => {
+    createLibraryTag(libraryDir, 'Music');
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'games', videoId: 'vid1', applied: true });
+
+    transferVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Music', ['vid1']);
+
+    const sourceManifest = JSON.parse(fs.readFileSync(path.join(libraryTagDir(libraryDir), 'library.json'), 'utf-8'));
+    expect(sourceManifest.tags).toEqual({});
+  });
+
+  it('does not disturb untagged videos left behind in the source', () => {
+    createLibraryTag(libraryDir, 'Music');
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'games', videoId: 'vid1', applied: true });
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'games', videoId: 'vid2', applied: true });
+
+    transferVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Music', ['vid1']);
+
+    expect(listVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME)).toEqual({ games: ['vid2'] });
+  });
+
+  it('is a no-op when given an empty id list or a source sublibrary with no manifest yet', () => {
+    expect(() => transferVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Music', [])).not.toThrow();
+    expect(() => transferVideoTags(libraryDir, 'NeverCreated', 'Music', ['vid1'])).not.toThrow();
+  });
+
+  it('is a no-op when none of the given ids are actually tagged in the source', () => {
+    setVideoTag({ libraryDir, libraryTag: DEFAULT_LIBRARY_DIR_NAME, tagName: 'games', videoId: 'vid1', applied: true });
+    expect(fs.existsSync(libraryTagDir(libraryDir, 'Music'))).toBe(false);
+
+    transferVideoTags(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Music', ['unrelated-id']);
+
+    // No target manifest should have been created for a transfer that moved nothing.
+    expect(fs.existsSync(libraryTagDir(libraryDir, 'Music'))).toBe(false);
   });
 });
 
@@ -701,5 +1059,131 @@ describe('writePlaylistSnapshot / enrichPlaylistEntry', () => {
     // A later "enrich" with another dead title (title === videoId) must not clobber the real one just set.
     const reEnriched = enrichPlaylistEntry({ libraryDir, playlistId: 'PL123', videoId: 'v2', title: 'v2' });
     expect(reEnriched.entries.find((e) => e.videoId === 'v2').title).toBe('Real Title');
+  });
+});
+
+describe('moveLibraryEntry', () => {
+  it('refuses to move a videoDir outside the configured library folder', () => {
+    expect(() => moveLibraryEntry({ libraryDir, videoDir: '/etc', targetTag: 'Music' }))
+      .toThrow(/outside the configured library folder/);
+  });
+
+  it('moves the whole video folder into the target tag, under the same channel folder name', () => {
+    const { videoDir, channelDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ uploader: 'Some Channel' }) });
+    createLibraryTag(libraryDir, 'Music');
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    const expectedVideoDir = path.join(libraryTagDir(libraryDir, 'Music'), path.basename(channelDir), path.basename(videoDir));
+    expect(result.videoDir).toBe(expectedVideoDir);
+    expect(fs.existsSync(videoDir)).toBe(false);
+    expect(fs.existsSync(result.videoDir)).toBe(true);
+  });
+
+  it('returns the moved video\'s videoId, read from the moved metadata.json', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'tagged-vid' }) });
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+    expect(result.videoId).toBe('tagged-vid');
+  });
+
+  it('lazily creates the target tag folder if it does not already exist', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    expect(listLibraryTags(libraryDir).map((t) => t.folderName)).not.toContain('Music');
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    expect(fs.existsSync(result.videoDir)).toBe(true);
+    expect(listLibraryTags(libraryDir).map((t) => t.folderName)).toContain('Music');
+  });
+
+  it('repairs downloadedFilePath/downloadedAudioFilePath in every moved epoch to the new location', () => {
+    const { videoDir, epochDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    const videoFile = path.join(epochDir, 'video.mp4');
+    const audioFile = path.join(epochDir, 'audio.mp3');
+    fs.writeFileSync(videoFile, 'fake video bytes');
+    fs.writeFileSync(audioFile, 'fake audio bytes');
+    recordLibraryDownload({ videoDir, epoch, filePath: videoFile, resolution: '1080', format: 'mp4' });
+    recordLibraryDownload({ videoDir, epoch, filePath: audioFile, kind: 'audio' });
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    const moved = readMetadata(result.videoDir, epoch);
+    expect(moved.downloadedFilePath).toBe(path.join(result.videoDir, epoch, 'video.mp4'));
+    expect(moved.downloadedAudioFilePath).toBe(path.join(result.videoDir, epoch, 'audio.mp3'));
+    // The bytes moved with the folder, at the now-repaired path.
+    expect(fs.readFileSync(moved.downloadedFilePath, 'utf-8')).toBe('fake video bytes');
+  });
+
+  it('leaves an epoch with nothing downloaded (both fields null) untouched by the repair', () => {
+    const { videoDir, epochDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    const moved = readMetadata(result.videoDir, epoch);
+    expect(moved.downloadedFilePath).toBeNull();
+    expect(moved.downloadedAudioFilePath).toBeNull();
+    expect(fs.existsSync(epochDir)).toBe(false);
+  });
+
+  it('preserves clips -- clips.json resolves against the new videoDir with no repair needed', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clipPath = buildClipFilePath(videoDir, 'My Clip', 'mp4');
+    fs.mkdirSync(path.dirname(clipPath), { recursive: true });
+    fs.writeFileSync(clipPath, 'fake clip bytes');
+    const clip = recordClip({ libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 5 });
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    expect(listClips({ libraryDir, videoDir: result.videoDir })).toEqual([clip]);
+  });
+
+  it('copies the channel icon into the target only when the target channel folder does not already exist', () => {
+    const { videoDir, channelDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ uploader: 'Some Channel' }) });
+    fs.writeFileSync(path.join(channelDir, 'channel-icon.jpg'), 'source icon bytes');
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    const targetChannelDir = path.dirname(result.videoDir);
+    expect(fs.readFileSync(path.join(targetChannelDir, 'channel-icon.jpg'), 'utf-8')).toBe('source icon bytes');
+  });
+
+  it('does not overwrite an existing icon already sitting in the target channel folder', () => {
+    const { videoDir: firstVideoDir, channelDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'vid1', uploader: 'Some Channel' }) });
+    fs.writeFileSync(path.join(channelDir, 'channel-icon.jpg'), 'source icon bytes');
+    // First move creates the target channel folder + copies the icon.
+    moveLibraryEntry({ libraryDir, videoDir: firstVideoDir, targetTag: 'Music' });
+    const targetChannelDir = path.join(libraryTagDir(libraryDir, 'Music'), path.basename(channelDir));
+    fs.writeFileSync(path.join(targetChannelDir, 'channel-icon.jpg'), 'a different, already-there icon');
+
+    const { videoDir: secondVideoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'vid2', uploader: 'Some Channel' }) });
+    moveLibraryEntry({ libraryDir, videoDir: secondVideoDir, targetTag: 'Music' });
+
+    expect(fs.readFileSync(path.join(targetChannelDir, 'channel-icon.jpg'), 'utf-8')).toBe('a different, already-there icon');
+  });
+
+  it('refuses when the target sublibrary already has this exact video', () => {
+    const { videoDir, channelDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ uploader: 'Some Channel' }) });
+    const targetChannelDir = path.join(libraryTagDir(libraryDir, 'Music'), path.basename(channelDir));
+    fs.mkdirSync(path.join(targetChannelDir, path.basename(videoDir)), { recursive: true });
+
+    expect(() => moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' }))
+      .toThrow(/already exists in the target sublibrary/);
+    // Refused before anything was touched -- the source is still intact.
+    expect(fs.existsSync(videoDir)).toBe(true);
+  });
+
+  it('does not clean up the source channel folder even when this was its only video', () => {
+    const { videoDir, channelDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ uploader: 'Some Channel' }) });
+    fs.writeFileSync(path.join(channelDir, 'channel-icon.jpg'), 'source icon bytes');
+
+    moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    // Deliberately left as-is (per decided scope: moving and cleanup are
+    // separate responsibilities) -- the now-video-less source channel
+    // folder, and its icon, both still exist.
+    expect(fs.existsSync(channelDir)).toBe(true);
+    expect(fs.existsSync(path.join(channelDir, 'channel-icon.jpg'))).toBe(true);
   });
 });

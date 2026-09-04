@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -52,12 +52,17 @@ type LibraryVideo = {
 // that change added -- "Refresh from YouTube" is what fixes it.
 const CURRENT_VIDEO_SCHEMA_VERSION = 3;
 
-export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, onDeleted, onVersionsChanged }: {
+export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, onDeleted, onVersionsChanged, videoTags, onVideoTagsChanged }: {
   video: LibraryVideo;
   onBack: () => void;
   onLibraryChanged: () => Promise<void> | void;
   onDeleted: () => void;
   onVersionsChanged: () => Promise<void> | void;
+  // The active sublibrary's whole tag map -- this video's own applied tags
+  // are derived from it below, rather than fetched separately, same shape
+  // LibraryScreen.tsx already loads for the bulk "Tag selected" dialog.
+  videoTags: Record<string, string[]>;
+  onVideoTagsChanged: () => Promise<void> | void;
 }) {
   const [selectedEpoch, setSelectedEpoch] = useState(video.latestEpoch);
   const [metadata, setMetadata] = useState(video.metadata);
@@ -71,6 +76,18 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   const [createVersionError, setCreateVersionError] = useState<string | null>(null);
   const [refreshingMetadata, setRefreshingMetadata] = useState(false);
   const [refreshMetadataError, setRefreshMetadataError] = useState<string | null>(null);
+  // Set by the checkAndRepairEpochFiles effect below when either downloaded
+  // file is missing and couldn't be repaired -- null means either nothing's
+  // downloaded, or everything checked out fine.
+  const [fileWarning, setFileWarning] = useState<{ video: boolean; audio: boolean } | null>(null);
+  // Mirrors fileWarning for runFileCheck below to read synchronously,
+  // without needing fileWarning itself as a dependency (which would mean
+  // re-defining/re-running the check effect every time it flips) and
+  // without a stale value from whatever render the Retry button's click
+  // handler closure was created in.
+  const fileWarningRef = useRef(fileWarning);
+  fileWarningRef.current = fileWarning;
+  const [checkingFiles, setCheckingFiles] = useState(false);
   // 'initial' vs 'swap' decides which backend call the isDone effect below
   // makes -- both flows reuse the same useDownloadVideo() instance below
   // (startDownload resets isDone/isError/progress on every call, so reusing
@@ -82,10 +99,21 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // says which one owns the in-flight download; the UI disables the *other*
   // target's controls while one is active.
   const [downloadTarget, setDownloadTarget] = useState<'video' | 'audio'>('video');
-  // Bumped after a successful quality swap and threaded into the player's
-  // src URL -- a swap can land on the same file path+extension, and without
-  // this the <video>/<audio> element has no signal the bytes changed.
-  const [cacheBustKey, setCacheBustKey] = useState(0);
+  // Bumped after a successful quality swap (or a file-check repair, below)
+  // and threaded into the player's src URL -- both can land on the same file
+  // path+extension, and without this the <video>/<audio> element has no
+  // signal the bytes changed. Starts at Date.now() rather than a literal 0:
+  // reopening the *same* video (a fresh mount of this whole component, e.g.
+  // navigating back to the grid and back in) would otherwise always start
+  // back at the identical 0 again, producing the exact same src URL as the
+  // last time this video was viewed -- and some layer of Chromium's media
+  // pipeline for range-request video resources has proven not to reliably
+  // treat a same-URL reload as genuinely fresh even with the app-video://
+  // handler's own responses marked Cache-Control: no-store (main.mjs). A
+  // real per-mount value sidesteps needing to fully pin down which cache
+  // that is -- no caching layer keyed on the URL can ever have a stale entry
+  // for one it's never seen before.
+  const [cacheBustKey, setCacheBustKey] = useState(() => Date.now());
 
   // FFMPEG utilities -- kept minimal: a single target-format choice for
   // convert, plain start/end text fields for the clip trim, no scrubber.
@@ -166,6 +194,78 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video.epochs]);
+
+  // downloadedFilePath/downloadedAudioFilePath (metadata.json) are absolute
+  // paths captured once at download time and never recomputed -- if the
+  // library folder ever gets reorganized outside a deliberate move-aware
+  // flow (a user moving folders by hand, e.g. into DefaultLibrary/, or, once
+  // built, a "move between sublibraries" feature that doesn't yet rewrite
+  // these fields itself), the stored path silently goes stale and every
+  // consumer below (playback, open file location, every ffmpeg action) fails
+  // on it. Scoped to just the one epoch actually being viewed, not a
+  // library-wide scan -- checks and best-effort repairs it, and only
+  // surfaces fileWarning for whatever's still missing after that attempt.
+  //
+  // A plain function, not inlined in the effect below, because it also needs
+  // to be callable directly from the warning dialog's Retry button: once the
+  // stored path was already correct all along (nothing for the repair above
+  // to actually change) and the user restores the file to that same exact
+  // location, nothing about metadata/selectedEpoch/video.videoDir ever
+  // changes value -- so the effect's own dependencies never fire again, and
+  // without an explicit way to re-run this, the app would have no path back
+  // to noticing the file is there again short of navigating away and back
+  // (which happens to work only because that fully unmounts/remounts the
+  // player instead of anything actually re-checking).
+  const runFileCheck = async () => {
+    if (!selectedEpoch) return;
+    setCheckingFiles(true);
+    const result = await window.electronAPI.checkAndRepairEpochFiles(video.videoDir, selectedEpoch);
+    setCheckingFiles(false);
+    if (!result.success) return;
+    if (result.videoRepaired || result.audioRepaired) {
+      setMetadata((prev) => ({
+        ...prev,
+        ...(result.videoRepaired ? { downloadedFilePath: result.metadata!.downloadedFilePath } : {}),
+        ...(result.audioRepaired ? { downloadedAudioFilePath: result.metadata!.downloadedAudioFilePath } : {}),
+      }));
+      onLibraryChanged();
+    }
+    const stillMissing = result.videoMissing || result.audioMissing;
+    // fileWarning was showing and now isn't -- the player needs an explicit
+    // nudge here, not just the repaired metadata above: LibraryVideoPlayer's
+    // own recovery effect only retries when its filePath prop *string*
+    // actually changes, so the case where the exact same stored path simply
+    // became valid again (rather than the repair above finding a
+    // differently-named file and changing the stored path) would otherwise
+    // leave the player permanently stuck showing its earlier failure -- same
+    // "same path, new bytes" gap cacheBustKey already exists to solve for a
+    // quality swap landing on the same path+extension.
+    if (fileWarningRef.current && !stillMissing) {
+      setCacheBustKey((prev) => prev + 1);
+    }
+    setFileWarning(stillMissing ? { video: !!result.videoMissing, audio: !!result.audioMissing } : null);
+  };
+
+  // Depends on the metadata fields themselves (not just video.videoDir/
+  // selectedEpoch): those two identifiers can still be pointing at the
+  // *previous* video/epoch in the same render pass the two effects above
+  // update them in (state updates from an effect only land on the next
+  // render) -- keying on the fields this check actually reads guarantees it
+  // only ever runs once they're truly current, and naturally re-runs itself
+  // once more after its own repair (converging immediately, since the second
+  // pass finds the now-fixed path already on disk).
+  useEffect(() => {
+    if (!selectedEpoch || (!metadata.downloadedFilePath && !metadata.downloadedAudioFilePath)) {
+      setFileWarning(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      if (!cancelled) await runFileCheck();
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video.videoDir, selectedEpoch, metadata.downloadedFilePath, metadata.downloadedAudioFilePath]);
 
   const handleSelectEpoch = (epoch: string) => {
     const found = video.epochs.find((e) => e.epoch === epoch);
@@ -722,6 +822,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
               <VideoQualityDownload
                 video={video}
                 metadata={metadata}
+                videoTags={videoTags}
+                onVideoTagsChanged={onVideoTagsChanged}
                 selectedEpoch={selectedEpoch}
                 onSelectEpoch={handleSelectEpoch}
                 videoResolutions={videoResolutions}
@@ -778,6 +880,27 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
         </Stack>
       </Stack>
       )}
+
+      <Dialog open={!!fileWarning} onClose={() => setFileWarning(null)}>
+        <DialogTitle>
+          {fileWarning?.video && fileWarning?.audio ? 'Video and audio files not found'
+            : fileWarning?.audio ? 'Audio file not found' : 'Video file not found'}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            The downloaded {fileWarning?.video && fileWarning?.audio ? 'video and audio files' : fileWarning?.audio ? 'audio file' : 'video file'} for
+            this version couldn't be found where this library entry expects {fileWarning?.video && fileWarning?.audio ? 'them' : 'it'} to be --
+            it may have been moved or deleted outside the app. Try re-downloading this version, or restore the file
+            to its original location yourself, then click Retry.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setFileWarning(null)} disabled={checkingFiles}>Dismiss</Button>
+          <Button onClick={runFileCheck} variant="contained" disabled={checkingFiles}>
+            {checkingFiles ? <CircularProgress size={20} /> : 'Retry'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={deleteDialogOpen} onClose={() => !deleting && setDeleteDialogOpen(false)}>
         <DialogTitle>Delete this video?</DialogTitle>

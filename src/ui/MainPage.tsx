@@ -29,7 +29,7 @@ import { useLibraryNotification } from './hooks/useLibraryNotifications';
 import { useYtdlpUpdater } from './hooks/useYtdlpUpdater';
 import buttonIcon from '../../assets/button_icon.png';
 
-const REPO_URL = 'https://github.com/lltrash94/SlothArchiver';
+const REPO_URL = 'https://github.com/SlothSoftworks/Sloth-Archiver';
 
 const LIBRARY_TAB_INDEX = 1;
 const OPTIONS_TAB_INDEX = 2;

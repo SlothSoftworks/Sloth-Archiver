@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Box,
   Button,
@@ -20,8 +21,11 @@ import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import DownloadDoneIcon from '@mui/icons-material/DownloadDone';
 import AudiotrackIcon from '@mui/icons-material/Audiotrack';
 import CancelIcon from '@mui/icons-material/Cancel';
+import LocalOfferOutlinedIcon from '@mui/icons-material/LocalOfferOutlined';
+import { pink } from '@mui/material/colors';
 import { buildAppVideoUrl, formatEpochLabel } from '../../utils/utils.ts';
 import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
+import VideoTagsPopover from '../components/VideoTagsPopover';
 import type { LibraryVideoMetadata, Resolution } from '../../types';
 
 type LibraryVideo = {
@@ -153,6 +157,8 @@ export default function VideoQualityDownload({
   onExtractAudioToLibrary,
   isRetrying,
   onCancelDownload,
+  videoTags,
+  onVideoTagsChanged,
 }: {
   video: LibraryVideo;
   metadata: LibraryVideoMetadata;
@@ -192,7 +198,21 @@ export default function VideoQualityDownload({
   // currently showing, since only one can be active at a time.
   isRetrying: boolean;
   onCancelDownload: () => void;
+  // The active sublibrary's whole tag map -- this video's own applied tags
+  // are derived from it below, same shape LibraryScreen.tsx already loads
+  // for the bulk "Tag selected" dialog and the library grid's own chips.
+  videoTags: Record<string, string[]>;
+  onVideoTagsChanged: () => Promise<void> | void;
 }) {
+  const [tagsAnchorEl, setTagsAnchorEl] = useState<HTMLElement | null>(null);
+  const allTagNames = Object.keys(videoTags);
+  const appliedTagNames = allTagNames.filter((name) => videoTags[name].includes(metadata.videoId));
+
+  const handleToggleTag = async (tagName: string, applied: boolean) => {
+    await window.electronAPI.setVideoTag(tagName, metadata.videoId, applied);
+    await onVideoTagsChanged();
+  };
+
   return (
     <>
       {(video.epochs.length > 1 || metadata.downloadedFilePath) &&
@@ -220,11 +240,22 @@ export default function VideoQualityDownload({
               </Select>
             </FormControl>}
           {metadata.downloadedFilePath &&
-            <Chip
-              color="success"
-              label={`${metadata.downloadedResolution}p`}
-              sx={{ alignSelf: 'flex-start' }}
-            />}
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Chip
+                color="success"
+                label={`${metadata.downloadedResolution}p`}
+              />
+              <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap" sx={{ justifyContent: 'flex-end' }}>
+                {appliedTagNames.map((tag) => (
+                  <Chip key={tag} size="small" label={tag} sx={{ bgcolor: pink[700], color: '#fff' }} />
+                ))}
+                <Tooltip title="Edit tags">
+                  <IconButton size="small" onClick={(e) => setTagsAnchorEl(e.currentTarget)} aria-label="Edit tags">
+                    <LocalOfferOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Stack>
+            </Stack>}
           <Divider />
         </Stack>}
 
@@ -379,6 +410,15 @@ export default function VideoQualityDownload({
             )}
           </Stack>
         </>}
+      <VideoTagsPopover
+        open={!!tagsAnchorEl}
+        anchorEl={tagsAnchorEl}
+        onClose={() => setTagsAnchorEl(null)}
+        allTags={allTagNames}
+        appliedTags={appliedTagNames}
+        onToggle={handleToggleTag}
+        onCreate={(tagName) => handleToggleTag(tagName, true)}
+      />
     </>
   );
 }

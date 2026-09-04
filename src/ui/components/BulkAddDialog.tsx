@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Button,
@@ -6,7 +6,9 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControl,
   FormControlLabel,
+  InputLabel,
   MenuItem,
   Select,
   Stack,
@@ -21,6 +23,14 @@ import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx
 // own available resolutions, since those aren't known until each entry is
 // fetched. Per-video matching happens in useBulkAddQueue's pickClosestResolution.
 export const QUALITY_TIERS = ['2160', '1440', '1080', '720', '480', '360', '240', '144', 'MP3'];
+
+// Mirrors listLibraryTags' return shape (library.mjs) -- see LibraryScreen.tsx's
+// own copy of this type for why it isn't shared/imported across screens.
+type LibraryTag = {
+  tagName: string;
+  folderName: string;
+  createdEpoch: number | null;
+};
 
 function isPlaylistUrl(url: string): boolean {
   try {
@@ -37,6 +47,20 @@ export default function BulkAddDialog({ open, onClose }: { open: boolean; onClos
   const [targetResolution, setTargetResolution] = useState('720');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Only ever shown/relevant once more than one sublibrary exists -- same
+  // fetch-once-on-mount pattern as DownloaderScreen's own copy of this.
+  const [libraryTags, setLibraryTags] = useState<LibraryTag[]>([]);
+  const [targetLibraryTag, setTargetLibraryTag] = useState('');
+  useEffect(() => {
+    (async () => {
+      const [{ tags }, { activeLibraryTag }] = await Promise.all([
+        window.electronAPI.listLibraryTags(),
+        window.electronAPI.getActiveLibraryTag(),
+      ]);
+      setLibraryTags(tags);
+      setTargetLibraryTag(activeLibraryTag);
+    })();
+  }, []);
 
   const handleClose = () => {
     if (submitting) return;
@@ -76,7 +100,7 @@ export default function BulkAddDialog({ open, onClose }: { open: boolean; onClos
       if (entries.length === 0) {
         throw new Error('No videos found.');
       }
-      start(entries, { download, targetResolution });
+      start(entries, { download, targetResolution, targetLibraryTag: targetLibraryTag || undefined });
       setInput('');
       onClose();
     } catch (err) {
@@ -104,6 +128,21 @@ export default function BulkAddDialog({ open, onClose }: { open: boolean; onClos
             onChange={(e) => setInput(e.target.value)}
             disabled={submitting}
           />
+          {libraryTags.length > 1 &&
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <InputLabel id="bulk-add-target-library-label">Add to</InputLabel>
+              <Select
+                labelId="bulk-add-target-library-label"
+                label="Add to"
+                value={targetLibraryTag}
+                onChange={(e) => setTargetLibraryTag(e.target.value)}
+                disabled={submitting}
+              >
+                {libraryTags.map((tag) => (
+                  <MenuItem key={tag.folderName} value={tag.folderName}>{tag.tagName}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>}
           <FormControlLabel
             control={<Switch checked={download} onChange={(e) => setDownload(e.target.checked)} disabled={submitting} />}
             label="Also download each video (not just add to the library)"

@@ -109,6 +109,11 @@ beforeEach(() => {
     createClip: vi.fn().mockResolvedValue({ success: true, clip: { id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 5 } }),
     deleteClip: vi.fn().mockResolvedValue({ success: true }),
     convertClip: vi.fn().mockResolvedValue({ success: true, clip: { id: 'clip1', fileName: 'My Clip.mkv', title: 'My Clip', createdAt: 0, durationSeconds: 5 } }),
+    // Defaults to "everything checked out fine" so the file-check effect
+    // (fired on mount/epoch-change whenever a downloaded path is set) is a
+    // no-op for every test that isn't specifically exercising it.
+    checkAndRepairEpochFiles: vi.fn().mockResolvedValue({ success: true, videoRepaired: false, audioRepaired: false, videoMissing: false, audioMissing: false }),
+    setVideoTag: vi.fn().mockResolvedValue({ success: true, tags: {} }),
   };
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),
@@ -118,11 +123,12 @@ beforeEach(() => {
   } as unknown as typeof window.electronAPIPythonDownload;
 });
 
-function renderDetail(video: ReturnType<typeof makeVideo>) {
+function renderDetail(video: ReturnType<typeof makeVideo>, videoTags: Record<string, string[]> = {}) {
   const onBack = vi.fn();
   const onLibraryChanged = vi.fn().mockResolvedValue(undefined);
   const onDeleted = vi.fn();
   const onVersionsChanged = vi.fn().mockResolvedValue(undefined);
+  const onVideoTagsChanged = vi.fn().mockResolvedValue(undefined);
   const utils = render(
     <LibraryVideoDetail
       video={video}
@@ -130,9 +136,11 @@ function renderDetail(video: ReturnType<typeof makeVideo>) {
       onLibraryChanged={onLibraryChanged}
       onDeleted={onDeleted}
       onVersionsChanged={onVersionsChanged}
+      videoTags={videoTags}
+      onVideoTagsChanged={onVideoTagsChanged}
     />,
   );
-  return { ...utils, onBack, onLibraryChanged, onDeleted, onVersionsChanged };
+  return { ...utils, onBack, onLibraryChanged, onDeleted, onVersionsChanged, onVideoTagsChanged };
 }
 
 describe('LibraryVideoDetail', () => {
@@ -480,5 +488,142 @@ describe('LibraryVideoDetail', () => {
 
     await waitFor(() => expect(onVersionsChanged).toHaveBeenCalled());
     expect(onDeleted).not.toHaveBeenCalled();
+  });
+
+  describe('on-demand file check (checkAndRepairEpochFiles)', () => {
+    it('checks the current epoch\'s files on mount when something is downloaded', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedAudioFilePath: '/v/audio.mp3' });
+      renderDetail(video);
+
+      await waitFor(() => expect(window.electronAPI.checkAndRepairEpochFiles).toHaveBeenCalledWith('/lib/Channel A/vidA', '100'));
+    });
+
+    it('never calls the check when nothing has been downloaded', async () => {
+      const video = makeVideo();
+      renderDetail(video);
+      await screen.findByText('Alpha Video');
+
+      expect(window.electronAPI.checkAndRepairEpochFiles).not.toHaveBeenCalled();
+    });
+
+    it('pops up a warning when the video file is missing and cannot be repaired', async () => {
+      (window.electronAPI.checkAndRepairEpochFiles as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true, videoRepaired: false, audioRepaired: false, videoMissing: true, audioMissing: false,
+      });
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4' });
+      renderDetail(video);
+
+      expect(await screen.findByText('Video file not found')).toBeInTheDocument();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+      await waitFor(() => expect(screen.queryByText('Video file not found')).not.toBeInTheDocument());
+    });
+
+    it('pops up a combined warning when both video and audio are missing', async () => {
+      (window.electronAPI.checkAndRepairEpochFiles as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true, videoRepaired: false, audioRepaired: false, videoMissing: true, audioMissing: true,
+      });
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedAudioFilePath: '/v/audio.mp3' });
+      renderDetail(video);
+
+      expect(await screen.findByText('Video and audio files not found')).toBeInTheDocument();
+    });
+
+    it('silently applies a repaired path and notifies onLibraryChanged, without any warning popup', async () => {
+      (window.electronAPI.checkAndRepairEpochFiles as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true, videoRepaired: true, audioRepaired: false, videoMissing: false, audioMissing: false,
+        metadata: baseMetadata({ downloadedFilePath: '/lib/Channel A/vidA/100/video.mp4' }),
+      });
+      const video = makeVideo({ downloadedFilePath: '/v/old/video.mp4' });
+      const { onLibraryChanged } = renderDetail(video);
+
+      await waitFor(() => expect(onLibraryChanged).toHaveBeenCalled());
+      expect(screen.queryByText(/not found/)).not.toBeInTheDocument();
+    });
+
+    // The bug this covers: a file that was missing, then restored to the
+    // exact same stored path (so checkAndRepairEpochFiles' own repair never
+    // fires -- nothing about the path itself needed to change) never
+    // re-triggers a check on its own once the dialog is showing, since
+    // nothing about metadata/selectedEpoch/video.videoDir changes value
+    // either. Retry is the explicit way back from that; LibraryVideoPlayer
+    // itself is mocked out in this file (see the top-of-file comment), so
+    // what's covered here is the re-check firing and the dialog clearing --
+    // the player's own cacheBustKey-driven reload was verified live in the
+    // real app.
+    it('Retry re-runs the check and clears the warning once the file is confirmed present again', async () => {
+      const mockCheck = window.electronAPI.checkAndRepairEpochFiles as ReturnType<typeof vi.fn>;
+      mockCheck.mockResolvedValueOnce({
+        success: true, videoRepaired: false, audioRepaired: false, videoMissing: true, audioMissing: false,
+      });
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4' });
+      renderDetail(video);
+      await screen.findByText('Video file not found');
+
+      // Same stored path both times -- the file just became valid again,
+      // nothing for the repair itself to change.
+      mockCheck.mockResolvedValueOnce({
+        success: true, videoRepaired: false, audioRepaired: false, videoMissing: false, audioMissing: false,
+      });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Retry' }));
+
+      expect(mockCheck).toHaveBeenCalledTimes(2);
+      await waitFor(() => expect(screen.queryByText('Video file not found')).not.toBeInTheDocument());
+    });
+  });
+
+  describe('video tags', () => {
+    it('renders a pink chip for every tag currently applied to this video', () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      renderDetail(video, { TVshows: ['vid1'], games: ['someone-else'] });
+      expect(screen.getByText('TVshows')).toBeInTheDocument();
+      expect(screen.queryByText('games')).not.toBeInTheDocument();
+    });
+
+    it('the edit-tags popover lists every known tag as a checkbox, checked only for applied ones', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      renderDetail(video, { TVshows: ['vid1'], games: ['someone-else'] });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Edit tags' }));
+
+      const tvShowsCheckbox = screen.getByRole('checkbox', { name: 'TVshows' });
+      const gamesCheckbox = screen.getByRole('checkbox', { name: 'games' });
+      expect(tvShowsCheckbox).toBeChecked();
+      expect(gamesCheckbox).not.toBeChecked();
+    });
+
+    it('checking an unapplied tag calls setVideoTag with applied:true', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      renderDetail(video, { games: ['someone-else'] });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Edit tags' }));
+      await user.click(screen.getByRole('checkbox', { name: 'games' }));
+
+      expect(window.electronAPI.setVideoTag).toHaveBeenCalledWith('games', 'vid1', true);
+    });
+
+    it('unchecking an applied tag calls setVideoTag with applied:false', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      renderDetail(video, { TVshows: ['vid1'] });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Edit tags' }));
+      await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+
+      expect(window.electronAPI.setVideoTag).toHaveBeenCalledWith('TVshows', 'vid1', false);
+    });
+
+    it('creating a new tag from the text field calls setVideoTag with applied:true and clears the field', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      renderDetail(video);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Edit tags' }));
+
+      const input = screen.getByPlaceholderText('New tag');
+      await user.type(input, 'brandNew{Enter}');
+
+      expect(window.electronAPI.setVideoTag).toHaveBeenCalledWith('brandNew', 'vid1', true);
+      expect(input).toHaveValue('');
+    });
   });
 });

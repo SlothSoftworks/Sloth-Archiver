@@ -1,12 +1,17 @@
 # SlothArchiver
 
-[![Latest Release](https://img.shields.io/github/v/release/lltrash94/Sloth-Archiver)](https://github.com/lltrash94/Sloth-Archiver/releases/latest)
-[![CI](https://github.com/lltrash94/Sloth-Archiver/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/lltrash94/Sloth-Archiver/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/SlothSoftworks/Sloth-Archiver)](https://github.com/SlothSoftworks/Sloth-Archiver/releases/latest)
+[![CI](https://github.com/SlothSoftworks/Sloth-Archiver/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/SlothSoftworks/Sloth-Archiver/actions/workflows/ci.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational)](#download)
 
-**Your own personal, offline video archive — for people too lazy to fight with
+**Your own personal, offline video archive — for people who like to keep their video archiving sweet and simple and not fight with
 Docker, servers, or a complicated setup to get one.**
+
+<p align="center">
+  <img src="assets/icon.png" alt="SlothArchiver" width="200">
+</p>
+
 
 *Free and open source — no subscriptions, no accounts, no server to run.*
 
@@ -20,22 +25,22 @@ itself.
 
 ## Download
 
-<!-- Update the version in these 5 links on every release -- currently 0.26.2.
+<!-- Update the version in these 5 links on every release -- currently 0.27.0.
      Each filename must match exactly what GitHub actually named the asset on
      the release page, NOT the local build's own filename -- GitHub's release
      upload sanitizes spaces in asset names to dots, so the two Windows .exe
      files differ from what "npm run dist" produces locally (e.g. the local
-     "SlothArchiver Setup 0.26.2.exe" becomes the asset
-     "SlothArchiver.Setup.0.26.2.exe"). Check the release's actual assets
+     "SlothArchiver Setup 0.27.0.exe" becomes the asset
+     "SlothArchiver.Setup.0.27.0.exe"). Check the release's actual assets
      list if unsure, don't assume the local build's naming carries over. -->
 
 | Platform | Link |
 |---|---|
-| Windows (installer) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver.Setup.0.26.2.exe) |
-| Windows (portable, no install) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver.0.26.2.exe) |
-| macOS (Apple Silicon) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver-0.26.2-arm64.dmg) |
-| macOS (Intel) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver-0.26.2.dmg) |
-| Linux (AppImage) | [Download](https://github.com/lltrash94/Sloth-Archiver/releases/download/v0.26.2/SlothArchiver-0.26.2.AppImage) |
+| Windows (installer) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.0/SlothArchiver.Setup.0.27.0.exe) |
+| Windows (portable, no install) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.0/SlothArchiver.0.27.0.exe) |
+| macOS (Apple Silicon) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.0/SlothArchiver-0.27.0-arm64.dmg) |
+| macOS (Intel) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.0/SlothArchiver-0.27.0.dmg) |
+| Linux (AppImage) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.0/SlothArchiver-0.27.0.AppImage) |
 
 All builds are unsigned, so your OS will show a first-run security warning —
 see [Installing](#installing) below.
@@ -52,12 +57,12 @@ your own machine.
 
 ## Why SlothArchiver?
 
-Most tools in this space make you work for a real archive. Self-hosted servers give
+Most tools in this space seem make you work for a real archive. Self-hosted servers give
 you one, but only if you're willing to run Docker, manage a server, and keep a
 machine on around the clock. Lightweight desktop downloaders skip all of that
 setup, but most of them just drop files in a folder and call it done — no real
 organization, nothing actually archived, just a pile of files you have to manage
-yourself — or eventually ask you to pay once you want more than that.
+yourself and the ones that do have some sort of paywall. So I got tired of waiting for the solution and started to develop it myself.
 
 SlothArchiver is built to be the lazy option in the best sense: a normal app you
 install like any other, with zero server to babysit and zero config to get right.
@@ -82,46 +87,13 @@ that.
 No other tool in this space currently checks every one of those boxes at once —
 that combination is the whole point of SlothArchiver; A simple catalogued library, organized in one place and fully local.
 
-## Installing
-
-SlothArchiver's builds aren't code-signed (that requires a paid certificate
-this project doesn't have set up) — so the first time you open one, your OS
-will warn you it's from an unidentified/unrecognized developer. This is
-expected for any unsigned app, not a sign anything's actually wrong.
-Here's how to get past each OS's warning:
-
-**Windows** — you'll see "Windows protected your PC" (SmartScreen). Click
-**More info**, then **Run anyway**.
-
-![Windows SmartScreen bypass](docs/media/install-windows-smartscreen.png)
-
-**macOS** — you'll see a message that the app "cannot be opened because it is
-from an unidentified developer," and just double-clicking won't offer a way
-past it. Instead: right-click (or Control-click) the app → **Open** → confirm
-**Open** in the dialog that appears. You only need to do this once — after
-that, it opens normally. If macOS still blocks it, go to **System Settings →
-Privacy & Security**, scroll down, and click **Open Anyway** next to the
-message about SlothArchiver.
-
-![macOS Gatekeeper bypass](docs/media/install-macos-gatekeeper.png)
-
-**Linux (AppImage)** — make it executable first, then run it directly:
-```
-chmod +x SlothArchiver-<version>.AppImage
-./SlothArchiver-<version>.AppImage
-```
-If it fails to launch at all with a FUSE-related error, your distro likely
-needs `libfuse2` installed (common on newer distros that dropped FUSE2 by
-default, e.g. recent Ubuntu/Fedora releases) — install it via your package
-manager and try again.
-
 ## Features
 
 - **No paywall, ever** — every feature below is free today and will stay free in
   future updates. No tiers, no locked resolutions, no daily download caps.
-- **Download video or audio** from YouTube and a growing list of other platforms
-  (SoundCloud, TikTok, Instagram, Facebook, Dailymotion, and more), in the quality
-  you choose.
+- **Download video or audio** from YouTube and virtually any other site yt-dlp
+  supports — 1800+ platforms, including SoundCloud, TikTok, Instagram, Facebook,
+  Dailymotion, and more — in the quality you choose.
 - **A real library, not just a downloads folder** — every video is organized by
   channel, searchable, and keeps a history of versions if you ever re-fetch it.
   Most downloaders stop at "file saved somewhere"; SlothArchiver actually keeps
@@ -197,13 +169,13 @@ all straight from the library view, no other software required.
 
 ![Demo: media utilities](docs/media/media-utilities.gif)
 
-### Download from more than just YouTube
+### Download from virtually any site yt-dlp supports
 
-SoundCloud, TikTok, Instagram, Facebook, Dailymotion, and more — paste a link
-from any of them and SlothArchiver figures out the platform automatically and
-gets you a download, no separate tool needed for each site. This list keeps
-growing as development continues, so expect more platforms to be supported
-over time.
+Not just YouTube — SlothArchiver works with virtually any of the
+[1800+ sites yt-dlp itself supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md),
+including SoundCloud, TikTok, Instagram, Facebook, Dailymotion, and more.
+Paste a link from any of them and SlothArchiver figures out the platform
+automatically and gets you a download, no separate tool needed for each site.
 
 ![Demo: multi-platform downloads](docs/media/multi-platform-downloads.gif)
 
@@ -214,6 +186,42 @@ SlothArchiver works through them several at a time in the background, with
 per-item progress, retry, and skip, so one bad link never holds up the rest.
 
 ![Demo: bulk downloading](docs/media/bulk-downloading.gif)
+
+
+
+## Installing
+
+SlothArchiver's builds aren't code-signed (that requires a paid certificate
+this project doesn't have set up) — so the first time you open one, your OS
+will warn you it's from an unidentified/unrecognized developer. This is
+expected for any unsigned app, not a sign anything's actually wrong.
+Here's how to get past each OS's warning:
+
+**Windows** — you'll see "Windows protected your PC" (SmartScreen). Click
+**More info**, then **Run anyway**.
+
+![Windows SmartScreen bypass](docs/media/install-windows-smartscreen.png)
+
+**macOS** — you'll see a message that the app "cannot be opened because it is
+from an unidentified developer," and just double-clicking won't offer a way
+past it. Instead: right-click (or Control-click) the app → **Open** → confirm
+**Open** in the dialog that appears. You only need to do this once — after
+that, it opens normally. If macOS still blocks it, go to **System Settings →
+Privacy & Security**, scroll down, and click **Open Anyway** next to the
+message about SlothArchiver.
+
+![macOS Gatekeeper bypass](docs/media/install-macos-gatekeeper.png)
+
+**Linux (AppImage)** — make it executable first, then run it directly:
+```
+chmod +x SlothArchiver-<version>.AppImage
+./SlothArchiver-<version>.AppImage
+```
+If it fails to launch at all with a FUSE-related error, your distro likely
+needs `libfuse2` installed (common on newer distros that dropped FUSE2 by
+default, e.g. recent Ubuntu/Fedora releases) — install it via your package
+manager and try again.
+
 
 ## How it works
 
@@ -246,7 +254,7 @@ SlothArchiver is a personal-use, local tool — everything it downloads stays in
 >TL;DR: It's a gray area as far as YouTube is concerned but not illegal. This is a personal, local-only archiving tool — staying within your platform's ToS and your local copyright law is on you.
 
 #### What platforms does SlothArchiver support downloading from?
-At time of writing we support YouTube for downloads, library, and playlists. We support TikTok, Instagram, Twitter, Facebook, SoundCloud, and Dailymotion for pure downloads.
+At time of writing we support YouTube for downloads, library, and playlists. For pure downloads, we support virtually any site [yt-dlp itself supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) — 1800+ platforms — including TikTok, Instagram, Twitter, Facebook, SoundCloud, and Dailymotion, to name a few with dedicated recognition in the app's UI.
 
 #### What operating systems does SlothArchiver run on?
 Currently we support Mac, Linux, and Windows. This is a solo dev operation and I manually create the executables per system, so I expect there could be OS issues as more people try out the software on their systems. If you experience any issues, let me know by raising an issue and detailing it there.

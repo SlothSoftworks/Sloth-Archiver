@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useMatch, useNavigate } from 'react-router';
+import { useMatch, useNavigate, useSearchParams } from 'react-router';
 import {
   Alert,
   Avatar,
+  Badge,
   Box,
   Card,
   CardActionArea,
@@ -23,15 +24,18 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import { pink } from '@mui/material/colors';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import FaceRetouchingNaturalIcon from '@mui/icons-material/FaceRetouchingNatural';
 import FolderIcon from '@mui/icons-material/Folder';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
+import CreateNewFolderIcon from '@mui/icons-material/CreateNewFolder';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import FilterListIcon from '@mui/icons-material/FilterList';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns } from '../../utils/utils.ts';
 import LibraryVideoDetail from './LibraryVideoDetail';
 import PlaylistsSection, { type PlaylistBulkBar } from '../components/PlaylistsSection';
@@ -39,6 +43,10 @@ import LibrarySearchBar from '../components/LibrarySearchBar';
 import LibraryBottomBar from '../components/LibraryBottomBar';
 import BulkDownloadQualityDialog from '../components/BulkDownloadQualityDialog';
 import BulkDeleteConfirmDialog from '../components/BulkDeleteConfirmDialog';
+import CreateSubLibraryDialog from '../components/CreateSubLibraryDialog';
+import MoveToSubLibraryDialog from '../components/MoveToSubLibraryDialog';
+import TagSelectedDialog from '../components/TagSelectedDialog';
+import TagFilterPopover from '../components/TagFilterPopover';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
 import type { LibraryVideoMetadata } from '../../types';
@@ -66,6 +74,15 @@ type LibraryChannel = {
   displayName: string;
   channelIconPath: string | null;
   videos: LibraryVideo[];
+};
+
+// Mirrors listLibraryTags' return shape (library.mjs) -- folderName is what
+// every IPC call actually keys on; tagName is presentational (today always
+// equal to folderName).
+type LibraryTag = {
+  tagName: string;
+  folderName: string;
+  createdEpoch: number | null;
 };
 
 // Only the flat by-video list gets a sort control -- the channel view's own
@@ -141,29 +158,92 @@ export default function LibraryScreen() {
   const [bulkDeleteLocalFilesDialogOpen, setBulkDeleteLocalFilesDialogOpen] = useState(false);
   const [bulkDeletingLocalFiles, setBulkDeletingLocalFiles] = useState(false);
   const [bulkDeleteLocalFilesError, setBulkDeleteLocalFilesError] = useState<string | null>(null);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
   const [playlistBulkBar, setPlaylistBulkBar] = useState<PlaylistBulkBar | null>(null);
+  const [libraryTags, setLibraryTags] = useState<LibraryTag[]>([]);
+  const [activeLibraryTag, setActiveLibraryTagState] = useState('');
+  const [activeLibraryTagDir, setActiveLibraryTagDir] = useState('');
+  const [createTagDialogOpen, setCreateTagDialogOpen] = useState(false);
+  const [creatingTag, setCreatingTag] = useState(false);
+  const [createTagError, setCreateTagError] = useState<string | null>(null);
+  // The active sublibrary's video-tag map (unrelated to libraryTags above,
+  // which is sublibrary switching) -- {} until load() finishes.
+  const [videoTags, setVideoTags] = useState<Record<string, string[]>>({});
+  const [tagDialogOpen, setTagDialogOpen] = useState(false);
+  const [tagging, setTagging] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
   const deepLinkMatch = useMatch('/library/video/:videoId');
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { start } = useBulkAddQueue();
 
   const load = async () => {
     setLoading(true);
-    const [{ libraryDir }, index, { libraryViewMode }, { thumbnailSize }] = await Promise.all([
+    const [{ libraryDir }, index, { libraryViewMode }, { thumbnailSize }, { tags }, { activeLibraryTag, activeLibraryTagDir }, { tags: videoTags }] = await Promise.all([
       window.electronAPI.getLibraryDir(),
       window.electronAPI.getLibraryIndex(),
       window.electronAPI.getLibraryViewMode(),
       window.electronAPI.getThumbnailSize(),
+      window.electronAPI.listLibraryTags(),
+      window.electronAPI.getActiveLibraryTag(),
+      window.electronAPI.listVideoTags(),
     ]);
     setLibraryDir(libraryDir);
     setChannels(index.channels);
     setViewMode(libraryViewMode);
     setThumbnailSize(thumbnailSize);
+    setLibraryTags(tags);
+    setActiveLibraryTagState(activeLibraryTag);
+    setActiveLibraryTagDir(activeLibraryTagDir);
+    setVideoTags(videoTags);
     setLoading(false);
+  };
+
+  const refreshVideoTags = async () => {
+    const { tags } = await window.electronAPI.listVideoTags();
+    setVideoTags(tags);
   };
 
   useEffect(() => {
     load();
   }, []);
+
+  // Switching sublibraries resets everything the previous one's scan
+  // produced -- channels, any channel/video drill-down, and the current
+  // selection -- since none of it belongs to the newly-active sublibrary.
+  // Re-runs the same full load() rather than just refreshing the index, so
+  // the tag list/active tag/library dir all stay in sync too.
+  const switchLibraryTag = async (tag: string) => {
+    setSelectedChannel(null);
+    setSelectedVideo(null);
+    clearSelection();
+    await window.electronAPI.setActiveLibraryTag(tag);
+    await load();
+  };
+
+  const handleCreateLibraryTag = async (name: string) => {
+    setCreatingTag(true);
+    setCreateTagError(null);
+    try {
+      const result = await window.electronAPI.createLibraryTag(name);
+      if (!result.success) {
+        setCreateTagError(result.message || 'Could not create this sublibrary.');
+        return;
+      }
+      // createLibraryTag already switched the active tag server-side --
+      // just close the dialog and reload to pick it up, same as
+      // switchLibraryTag's own reset/reload.
+      setCreateTagDialogOpen(false);
+      setSelectedChannel(null);
+      setSelectedVideo(null);
+      clearSelection();
+      await load();
+    } finally {
+      setCreatingTag(false);
+    }
+  };
 
   // Fire-and-forget, same as every other settings write in this codebase --
   // the local state update below is what the UI reacts to; the write just
@@ -225,6 +305,15 @@ export default function LibraryScreen() {
   // gating style as Download selected), rather than silently skipping the
   // ones with nothing to delete.
   const canDeleteLocalFiles = selectedVideos.length > 0 && selectedVideos.every((v) => getBestDownloadedQuality(v.epochs) !== null);
+  // Only meaningful once another sublibrary actually exists -- there's
+  // nowhere else to move a video to otherwise. Every video qualifies
+  // regardless of download state (unlike canBulkDownload/canDeleteLocalFiles
+  // above), so this doesn't need to inspect selectedVideos at all.
+  const canMove = libraryTags.length > 1;
+  const moveTargetOptions = libraryTags.filter((tag) => tag.folderName !== activeLibraryTag);
+  // Unlike canMove, tagging only ever touches the one active sublibrary --
+  // no other-sublibrary-exists gate needed, just something selected.
+  const canTag = selectedVideoDirs.size > 0;
 
   const handleConfirmBulkDownload = (targetResolution: string) => {
     const isMp3 = targetResolution.toLowerCase() === 'mp3';
@@ -262,9 +351,12 @@ export default function LibraryScreen() {
       }
       // The index already refreshed server-side inside the IPC handler --
       // this just pulls the updated channels list, same pattern as
-      // refreshChannelsSilently.
+      // refreshChannelsSilently. deleteEntries also pruned any deleted
+      // videos out of the tag map server-side, in one batched write --
+      // refetch to pick that up too.
       const index = await window.electronAPI.refreshLibraryIndex();
       handleChannelsUpdated(index.channels);
+      await refreshVideoTags();
     } finally {
       setBulkDeleting(false);
     }
@@ -287,6 +379,54 @@ export default function LibraryScreen() {
       handleChannelsUpdated(index.channels);
     } finally {
       setBulkDeletingLocalFiles(false);
+    }
+  };
+
+  const handleConfirmMove = async (targetTag: string) => {
+    setMoving(true);
+    setMoveError(null);
+    try {
+      const { success, results } = await window.electronAPI.moveLibraryEntries([...selectedVideoDirs], targetTag);
+      if (!success) {
+        const failed = results.filter((r) => !r.success);
+        // Each result already carries the specific reason it failed (e.g. a
+        // video already existing at the target) -- surface it per-video
+        // rather than a generic count, so the user knows which ones and why.
+        const failedDetails = failed
+          .map((r) => `${videoByDir.get(r.videoDir)?.metadata.title ?? r.videoDir}${r.error ? `: ${r.error}` : ''}`)
+          .join('\n');
+        setMoveError(`${failed.length} of ${results.length} video(s) couldn't be moved:\n${failedDetails}`);
+        // Only the failed ones stay selected, so the user can immediately
+        // retry just those via the same bottom-bar button.
+        setSelectedVideoDirs(new Set(failed.map((r) => r.videoDir)));
+      } else {
+        setMoveDialogOpen(false);
+        clearSelection();
+      }
+      // The index already refreshed server-side inside the IPC handler --
+      // this just pulls the updated channels list, same pattern as
+      // refreshChannelsSilently. moveEntries also transferred the moved
+      // videos' tags to the target sublibrary's manifest server-side, in one
+      // batched write each -- refetch this sublibrary's map to pick up
+      // whatever got removed from it.
+      const index = await window.electronAPI.refreshLibraryIndex();
+      handleChannelsUpdated(index.channels);
+      await refreshVideoTags();
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  const handleConfirmTag = async (tagName: string) => {
+    setTagging(true);
+    setTagError(null);
+    try {
+      await window.electronAPI.tagVideos(selectedVideos.map((v) => v.metadata.videoId), tagName);
+      await refreshVideoTags();
+      setTagDialogOpen(false);
+      clearSelection();
+    } finally {
+      setTagging(false);
     }
   };
 
@@ -343,11 +483,29 @@ export default function LibraryScreen() {
   // route), so this reads the param off the current location instead.
   // Always navigates back to /library afterward (replace: true) so this is
   // a one-shot jump, not a redirect that re-triggers on going back.
+  //
+  // An optional ?tag= query param names which sublibrary the video actually
+  // lives in (set by DownloaderScreen's "View" link when it added to a
+  // non-active sublibrary) -- without switching to it first, the lookup/
+  // refresh below (both scoped to whatever's currently active) would never
+  // find it. Omitted, this falls back to searching whatever's active, same
+  // as before this param existed.
   const videoIdToOpen = deepLinkMatch?.params.videoId;
+  const libraryTagToOpen = searchParams.get('tag');
   useEffect(() => {
     if (!videoIdToOpen) return;
     (async () => {
-      const result = await window.electronAPI.findLibraryVideo(videoIdToOpen);
+      // Checked against the real current tag via IPC, not the local
+      // activeLibraryTag state -- this effect can fire before load()'s own
+      // fetch has resolved (both run on mount), so that state may still be
+      // its unset initial value here, wrongly triggering a switch.
+      if (libraryTagToOpen) {
+        const { activeLibraryTag: currentActiveTag } = await window.electronAPI.getActiveLibraryTag();
+        if (libraryTagToOpen !== currentActiveTag) {
+          await switchLibraryTag(libraryTagToOpen);
+        }
+      }
+      const result = await window.electronAPI.findLibraryVideo(videoIdToOpen, libraryTagToOpen || undefined);
       if (!result.found || !result.videoDir) {
         setDeepLinkError('This video is no longer in your library.');
         navigate('/library', { replace: true });
@@ -416,6 +574,8 @@ export default function LibraryScreen() {
       onLibraryChanged={refreshChannelsSilently}
       onDeleted={handleVideoDeleted}
       onVersionsChanged={handleVersionsChanged}
+      videoTags={videoTags}
+      onVideoTagsChanged={refreshVideoTags}
     />
   ) : selectedChannel ? (
     <VideoGrid
@@ -426,11 +586,12 @@ export default function LibraryScreen() {
       onBack={() => { setSelectedChannel(null); clearSelection(); }}
       onSelectVideo={setSelectedVideo}
       onChannelsUpdated={handleChannelsUpdated}
+      videoTags={videoTags}
     />
   ) : viewMode === 'video' ? (
     <FlatVideoList
       channels={channels}
-      libraryDir={libraryDir}
+      openFolderDir={activeLibraryTagDir}
       viewMode={viewMode}
       thumbnailSize={thumbnailSize}
       selectedVideoDirs={selectedVideoDirs}
@@ -438,11 +599,12 @@ export default function LibraryScreen() {
       onViewModeChange={handleViewModeChange}
       onSelectVideo={setSelectedVideo}
       onRefresh={handleRefresh}
+      videoTags={videoTags}
     />
   ) : (
     <ChannelList
       channels={channels}
-      libraryDir={libraryDir}
+      openFolderDir={activeLibraryTagDir}
       viewMode={viewMode}
       onViewModeChange={handleViewModeChange}
       onSelectChannel={(channel) => { setSelectedChannel(channel); clearSelection(); }}
@@ -464,22 +626,44 @@ export default function LibraryScreen() {
         {/* Only shown at the root level -- hidden while drilled into a
             channel's video grid or a video's own detail. */}
         {!loading && libraryDir && !selectedVideo && !selectedChannel &&
-          <ToggleButtonGroup
-            value={librarySection}
-            exclusive
-            size="small"
-            onChange={(_e, value: LibrarySection | null) => { if (value) setLibrarySection(value); clearSelection(); }}
-            sx={{ mb: 2 }}
-          >
-            <ToggleButton value="videos">
-              <VideoLibraryIcon fontSize="small" sx={{ mr: 0.5 }} />
-              Videos
-            </ToggleButton>
-            <ToggleButton value="playlists">
-              <PlaylistPlayIcon fontSize="small" sx={{ mr: 0.5 }} />
-              Playlists
-            </ToggleButton>
-          </ToggleButtonGroup>}
+          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }} flexWrap="wrap" useFlexGap gap={1}>
+            <ToggleButtonGroup
+              value={librarySection}
+              exclusive
+              size="small"
+              onChange={(_e, value: LibrarySection | null) => { if (value) setLibrarySection(value); clearSelection(); }}
+            >
+              <ToggleButton value="videos">
+                <VideoLibraryIcon fontSize="small" sx={{ mr: 0.5 }} />
+                Videos
+              </ToggleButton>
+              <ToggleButton value="playlists">
+                <PlaylistPlayIcon fontSize="small" sx={{ mr: 0.5 }} />
+                Playlists
+              </ToggleButton>
+            </ToggleButtonGroup>
+            <Stack direction="row" spacing={1} alignItems="center">
+              {libraryTags.length > 1 &&
+                <FormControl size="small" variant="standard" sx={{ minWidth: 140 }}>
+                  <InputLabel id="library-tag-label">Sublibrary</InputLabel>
+                  <Select
+                    labelId="library-tag-label"
+                    label="Sublibrary"
+                    value={activeLibraryTag}
+                    onChange={(e) => switchLibraryTag(e.target.value)}
+                  >
+                    {libraryTags.map((tag) => (
+                      <MenuItem key={tag.folderName} value={tag.folderName}>{tag.tagName}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>}
+              <Tooltip title="Add new sublibrary">
+                <IconButton onClick={() => setCreateTagDialogOpen(true)} size="small" aria-label="Add new sublibrary">
+                  <CreateNewFolderIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Stack>
+          </Stack>}
         {content}
       </Box>
       {!loading && libraryDir && librarySection === 'videos' && !selectedVideo && (selectedChannel || viewMode === 'video') &&
@@ -493,6 +677,10 @@ export default function LibraryScreen() {
           canDeleteLocalFiles={canDeleteLocalFiles}
           onDeleteLocalFiles={() => setBulkDeleteLocalFilesDialogOpen(true)}
           onDeleteFromLibrary={() => setBulkDeleteDialogOpen(true)}
+          canMove={canMove}
+          onMoveSelected={() => setMoveDialogOpen(true)}
+          canTag={canTag}
+          onTagSelected={() => setTagDialogOpen(true)}
         />}
       {!loading && libraryDir && librarySection === 'playlists' && playlistBulkBar &&
         <LibraryBottomBar
@@ -503,6 +691,13 @@ export default function LibraryScreen() {
           onDeleteLocalFiles={playlistBulkBar.onDeleteLocalFiles}
           onDeleteFromLibrary={playlistBulkBar.onDeleteFromLibrary}
         />}
+      <CreateSubLibraryDialog
+        open={createTagDialogOpen}
+        onClose={() => { setCreateTagDialogOpen(false); setCreateTagError(null); }}
+        creating={creatingTag}
+        error={createTagError}
+        onConfirm={handleCreateLibraryTag}
+      />
       <BulkDownloadQualityDialog
         open={bulkDownloadDialogOpen}
         onClose={() => setBulkDownloadDialogOpen(false)}
@@ -526,6 +721,24 @@ export default function LibraryScreen() {
         error={bulkDeleteLocalFilesError}
         onCancel={() => { setBulkDeleteLocalFilesDialogOpen(false); setBulkDeleteLocalFilesError(null); }}
         onConfirm={handleConfirmBulkDeleteLocalFiles}
+      />
+      <MoveToSubLibraryDialog
+        open={moveDialogOpen}
+        onClose={() => { setMoveDialogOpen(false); setMoveError(null); }}
+        count={selectedVideoDirs.size}
+        options={moveTargetOptions}
+        moving={moving}
+        error={moveError}
+        onConfirm={handleConfirmMove}
+      />
+      <TagSelectedDialog
+        open={tagDialogOpen}
+        onClose={() => { setTagDialogOpen(false); setTagError(null); }}
+        count={selectedVideoDirs.size}
+        options={Object.keys(videoTags)}
+        tagging={tagging}
+        error={tagError}
+        onConfirm={handleConfirmTag}
       />
       <Snackbar
         open={!!deepLinkError}
@@ -575,15 +788,17 @@ function LibraryViewModeToggle({ viewMode, onViewModeChange }: {
 // VideoGrid instead of duplicating it. `channelLabel` is only passed by
 // FlatVideoList -- VideoGrid's cards already sit under one channel's own
 // heading, so repeating the name there would be redundant.
-function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, onToggleSelect }: {
+function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, onToggleSelect, videoTags }: {
   video: LibraryVideo;
   onSelect: (video: LibraryVideo) => void;
   channelLabel?: string;
   selected: boolean;
   selectionActive: boolean;
   onToggleSelect: (videoDir: string) => void;
+  videoTags: Record<string, string[]>;
 }) {
   const bestQuality = getBestDownloadedQuality(video.epochs);
+  const appliedTags = Object.keys(videoTags).filter((name) => videoTags[name].includes(video.metadata.videoId));
   return (
     <Card
       variant="outlined"
@@ -639,6 +854,12 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
           </Stack>
           {channelLabel &&
             <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>{channelLabel}</Typography>}
+          {appliedTags.length > 0 &&
+            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ my: 0.5 }}>
+              {appliedTags.map((tag) => (
+                <Chip key={tag} size="small" label={tag} sx={{ bgcolor: pink[700], color: '#fff' }} />
+              ))}
+            </Stack>}
           <Stack direction="row" justifyContent="space-between" alignItems="center">
             <Typography variant="body2" color="text.secondary">
               {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
@@ -656,9 +877,9 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
   );
 }
 
-function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selectedVideoDirs, onToggleSelect, onViewModeChange, onSelectVideo, onRefresh }: {
+function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selectedVideoDirs, onToggleSelect, onViewModeChange, onSelectVideo, onRefresh, videoTags }: {
   channels: LibraryChannel[];
-  libraryDir: string;
+  openFolderDir: string;
   viewMode: LibraryViewMode;
   thumbnailSize: number;
   selectedVideoDirs: Set<string>;
@@ -666,6 +887,7 @@ function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selected
   onViewModeChange: (mode: LibraryViewMode) => void;
   onSelectVideo: (video: LibraryVideo) => void;
   onRefresh: () => void;
+  videoTags: Record<string, string[]>;
 }) {
   const selectionActive = selectedVideoDirs.size > 0;
   const [sortField, setSortFieldState] = useState<SortField>('title');
@@ -698,8 +920,29 @@ function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selected
     entries.sort((a, b) => compareFlatVideos(a, b, sortField) * directionMultiplier);
     return entries;
   }, [channels, sortField, sortDirection]);
+
+  // Ephemeral, like search below -- resets on navigation/reload rather than
+  // persisting to settings the way sortField/sortDirection do, since this is
+  // a "narrow what I'm looking at right now" tool, not a standing
+  // preference. AND semantics (every selected tag, not just one): a video
+  // must carry all of them to match.
+  const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(null);
+  const [selectedFilterTags, setSelectedFilterTags] = useState<Set<string>>(new Set());
+  const toggleFilterTag = (tag: string, checked: boolean) => {
+    setSelectedFilterTags((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(tag);
+      else next.delete(tag);
+      return next;
+    });
+  };
+  const tagFilteredVideos = useMemo(() => {
+    if (selectedFilterTags.size === 0) return flatVideos;
+    return flatVideos.filter(({ video }) => [...selectedFilterTags].every((tag) => videoTags[tag]?.includes(video.metadata.videoId)));
+  }, [flatVideos, selectedFilterTags, videoTags]);
+
   const { query, setQuery, isSearching, filtered, clear } = useLibrarySearch(
-    flatVideos,
+    tagFilteredVideos,
     ({ video }) => video.metadata.title || video.videoFolderName,
   );
 
@@ -711,6 +954,18 @@ function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selected
           <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
         </Stack>
         <Stack direction="row" spacing={1} alignItems="center">
+          <Tooltip title="Filter by tag">
+            <IconButton
+              size="small"
+              onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+              aria-label="Filter by tag"
+              color={selectedFilterTags.size > 0 ? 'primary' : 'default'}
+            >
+              <Badge badgeContent={selectedFilterTags.size} color="primary">
+                <FilterListIcon fontSize="small" />
+              </Badge>
+            </IconButton>
+          </Tooltip>
           {/* Grouped into one bordered container so the field picker and
               direction toggle read as a single "sort" instrument -- Select
               uses variant="standard" so this outer Paper is the only
@@ -741,7 +996,7 @@ function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selected
           </Paper>
           <LibraryViewModeToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
           <Tooltip title="Open library folder">
-            <IconButton onClick={() => window.electronAPI.openDirectory(libraryDir)} size="small" aria-label="Open library folder">
+            <IconButton onClick={() => window.electronAPI.openDirectory(openFolderDir)} size="small" aria-label="Open library folder">
               <FolderOpenIcon fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -756,9 +1011,20 @@ function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selected
         <Typography variant="body2" color="text.secondary">
           Nothing in the library yet -- use the library-add button next to the URL field on the Downloader tab.
         </Typography>
-      ) : isSearching && filtered.length === 0 && (
-        <Typography variant="body2" color="text.secondary">No videos match "{query}".</Typography>
+      ) : filtered.length === 0 && (
+        <Typography variant="body2" color="text.secondary">
+          {isSearching ? `No videos match "${query}".` : 'No videos match the selected tag filter.'}
+        </Typography>
       )}
+      <TagFilterPopover
+        open={!!filterAnchorEl}
+        anchorEl={filterAnchorEl}
+        onClose={() => setFilterAnchorEl(null)}
+        allTags={Object.keys(videoTags)}
+        selectedTags={selectedFilterTags}
+        onToggle={toggleFilterTag}
+        onClear={() => setSelectedFilterTags(new Set())}
+      />
       <Box sx={{ display: 'grid', gridTemplateColumns: thumbnailGridTemplateColumns(thumbnailSize), gap: 2 }}>
         {filtered.map(({ video, channelName }) => (
           <VideoCard
@@ -769,6 +1035,7 @@ function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selected
             selected={selectedVideoDirs.has(video.videoDir)}
             selectionActive={selectionActive}
             onToggleSelect={onToggleSelect}
+            videoTags={videoTags}
           />
         ))}
       </Box>
@@ -776,9 +1043,9 @@ function FlatVideoList({ channels, libraryDir, viewMode, thumbnailSize, selected
   );
 }
 
-function ChannelList({ channels, libraryDir, viewMode, onViewModeChange, onSelectChannel, onRefresh }: {
+function ChannelList({ channels, openFolderDir, viewMode, onViewModeChange, onSelectChannel, onRefresh }: {
   channels: LibraryChannel[];
-  libraryDir: string;
+  openFolderDir: string;
   viewMode: LibraryViewMode;
   onViewModeChange: (mode: LibraryViewMode) => void;
   onSelectChannel: (channel: LibraryChannel) => void;
@@ -794,7 +1061,7 @@ function ChannelList({ channels, libraryDir, viewMode, onViewModeChange, onSelec
           <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search channels..." />
           <LibraryViewModeToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
           <Tooltip title="Open library folder">
-            <IconButton onClick={() => window.electronAPI.openDirectory(libraryDir)} size="small" aria-label="Open library folder">
+            <IconButton onClick={() => window.electronAPI.openDirectory(openFolderDir)} size="small" aria-label="Open library folder">
               <FolderOpenIcon fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -837,7 +1104,7 @@ function ChannelList({ channels, libraryDir, viewMode, onViewModeChange, onSelec
   );
 }
 
-function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, onBack, onSelectVideo, onChannelsUpdated }: {
+function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, onBack, onSelectVideo, onChannelsUpdated, videoTags }: {
   channel: LibraryChannel;
   thumbnailSize: number;
   selectedVideoDirs: Set<string>;
@@ -845,6 +1112,7 @@ function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, 
   onBack: () => void;
   onSelectVideo: (video: LibraryVideo) => void;
   onChannelsUpdated: (channels: LibraryChannel[]) => void;
+  videoTags: Record<string, string[]>;
 }) {
   const selectionActive = selectedVideoDirs.size > 0;
   const [refreshingIcon, setRefreshingIcon] = useState(false);
@@ -900,6 +1168,7 @@ function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, 
             selected={selectedVideoDirs.has(video.videoDir)}
             selectionActive={selectionActive}
             onToggleSelect={onToggleSelect}
+            videoTags={videoTags}
           />
         ))}
       </Box>

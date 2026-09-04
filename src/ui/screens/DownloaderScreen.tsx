@@ -11,8 +11,12 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  FormControl,
   InputAdornment,
+  InputLabel,
   Link,
+  MenuItem,
+  Select,
   Stack,
   IconButton,
   Snackbar,
@@ -33,6 +37,13 @@ import { getInitialDownloaderVideoInfo } from '../../../testing/mockData/electro
 import VideoDetailCardSkeleton from './VideoDetailCardSkeleton.tsx';
 import { useLibraryNotification } from '../hooks/useLibraryNotifications';
 
+// Mirrors listLibraryTags' return shape (library.mjs) -- see LibraryScreen.tsx's
+// own copy of this type for why it isn't shared/imported across screens.
+type LibraryTag = {
+  tagName: string;
+  folderName: string;
+  createdEpoch: number | null;
+};
 
 export default function DownloaderScreen() {
 
@@ -47,10 +58,30 @@ export default function DownloaderScreen() {
   const [libraryAddStatus, setLibraryAddStatus] = useState<'idle' | 'saving' | 'error'>('idle');
   const [libraryErrorMessage, setLibraryErrorMessage] = useState<string | null>(null);
   const [librarySuccessSnackbarOpen, setLibrarySuccessSnackbarOpen] = useState(false);
+  // Only ever shown/relevant once more than one sublibrary exists -- fetched
+  // once on mount, same as everything else here that doesn't change mid-session.
+  const [libraryTags, setLibraryTags] = useState<LibraryTag[]>([]);
+  const [targetLibraryTag, setTargetLibraryTag] = useState('');
+  useEffect(() => {
+    (async () => {
+      const [{ tags }, { activeLibraryTag }] = await Promise.all([
+        window.electronAPI.listLibraryTags(),
+        window.electronAPI.getActiveLibraryTag(),
+      ]);
+      setLibraryTags(tags);
+      setTargetLibraryTag(activeLibraryTag);
+    })();
+  }, []);
   // Captured alongside the snackbar open, not read from videoInfo later,
   // since all three add paths below clear videoInfo right after a
   // successful add -- this is what the toast's "View" link navigates to.
   const [lastAddedVideoId, setLastAddedVideoId] = useState<string | null>(null);
+  // The sublibrary the video actually landed in -- same value as
+  // targetLibraryTag at add-time, captured separately since targetLibraryTag
+  // itself isn't reset after a successful add. The "View" link needs this so
+  // LibraryScreen knows which sublibrary to switch to/search, rather than
+  // assuming whatever's currently active.
+  const [lastAddedLibraryTag, setLastAddedLibraryTag] = useState<string | null>(null);
   const [duplicateMatch, setDuplicateMatch] = useState<{ channelDisplayName: string | null; videoDir: string } | null>(null);
   // Drives both which card renders below (VideoDetailCard vs. the simplified
   // OtherPlatformDownloadCard) and whether "add to library" can activate --
@@ -86,9 +117,10 @@ export default function DownloaderScreen() {
     if (!videoInfo) return;
     setLibraryAddStatus('saving');
     try {
-      await window.electronAPI.addLibraryEntry(videoInfo);
+      await window.electronAPI.addLibraryEntry(videoInfo, targetLibraryTag || undefined);
       incrementLibraryNotifications();
       setLastAddedVideoId(videoInfo.id);
+      setLastAddedLibraryTag(targetLibraryTag || null);
       setLibrarySuccessSnackbarOpen(true);
       setVideoUrl('');
       setVideoInfo(null);
@@ -107,7 +139,11 @@ export default function DownloaderScreen() {
     if (!videoInfo) return;
     setLibraryAddStatus('saving');
     try {
-      const existing = await window.electronAPI.findLibraryVideo(videoInfo.id);
+      // Scoped to the target sublibrary (the one about to be written to),
+      // not whatever's currently active -- otherwise a video that's only in
+      // a different sublibrary would wrongly look like a duplicate here, and
+      // a real duplicate sitting in some third sublibrary would be missed.
+      const existing = await window.electronAPI.findLibraryVideo(videoInfo.id, targetLibraryTag || undefined);
       if (existing.found && existing.videoDir) {
         // Pause here rather than writing a redundant epoch folder for a video
         // that's already tracked -- let the user decide via the dialog below.
@@ -132,9 +168,13 @@ export default function DownloaderScreen() {
     setDuplicateMatch(null);
     setLibraryAddStatus('saving');
     try {
-      await window.electronAPI.overrideLibraryEntry(videoInfo, existingVideoDir);
+      // The replacement write must land back in the same sublibrary the
+      // existing entry (just found via findLibraryVideo above) actually
+      // came from -- targetLibraryTag, not whatever's currently active.
+      await window.electronAPI.overrideLibraryEntry(videoInfo, existingVideoDir, targetLibraryTag || undefined);
       incrementLibraryNotifications();
       setLastAddedVideoId(videoInfo.id);
+      setLastAddedLibraryTag(targetLibraryTag || null);
       setLibrarySuccessSnackbarOpen(true);
       setVideoUrl('');
       setVideoInfo(null);
@@ -160,6 +200,10 @@ export default function DownloaderScreen() {
       await window.electronAPI.addLibraryVersion(videoInfo, existingVideoDir);
       incrementLibraryNotifications();
       setLastAddedVideoId(videoInfo.id);
+      // Adds a new epoch under the existing (already-resolved) videoDir --
+      // stays in whatever sublibrary that video already lives in, same as
+      // targetLibraryTag (it's the one findLibraryVideo just searched).
+      setLastAddedLibraryTag(targetLibraryTag || null);
       setLibrarySuccessSnackbarOpen(true);
       setVideoUrl('');
       setVideoInfo(null);
@@ -224,6 +268,20 @@ export default function DownloaderScreen() {
                 },
               }}
             />
+            {libraryTags.length > 1 &&
+              <FormControl size="small" variant="filled" sx={{ minWidth: 140 }}>
+                <InputLabel id="downloader-target-library-label">Add to</InputLabel>
+                <Select
+                  labelId="downloader-target-library-label"
+                  label="Add to"
+                  value={targetLibraryTag}
+                  onChange={(e) => setTargetLibraryTag(e.target.value)}
+                >
+                  {libraryTags.map((tag) => (
+                    <MenuItem key={tag.folderName} value={tag.folderName}>{tag.tagName}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>}
             <Tooltip title={
               !videoInfo ? 'Load a video first' :
               !isYouTube ? 'Only YouTube videos can be added to the library' :
@@ -309,7 +367,7 @@ export default function DownloaderScreen() {
         {lastAddedVideoId &&
           <Link
             component={RouterLink}
-            to={`/library/video/${lastAddedVideoId}`}
+            to={`/library/video/${lastAddedVideoId}${lastAddedLibraryTag ? `?tag=${encodeURIComponent(lastAddedLibraryTag)}` : ''}`}
             onClick={() => setLibrarySuccessSnackbarOpen(false)}
             color="inherit"
             underline="always"

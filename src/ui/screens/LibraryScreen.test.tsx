@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactElement } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import LibraryScreen from './LibraryScreen';
@@ -15,6 +15,12 @@ import { BulkAddProvider } from '../hooks/useBulkAddQueue.tsx';
 // BulkAddProvider").
 function render(ui: ReactElement) {
   return rtlRender(<MemoryRouter><BulkAddProvider>{ui}</BulkAddProvider></MemoryRouter>);
+}
+
+// For the deep-link (?tag=) tests below -- same wrapper as render() but
+// starting on a specific route instead of the default "/".
+function renderAt(path: string, ui: ReactElement) {
+  return rtlRender(<MemoryRouter initialEntries={[path]}><BulkAddProvider>{ui}</BulkAddProvider></MemoryRouter>);
 }
 
 // LibraryVideoDetail is the biggest, most complex file in the app (its own
@@ -84,10 +90,19 @@ beforeEach(() => {
     refreshLibraryIndex: vi.fn().mockResolvedValue({ channels: makeChannels() }),
     refreshChannelIcon: vi.fn(),
     openDirectory: vi.fn(),
+    listLibraryTags: vi.fn().mockResolvedValue({ tags: [{ tagName: 'DefaultLibrary', folderName: 'DefaultLibrary', createdEpoch: 1 }] }),
+    createLibraryTag: vi.fn().mockResolvedValue({ success: true, tag: { tagName: 'Music', folderName: 'Music', createdEpoch: 2 } }),
+    getActiveLibraryTag: vi.fn().mockResolvedValue({ activeLibraryTag: 'DefaultLibrary', activeLibraryTagDir: '/lib/DefaultLibrary' }),
+    setActiveLibraryTag: vi.fn().mockResolvedValue({ success: true, activeLibraryTag: 'DefaultLibrary' }),
+    findLibraryVideo: vi.fn().mockResolvedValue({ found: false }),
     onLibraryBackgroundUpdate: vi.fn(),
     removeLibraryBackgroundUpdateListener: vi.fn(),
     deleteLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
+    moveLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
     deleteLocalFiles: vi.fn().mockResolvedValue({ success: true, results: [] }),
+    listVideoTags: vi.fn().mockResolvedValue({ tags: {} }),
+    setVideoTag: vi.fn().mockResolvedValue({ success: true, tags: {} }),
+    tagVideos: vi.fn().mockResolvedValue({ success: true, tags: {} }),
     // useBulkAddQueue's start() (fired by "Download selected") unconditionally
     // calls this -- stubbed so bulk-select's download tests don't hit an
     // unmocked IPC call, even though they don't assert on its result.
@@ -132,6 +147,21 @@ describe('LibraryScreen', () => {
     render(<LibraryScreen />);
     await user.click(await screen.findByText('Channel A'));
     expect(screen.getByText('3 clips')).toBeInTheDocument();
+  });
+
+  it('shows a tag chip on a video card only for tags actually applied to that video', async () => {
+    (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+    (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA'], games: ['vidB'] } });
+    render(<LibraryScreen />);
+    await screen.findByText('Alpha Video');
+
+    expect(screen.getByText('TVshows')).toBeInTheDocument();
+    expect(screen.getByText('games')).toBeInTheDocument();
+    // Alpha Video only carries TVshows -- games (Beta Video's own tag)
+    // shouldn't also render on Alpha's card.
+    const alphaCard = screen.getByText('Alpha Video').closest('.MuiCard-root');
+    expect(alphaCard).not.toBeNull();
+    expect(alphaCard && within(alphaCard as HTMLElement).queryByText('games')).toBeNull();
   });
 
   it('drills into a channel, shows its videos, and back returns to the channel list', async () => {
@@ -211,13 +241,13 @@ describe('LibraryScreen', () => {
     await waitFor(() => expect(window.electronAPI.refreshLibraryIndex).toHaveBeenCalled());
   });
 
-  it('opening the library folder calls openDirectory with the configured path', async () => {
+  it('opening the library folder calls openDirectory with the active sublibrary\'s resolved path', async () => {
     const user = userEvent.setup();
     render(<LibraryScreen />);
     await screen.findByText('Channel A');
 
     await user.click(screen.getByRole('button', { name: 'Open library folder' }));
-    expect(window.electronAPI.openDirectory).toHaveBeenCalledWith('/lib');
+    expect(window.electronAPI.openDirectory).toHaveBeenCalledWith('/lib/DefaultLibrary');
   });
 
   it('refreshing a channel icon calls refreshChannelIcon with the channel folder/id', async () => {
@@ -454,6 +484,115 @@ describe('LibraryScreen', () => {
       expect(screen.queryByText('1 item selected')).not.toBeInTheDocument();
     });
 
+    it('hides "Move selected" when only one sublibrary exists', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+
+      expect(screen.queryByRole('button', { name: /Move selected/ })).not.toBeInTheDocument();
+    });
+
+    it('moves the selection to the chosen sublibrary and clears it on confirm', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listLibraryTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+        tags: [
+          { tagName: 'DefaultLibrary', folderName: 'DefaultLibrary', createdEpoch: 1 },
+          { tagName: 'Music', folderName: 'Music', createdEpoch: 2 },
+        ],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('button', { name: /Move selected/ }));
+
+      expect(await screen.findByText(/Move 1 selected video/)).toBeInTheDocument();
+      // Only "Music" is offered -- DefaultLibrary is the currently-active
+      // tag, filtered out since there's nowhere to move a video *to* the
+      // sublibrary it's already in.
+      await user.click(screen.getByRole('button', { name: 'Move' }));
+
+      await waitFor(() => expect(window.electronAPI.moveLibraryEntries).toHaveBeenCalledWith(['/lib/Channel A/vidA'], 'Music'));
+      expect(screen.queryByText(/Move 1 selected video/)).not.toBeInTheDocument();
+      expect(screen.queryByText('1 item selected')).not.toBeInTheDocument();
+    });
+
+    it('a partial move failure keeps only the failed items selected', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listLibraryTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+        tags: [
+          { tagName: 'DefaultLibrary', folderName: 'DefaultLibrary', createdEpoch: 1 },
+          { tagName: 'Music', folderName: 'Music', createdEpoch: 2 },
+        ],
+      });
+      (window.electronAPI.moveLibraryEntries as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: false,
+        results: [
+          { videoDir: '/lib/Channel A/vidA', success: true },
+          { videoDir: '/lib/Channel B/vidB', success: false, error: 'boom' },
+        ],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Beta Video' }));
+      await user.click(screen.getByRole('button', { name: /Move selected/ }));
+      await user.click(await screen.findByRole('button', { name: 'Move' }));
+
+      expect(await screen.findByText(/couldn't be moved/)).toBeInTheDocument();
+      expect(screen.getByText('1 item selected')).toBeInTheDocument();
+    });
+
+    it('"Tag selected" is offered whenever anything is selected, unlike Move\'s multi-sublibrary gate', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+
+      expect(screen.getByRole('button', { name: /Tag selected/ })).toBeInTheDocument();
+    });
+
+    it('tags the selection with a picked existing tag and clears the selection on confirm', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidC'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('button', { name: /Tag selected/ }));
+
+      expect(await screen.findByText(/Tag 1 selected video/)).toBeInTheDocument();
+      await user.type(screen.getByRole('combobox'), 'TVshows');
+      await user.click(screen.getByRole('button', { name: 'Tag' }));
+
+      await waitFor(() => expect(window.electronAPI.tagVideos).toHaveBeenCalledWith(['vidA'], 'TVshows'));
+      expect(screen.queryByText(/Tag 1 selected video/)).not.toBeInTheDocument();
+      expect(screen.queryByText('1 item selected')).not.toBeInTheDocument();
+    });
+
+    it('tags the selection with a brand-new, freely typed tag', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('button', { name: /Tag selected/ }));
+      await user.type(screen.getByRole('combobox'), 'brandNewTag');
+      await user.click(await screen.findByRole('button', { name: 'Tag' }));
+
+      await waitFor(() => expect(window.electronAPI.tagVideos).toHaveBeenCalledWith(['vidA'], 'brandNewTag'));
+    });
+
     it('resets the selection when navigating back to the channel list', async () => {
       const user = userEvent.setup();
       render(<LibraryScreen />);
@@ -465,6 +604,110 @@ describe('LibraryScreen', () => {
       await user.click(await screen.findByText('Channel A'));
 
       expect(screen.queryByText(/item.*selected/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('tag filter', () => {
+    it('shows the filter popover with a checkbox per known tag', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA'], games: ['vidB'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+
+      expect(screen.getByRole('checkbox', { name: 'TVshows' })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: 'games' })).toBeInTheDocument();
+    });
+
+    it('filters to only videos carrying every selected tag (AND, not ANY)', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA'], games: ['vidB'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+
+      // Only Alpha (TVshows) matches -- Beta (games only) is filtered out.
+      expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+      expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
+
+      // Selecting a second tag neither video carries both of -- AND
+      // semantics means the result narrows to nothing, not widens.
+      await user.click(screen.getByRole('checkbox', { name: 'games' }));
+      expect(screen.queryByText('Alpha Video')).not.toBeInTheDocument();
+      expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
+      expect(screen.getByText('No videos match the selected tag filter.')).toBeInTheDocument();
+    });
+
+    it('the tag filter composes with search, narrowing within the already-filtered set', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA', 'vidB'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+      expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+      expect(screen.getByText('Beta Video')).toBeInTheDocument();
+
+      await user.keyboard('{Escape}');
+      await user.type(screen.getByPlaceholderText('Search videos...'), 'Alpha');
+
+      await waitFor(() => expect(screen.queryByText('Beta Video')).not.toBeInTheDocument());
+      expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+    });
+
+    it('"Clear filter" resets the selection and shows every video again', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+      expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Clear filter' }));
+      expect(await screen.findByText('Beta Video')).toBeInTheDocument();
+    });
+  });
+
+  describe('deep link with ?tag=', () => {
+    it('switches to the linked sublibrary before resolving the video, when it differs from the active one', async () => {
+      (window.electronAPI.listLibraryTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+        tags: [
+          { tagName: 'DefaultLibrary', folderName: 'DefaultLibrary', createdEpoch: 1 },
+          { tagName: 'Music', folderName: 'Music', createdEpoch: 2 },
+        ],
+      });
+      (window.electronAPI.findLibraryVideo as ReturnType<typeof vi.fn>).mockResolvedValue({
+        found: true, videoDir: '/lib/Channel A/vidA',
+      });
+
+      renderAt('/library/video/vidA?tag=Music', <LibraryScreen />);
+
+      await waitFor(() => expect(window.electronAPI.setActiveLibraryTag).toHaveBeenCalledWith('Music'));
+      // The lookup itself is scoped to the linked tag too -- not whatever
+      // was active when the link was clicked.
+      expect(window.electronAPI.findLibraryVideo).toHaveBeenCalledWith('vidA', 'Music');
+      expect(await screen.findByText('Detail: vidA')).toBeInTheDocument();
+    });
+
+    it('does not switch when the linked tag is already the active one', async () => {
+      (window.electronAPI.findLibraryVideo as ReturnType<typeof vi.fn>).mockResolvedValue({
+        found: true, videoDir: '/lib/Channel A/vidA',
+      });
+
+      renderAt('/library/video/vidA?tag=DefaultLibrary', <LibraryScreen />);
+
+      expect(await screen.findByText('Detail: vidA')).toBeInTheDocument();
+      expect(window.electronAPI.setActiveLibraryTag).not.toHaveBeenCalled();
     });
   });
 });

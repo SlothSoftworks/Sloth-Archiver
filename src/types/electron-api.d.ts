@@ -19,6 +19,22 @@ type OpenFolderResult = {
 type LibrarySortField = 'title' | 'uploadDate' | 'dateAdded' | 'channel' | 'downloaded' | 'quality';
 type LibrarySortDirection = 'asc' | 'desc';
 
+// Mirrors listLibraryTags' return shape (library.mjs) -- folderName is what
+// every IPC call actually keys on; tagName is presentational (today always
+// equal to folderName, since sublibrary names aren't renamable separately
+// from their folder).
+type LibraryTag = {
+    tagName: string;
+    folderName: string;
+    createdEpoch: number | null;
+};
+
+// A per-sublibrary map of user-defined video tags to the videoIds carrying
+// them (see listVideoTags, library.mjs) -- unrelated to LibraryTag above
+// (that's sublibrary switching); named videoTag(s) everywhere to keep the
+// two concepts unambiguous.
+type VideoTagsMap = Record<string, string[]>;
+
 type LibraryIndex = {
     channels: {
         channelFolderName: string;
@@ -68,6 +84,13 @@ declare global {
             deleteVideoInfoCacheEntry: (url: string) => Promise<{ success: boolean; existed: boolean }>
             getLibraryDir: () => Promise<{ libraryDir: string }>
             setLibraryDir: (dir: string) => Promise<{ success: boolean; libraryDir: string }>
+            listLibraryTags: () => Promise<{ tags: LibraryTag[] }>
+            createLibraryTag: (name: string) => Promise<{ success: boolean; tag?: LibraryTag; message?: string }>
+            listVideoTags: () => Promise<{ tags: VideoTagsMap }>
+            setVideoTag: (tagName: string, videoId: string, applied: boolean) => Promise<{ success: boolean; tags: VideoTagsMap }>
+            tagVideos: (videoIds: string[], tagName: string) => Promise<{ success: boolean; tags: VideoTagsMap }>
+            getActiveLibraryTag: () => Promise<{ activeLibraryTag: string; activeLibraryTagDir: string }>
+            setActiveLibraryTag: (tag: string) => Promise<{ success: boolean; activeLibraryTag: string }>
             getLibraryViewMode: () => Promise<{ libraryViewMode: 'channel' | 'video' }>
             setLibraryViewMode: (mode: 'channel' | 'video') => Promise<{ success: boolean; libraryViewMode: 'channel' | 'video' }>
             getLibrarySort: () => Promise<{ sortField: LibrarySortField; sortDirection: LibrarySortDirection }>
@@ -83,11 +106,12 @@ declare global {
             getLibraryIndex: () => Promise<LibraryIndex>
             refreshLibraryIndex: () => Promise<LibraryIndex>
             refreshChannelIcon: (payload: { channelFolderName: string; channelId: string | null }) => Promise<LibraryIndex>
-            addLibraryEntry: (videoMetaData: T) => Promise<{ success: boolean; videoDir: string; epoch: string }>
-            overrideLibraryEntry: (videoMetaData: T, existingVideoDir: string) => Promise<{ success: boolean; videoDir: string }>
+            addLibraryEntry: (videoMetaData: T, targetTag?: string) => Promise<{ success: boolean; videoDir: string; epoch: string }>
+            overrideLibraryEntry: (videoMetaData: T, existingVideoDir: string, targetTag?: string) => Promise<{ success: boolean; videoDir: string }>
             addLibraryVersion: (videoMetaData: T, videoDir: string) => Promise<{ success: boolean; videoDir: string; epoch: string; metadata: LibraryVideoMetadata }>
             refreshLibraryEntry: (videoDir: string, epoch: string, videoMetaData: T) => Promise<{ success: boolean; metadata: LibraryVideoMetadata }>
-            findLibraryVideo: (videoId: string) => Promise<{ found: boolean; channelDisplayName?: string; videoDir?: string }>
+            checkAndRepairEpochFiles: (videoDir: string, epoch: string) => Promise<{ success: boolean; metadata?: LibraryVideoMetadata; videoRepaired?: boolean; audioRepaired?: boolean; videoMissing?: boolean; audioMissing?: boolean; message?: string }>
+            findLibraryVideo: (videoId: string, libraryTag?: string) => Promise<{ found: boolean; channelDisplayName?: string; videoDir?: string }>
             fetchPlaylistEntries: (playlistUrl: string) => Promise<{ success: boolean; entries?: { id: string; title: string | null; url: string; thumbnailUrl: string; uploadDate: string | null }[]; playlistId?: string; message?: string }>
             enrichPlaylistEntry: (payload: { playlistId: string; videoId: string; title?: string | null; uploadDate?: string | null; thumbnailUrl?: string | null }) => Promise<{ success: boolean; message?: string }>
             listPlaylists: () => Promise<{ playlists: PlaylistSummary[] }>
@@ -99,6 +123,7 @@ declare global {
             swapLibraryDownload: (payload: { videoDir: string; epoch: string; tempFilePath: string; oldFilePath: string | null; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<LibraryVideoMetadata>
             deleteLibraryEntry: (videoDir: string, epoch?: string) => Promise<{ success: boolean; videoDeleted: boolean }>
             deleteLibraryEntries: (videoDirs: string[]) => Promise<{ success: boolean; results: { videoDir: string; success: boolean; error?: string }[] }>
+            moveLibraryEntries: (videoDirs: string[], targetTag: string) => Promise<{ success: boolean; results: { videoDir: string; success: boolean; error?: string }[] }>
             deleteLocalFiles: (videoDirs: string[]) => Promise<{ success: boolean; results: { videoDir: string; success: boolean; error?: string }[] }>
             onLibraryBackgroundUpdate: (callback: () => void) => void
             removeLibraryBackgroundUpdateListener: () => void
