@@ -29,7 +29,7 @@ import LabelOutlinedIcon from '@mui/icons-material/LabelOutlined';
 import CancelIcon from '@mui/icons-material/Cancel';
 import type { DownloadVideoParams } from '../../types';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
-import { getPlatformLabel } from '../../utils/utils.ts';
+import { getPlatformLabel, isLongVideoForPostprocess } from '../../utils/utils.ts';
 import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
 
 // Deliberately minimal, and deliberately NOT a branch inside VideoDetailCard
@@ -46,6 +46,7 @@ interface OtherPlatformVideoDataProps {
     fullTitle: string;
     thumbnail: string;
     uploader: string | null;
+    duration?: number | null;
     durationString: string | null;
     uploadDate: string | null;
     description: string | null;
@@ -68,7 +69,7 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
   const [embedError, setEmbedError] = useState<string | null>(null);
   const [embedSuccessOpen, setEmbedSuccessOpen] = useState(false);
 
-  const { finalFilePath, downloadProgress, postprocessProgress, downloadStatus, isDone, isError, downloadError, downloadErrorKind, isRetrying, startDownload, cancelDownload } = useDownloadVideo();
+  const { finalFilePath, downloadProgress, postprocessProgress, postprocessIndeterminate, downloadStatus, isDone, isError, downloadError, downloadErrorKind, isRetrying, startDownload, cancelDownload } = useDownloadVideo();
 
   const platformLabel = getPlatformLabel(videoMetaData.originalUrl);
   // SoundCloud is audio-only, so this always extracts a real MP3 (the same
@@ -192,7 +193,11 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
                     <Typography variant="caption" color="warning.main">
                       Retrying after a download error...
                     </Typography>}
-                  <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
+                  <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} indeterminate={postprocessIndeterminate} />
+                  {!isDone && isLongVideoForPostprocess(videoMetaData.duration) &&
+                    <Typography variant="caption" color="warning.main" textAlign="center">
+                      This is a long video -- postprocessing may take a while with no visible progress.
+                    </Typography>}
                   {isDone && isSoundCloud &&
                     <Stack direction="row" spacing={1.5} alignItems="center">
                       <Button

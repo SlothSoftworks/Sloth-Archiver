@@ -67,17 +67,20 @@ describe('useDownloadVideo', () => {
     const { result } = renderHook(() => useDownloadVideo());
     emit({ type: 'postprocessing', payload: { postprocessPercent: 90 } as DownloadProgressMessage['payload'] });
     expect(result.current.postprocessProgress).toBe(90);
+    expect(result.current.postprocessIndeterminate).toBe(false);
     // Real ffmpeg progress restarting near 0 (e.g. a second postprocess step) must not get stuck at a prior high value.
     emit({ type: 'postprocessing', payload: { postprocessPercent: 5 } as DownloadProgressMessage['payload'] });
     expect(result.current.postprocessProgress).toBe(5);
   });
 
-  it('falls back to the 50/100 approximation when no real postprocessPercent is given', () => {
+  it('falls back to the 50/100 approximation when no real postprocessPercent is given, and flags it as indeterminate while started', () => {
     const { result } = renderHook(() => useDownloadVideo());
     emit({ type: 'postprocessing', payload: { stage: 'start' } as DownloadProgressMessage['payload'] });
     expect(result.current.postprocessProgress).toBe(50);
+    expect(result.current.postprocessIndeterminate).toBe(true);
     emit({ type: 'postprocessing', payload: { stage: 'finished' } as DownloadProgressMessage['payload'] });
     expect(result.current.postprocessProgress).toBe(100);
+    expect(result.current.postprocessIndeterminate).toBe(false);
   });
 
   it('sets isError and downloadError on an error event', () => {

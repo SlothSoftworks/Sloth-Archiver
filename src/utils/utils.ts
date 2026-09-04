@@ -135,6 +135,19 @@ function thumbnailGridTemplateColumns(thumbnailSize: number): string {
   return responsiveGridTemplateColumns(120, `${vw.toFixed(3)}vw`, 720);
 }
 
+// yt-dlp's own postprocess progress-template only ever reports
+// started/finished, never a real percentage (see useDownloadVideo.tsx) --
+// for a merge/remux step that's normally fast, but on a very long recording
+// can legitimately sit at "started" for a long time with the postprocessing
+// bar showing no real movement. Arbitrary threshold picked to flag the
+// videos where that's actually likely to be noticeable, not a measured
+// cutoff.
+const LONG_VIDEO_POSTPROCESS_THRESHOLD_SECONDS = 3 * 60 * 60;
+
+function isLongVideoForPostprocess(durationSeconds: number | null | undefined): boolean {
+  return typeof durationSeconds === 'number' && durationSeconds >= LONG_VIDEO_POSTPROCESS_THRESHOLD_SECONDS;
+}
+
 // Electron's ipcRenderer.invoke wraps any rejected IPC handler's error in a
 // generic "Error invoking remote method '<channel>': Error: <message>"
 // wrapper before it reaches the renderer -- an implementation detail of the
@@ -146,5 +159,5 @@ function cleanElectronErrorMessage(message: string): string {
   return message.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '');
 }
 
-export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage };
+export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage, isLongVideoForPostprocess };
 

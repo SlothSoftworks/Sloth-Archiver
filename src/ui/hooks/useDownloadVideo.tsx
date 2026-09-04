@@ -4,6 +4,11 @@ import type { DownloadProgressMessage, DownloadVideoParams } from '../../types'
 function useDownloadVideo() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [postprocessProgress, setPostprocessProgress] = useState(0);
+  // True only for yt-dlp's own merge-step postprocessing (started, no real
+  // percentage yet) -- distinct from postprocessProgress's 2-state 50/100
+  // approximation below, so consumers can show an indeterminate bar instead
+  // of a percentage that isn't actually measuring anything.
+  const [postprocessIndeterminate, setPostprocessIndeterminate] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState("Idle");
   const [finalFilePath, setFinalFilePath] = useState<string>('');
   const [isDone, setIsDone] = useState(false);
@@ -36,6 +41,7 @@ function useDownloadVideo() {
 
         setDownloadProgress(0);
         setPostprocessProgress(0);
+        setPostprocessIndeterminate(false);
         setDownloadStatus("Idle");
         setFinalFilePath('');
         setIsDone(false);
@@ -89,12 +95,17 @@ function useDownloadVideo() {
               // branch) can leave postprocessProgress at 100 already, and
               // clamping here would stick our real, near-0-starting percent
               // at 100 instead of showing real progress.
+              setPostprocessIndeterminate(false);
               setPostprocessProgress(payload.postprocessPercent);
             } else {
               // yt-dlp's own merge-step postprocessing only ever reports
-              // started/finished, never a real percentage -- a deliberate
-              // 2-state approximation, fine here since a plain stream merge
-              // is fast, unlike the slower re-encode case handled above.
+              // started/finished, never a real percentage. A stuck-at-50%
+              // bar reads as broken (especially noticeable on a long
+              // recording, where this step can legitimately run for a
+              // while) -- consumers should render an indeterminate bar
+              // instead while this is true, rather than trusting
+              // postprocessProgress's 50/100 approximation as a real value.
+              setPostprocessIndeterminate(payload.stage === 'start');
               setPostprocessProgress(payload.stage === 'start' ? 50 : 100);
             }
             break;
@@ -108,6 +119,7 @@ function useDownloadVideo() {
             setIsError(true);
             setIsRetrying(false);
             setDownloadErrorKind(payload.kind ?? null);
+            setPostprocessIndeterminate(false);
             if (downloadError != null) {
               accumErr = { previous: downloadError, current: msg };
             }
@@ -122,6 +134,7 @@ function useDownloadVideo() {
             setFinalFilePath(payload.filename);
             setDownloadProgress(100);
             setPostprocessProgress(100);
+            setPostprocessIndeterminate(false);
             setIsDone(true);
             break;
         }
@@ -137,6 +150,7 @@ function useDownloadVideo() {
     finalFilePath,
     downloadProgress,
     postprocessProgress,
+    postprocessIndeterminate,
     downloadStatus,
     isDone,
     isError,

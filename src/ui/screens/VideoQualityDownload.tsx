@@ -23,7 +23,7 @@ import AudiotrackIcon from '@mui/icons-material/Audiotrack';
 import CancelIcon from '@mui/icons-material/Cancel';
 import LocalOfferOutlinedIcon from '@mui/icons-material/LocalOfferOutlined';
 import { pink } from '@mui/material/colors';
-import { buildAppVideoUrl, formatEpochLabel } from '../../utils/utils.ts';
+import { buildAppVideoUrl, formatEpochLabel, isLongVideoForPostprocess } from '../../utils/utils.ts';
 import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
 import VideoTagsPopover from '../components/VideoTagsPopover';
 import type { LibraryVideoMetadata, Resolution } from '../../types';
@@ -114,6 +114,22 @@ function DownloadCancelControls({ isRetrying, onCancelDownload }: { isRetrying: 
   );
 }
 
+// Shared by the same three blocks as DownloadCancelControls above -- a
+// persistent warning label (not just a tooltip, which is too easy to miss)
+// shown below the progress bar for the whole download/postprocess span on a
+// long recording, since yt-dlp's own merge step reports no real progress and
+// can otherwise look stuck for a while on something this long. Only ever
+// rendered while a download is actively in flight (all three call sites are
+// already gated on that), so no separate isDone check is needed.
+function LongVideoPostprocessWarning({ duration }: { duration: number | null }) {
+  if (!isLongVideoForPostprocess(duration)) return null;
+  return (
+    <Typography variant="caption" color="warning.main" textAlign="center">
+      This is a long video -- postprocessing may take a while with no visible progress.
+    </Typography>
+  );
+}
+
 // The version selector + video quality download/swap controls + MP3 audio
 // sub-section -- everything in the instrument panel above the FFMPEG
 // utilities divider. All state stays owned by LibraryVideoDetail (the
@@ -137,6 +153,7 @@ export default function VideoQualityDownload({
   downloadStatus,
   downloadProgress,
   postprocessProgress,
+  postprocessIndeterminate,
   swappingQuality,
   onCancelQualitySwap,
   isDownloading,
@@ -174,6 +191,7 @@ export default function VideoQualityDownload({
   downloadStatus: string;
   downloadProgress: number;
   postprocessProgress: number;
+  postprocessIndeterminate: boolean;
   swappingQuality: boolean;
   onCancelQualitySwap: () => void;
   isDownloading: boolean;
@@ -266,7 +284,8 @@ export default function VideoQualityDownload({
               {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : 'Downloading'}
               {selectedResolution && ` (${selectedResolution}${selectedResolution.toLowerCase() === 'mp3' ? '' : 'p'})`}
             </Typography>
-            <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
+            <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} indeterminate={postprocessIndeterminate} />
+            <LongVideoPostprocessWarning duration={metadata.duration} />
             <DownloadCancelControls isRetrying={isRetrying} onCancelDownload={onCancelDownload} />
           </Stack>
         ) : (
@@ -301,7 +320,8 @@ export default function VideoQualityDownload({
             {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : 'Downloading'}
             {selectedResolution && ` (${selectedResolution}p)`}
           </Typography>
-          <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
+          <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} indeterminate={postprocessIndeterminate} />
+          <LongVideoPostprocessWarning duration={metadata.duration} />
           <DownloadCancelControls isRetrying={isRetrying} onCancelDownload={onCancelDownload} />
         </Stack>
       ) : videoResolutions.length === 0 ? (
@@ -337,7 +357,7 @@ export default function VideoQualityDownload({
                 <Typography variant="subtitle1" textAlign="center">
                   {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : 'Downloading'} (MP3)
                 </Typography>
-                <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
+                <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} indeterminate={postprocessIndeterminate} />
                 <DownloadCancelControls isRetrying={isRetrying} onCancelDownload={onCancelDownload} />
               </Stack>
             ) : metadata.downloadedAudioFilePath ? (

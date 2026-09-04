@@ -44,17 +44,22 @@ export function summarizeFfmpegError(stderr, code) {
 // different callers (the main download pipeline's postprocess step, and the
 // Library view's standalone ffmpeg utilities) that report progress over two
 // different IPC channels.
-export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
+export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog, isDev = false }) {
     function getMediaDurationSeconds(filePath) {
         return new Promise((resolve, reject) => {
+            onLog?.(`[ffmpeg] probing duration: ${filePath}`);
             const proc = spawn(ffprobeBinaryPath, ['-v', 'quiet', '-print_format', 'json', '-show_format', filePath]);
             let stdout = '';
             let stderr = '';
             proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
             proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-            proc.on('error', reject);
+            proc.on('error', (err) => {
+                onLog?.(`[ffmpeg] ffprobe failed to start for ${filePath}: ${err.message}`);
+                reject(err);
+            });
             proc.on('close', (code) => {
                 if (code !== 0) {
+                    onLog?.(`[ffmpeg] ffprobe exited with code ${code} for ${filePath}: ${stderr}`);
                     reject(new Error(stderr || `ffprobe exited with code ${code}`));
                     return;
                 }
@@ -62,6 +67,7 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
                     const duration = parseFloat(JSON.parse(stdout).format.duration);
                     resolve(Number.isFinite(duration) ? duration : 0);
                 } catch {
+                    onLog?.(`[ffmpeg] failed to parse ffprobe output for ${filePath}`);
                     reject(new Error('Failed to parse ffprobe output'));
                 }
             });
@@ -75,9 +81,12 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
     function runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress, extraInputArgs = [], preInputArgs = [] }) {
         return new Promise((resolve, reject) => {
             const args = [...preInputArgs, '-i', inputPath, ...extraInputArgs, ...codecArgs, '-progress', 'pipe:1', '-y', outputPath];
+            onLog?.(`[ffmpeg] running: ${ffmpegBinaryPath} ${args.join(' ')}`);
             const proc = spawn(ffmpegBinaryPath, args);
             let stderr = '';
             let buffer = '';
+            let lastDevProgressLogAt = 0;
+            const DEV_PROGRESS_LOG_INTERVAL_MS = 30 * 1000;
 
             proc.stdout.on('data', (chunk) => {
                 buffer += chunk.toString();
@@ -88,13 +97,25 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
                     if (match && totalDurationSeconds > 0) {
                         const percent = Math.min(100, (Number(match[1]) / (totalDurationSeconds * 1_000_000)) * 100);
                         onProgress?.(percent);
+                        // Same rationale as main.mjs's own download-progress
+                        // throttle: -progress pipe:1 emits several lines per
+                        // second, dev-only and sampled to keep main.log readable.
+                        if (isDev && Date.now() - lastDevProgressLogAt >= DEV_PROGRESS_LOG_INTERVAL_MS) {
+                            lastDevProgressLogAt = Date.now();
+                            onLog?.(`[ffmpeg] ${outputPath}: ${percent.toFixed(1)}%`);
+                        }
                     }
                 }
             });
             proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-            proc.on('error', reject);
+            proc.on('error', (err) => {
+                onLog?.(`[ffmpeg] failed to start: ${err.message}`);
+                reject(err);
+            });
             proc.on('close', (code) => {
+                onLog?.(`[ffmpeg] exited with code ${code}: ${outputPath}`);
                 if (code !== 0) {
+                    onLog?.(`[ffmpeg] stderr for ${outputPath}: ${stderr}`);
                     reject(new Error(summarizeFfmpegError(stderr, code)));
                 } else {
                     resolve();
@@ -136,7 +157,8 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath }) {
         }
         try {
             await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: ['-c', 'copy'], totalDurationSeconds, onProgress });
-        } catch {
+        } catch (err) {
+            onLog?.(`[ffmpeg] remux failed for ${outputPath}, falling back to re-encode: ${err instanceof Error ? err.message : String(err)}`);
             await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: reencodeCodecArgs, totalDurationSeconds, onProgress });
         }
     }
