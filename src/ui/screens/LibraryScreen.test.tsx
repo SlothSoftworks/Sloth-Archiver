@@ -98,6 +98,7 @@ beforeEach(() => {
     onLibraryBackgroundUpdate: vi.fn(),
     removeLibraryBackgroundUpdateListener: vi.fn(),
     deleteLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
+    moveLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
     deleteLocalFiles: vi.fn().mockResolvedValue({ success: true, results: [] }),
     // useBulkAddQueue's start() (fired by "Download selected") unconditionally
     // calls this -- stubbed so bulk-select's download tests don't hit an
@@ -463,6 +464,71 @@ describe('LibraryScreen', () => {
 
       expect(screen.queryByText('Download 1 selected video')).not.toBeInTheDocument();
       expect(screen.queryByText('1 item selected')).not.toBeInTheDocument();
+    });
+
+    it('hides "Move selected" when only one sublibrary exists', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+
+      expect(screen.queryByRole('button', { name: /Move selected/ })).not.toBeInTheDocument();
+    });
+
+    it('moves the selection to the chosen sublibrary and clears it on confirm', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listLibraryTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+        tags: [
+          { tagName: 'DefaultLibrary', folderName: 'DefaultLibrary', createdEpoch: 1 },
+          { tagName: 'Music', folderName: 'Music', createdEpoch: 2 },
+        ],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('button', { name: /Move selected/ }));
+
+      expect(await screen.findByText(/Move 1 selected video/)).toBeInTheDocument();
+      // Only "Music" is offered -- DefaultLibrary is the currently-active
+      // tag, filtered out since there's nowhere to move a video *to* the
+      // sublibrary it's already in.
+      await user.click(screen.getByRole('button', { name: 'Move' }));
+
+      await waitFor(() => expect(window.electronAPI.moveLibraryEntries).toHaveBeenCalledWith(['/lib/Channel A/vidA'], 'Music'));
+      expect(screen.queryByText(/Move 1 selected video/)).not.toBeInTheDocument();
+      expect(screen.queryByText('1 item selected')).not.toBeInTheDocument();
+    });
+
+    it('a partial move failure keeps only the failed items selected', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listLibraryTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+        tags: [
+          { tagName: 'DefaultLibrary', folderName: 'DefaultLibrary', createdEpoch: 1 },
+          { tagName: 'Music', folderName: 'Music', createdEpoch: 2 },
+        ],
+      });
+      (window.electronAPI.moveLibraryEntries as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: false,
+        results: [
+          { videoDir: '/lib/Channel A/vidA', success: true },
+          { videoDir: '/lib/Channel B/vidB', success: false, error: 'boom' },
+        ],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Beta Video' }));
+      await user.click(screen.getByRole('button', { name: /Move selected/ }));
+      await user.click(await screen.findByRole('button', { name: 'Move' }));
+
+      expect(await screen.findByText(/couldn't be moved/)).toBeInTheDocument();
+      expect(screen.getByText('1 item selected')).toBeInTheDocument();
     });
 
     it('resets the selection when navigating back to the channel list', async () => {

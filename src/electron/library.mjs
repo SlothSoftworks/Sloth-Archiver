@@ -553,6 +553,101 @@ export function deleteLocalFiles({ libraryDir, videoDir }) {
     return { filesDeleted };
 }
 
+// Every epoch's metadata.json under videoDir stores downloadedFilePath/
+// downloadedAudioFilePath as absolute paths (see checkAndRepairEpochFiles'
+// own comment on why that's inherently fragile) -- moveLibraryEntry below
+// just renamed the whole folder tree out from under those paths, so unlike
+// the reactive, best-effort repair checkAndRepairEpochFiles does (searching
+// for a similarly-named file when a path merely turns out to be stale),
+// this one knows *exactly* what changed: every epoch's own two path fields
+// get the old videoDir prefix swapped for the new one, deterministically.
+// clips.json is untouched on purpose -- it only ever stores clip fileNames,
+// resolved against videoDir fresh at read time, so a folder move can't make
+// those stale in the first place.
+function repairMovedEpochPaths(oldVideoDir, newVideoDir) {
+    let epochEntries;
+    try {
+        epochEntries = fs.readdirSync(newVideoDir, { withFileTypes: true });
+    } catch {
+        return;
+    }
+    for (const entry of epochEntries) {
+        if (!entry.isDirectory() || entry.name === CLIPS_DIR_NAME) continue;
+        const metadataPath = path.join(newVideoDir, entry.name, 'metadata.json');
+        let metadata;
+        try {
+            metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+        } catch {
+            continue;
+        }
+        let changed = false;
+        if (metadata.downloadedFilePath && metadata.downloadedFilePath.startsWith(oldVideoDir)) {
+            metadata.downloadedFilePath = newVideoDir + metadata.downloadedFilePath.slice(oldVideoDir.length);
+            changed = true;
+        }
+        if (metadata.downloadedAudioFilePath && metadata.downloadedAudioFilePath.startsWith(oldVideoDir)) {
+            metadata.downloadedAudioFilePath = newVideoDir + metadata.downloadedAudioFilePath.slice(oldVideoDir.length);
+            changed = true;
+        }
+        if (changed) {
+            fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+        }
+    }
+}
+
+// Moves one video (every epoch, its clips/ folder, its own video-thumbnail.*
+// -- the whole videoDir tree as one unit) into a different sublibrary tag,
+// under the same channel folder name it already had. Every tag lives on the
+// same filesystem under the same libraryDir by design (see
+// DEFAULT_LIBRARY_DIR_NAME's own comment), so this is a plain, atomic
+// fs.renameSync -- no cross-filesystem copy+verify+delete needed.
+//
+// Channel data is copied "if needed" only: if the target sublibrary doesn't
+// already have a folder for this channel, it's created and the source's
+// channel-icon.* (if any) is copied into it; if the target channel folder
+// already exists, it's left completely alone. Deliberately does NOT touch
+// the *source* channel folder afterward, even if this was its last video --
+// no cleanup, no re-counting, on purpose (a decided scope cut: moving and
+// cleanup are separate responsibilities; an orphaned source channel
+// folder -- just a channel-icon.* with no videos left under it -- is left
+// for a future dedicated cleanup pass, not this function).
+export function moveLibraryEntry({ libraryDir, videoDir, targetTag }) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
+        throw new Error('Refusing to move a path outside the configured library folder.');
+    }
+    if (!targetTag) {
+        throw new Error('No target sublibrary given.');
+    }
+
+    const sourceChannelDir = path.dirname(resolvedVideoDir);
+    const channelDirName = path.basename(sourceChannelDir);
+    const videoDirName = path.basename(resolvedVideoDir);
+
+    ensureLibraryTagMetadata(libraryDir, targetTag);
+    const targetChannelDir = path.join(libraryTagDir(libraryDir, targetTag), channelDirName);
+    const targetVideoDir = path.join(targetChannelDir, videoDirName);
+
+    if (fs.existsSync(targetVideoDir)) {
+        throw new Error('This video already exists in the target sublibrary.');
+    }
+
+    const targetChannelDirExisted = fs.existsSync(targetChannelDir);
+    fs.mkdirSync(targetChannelDir, { recursive: true });
+    if (!targetChannelDirExisted) {
+        const iconEntry = fs.existsSync(sourceChannelDir)
+            && fs.readdirSync(sourceChannelDir, { withFileTypes: true }).find((e) => e.isFile() && e.name.startsWith('channel-icon.'));
+        if (iconEntry) {
+            fs.copyFileSync(path.join(sourceChannelDir, iconEntry.name), path.join(targetChannelDir, iconEntry.name));
+        }
+    }
+
+    fs.renameSync(resolvedVideoDir, targetVideoDir);
+    repairMovedEpochPaths(resolvedVideoDir, targetVideoDir);
+
+    return { videoDir: targetVideoDir };
+}
+
 // "Override" means replace the tracked entry, not add another version.
 // Deletes existingVideoDir exactly as given (from an earlier
 // findVideoInIndex lookup) rather than re-deriving it from videoMetaData --

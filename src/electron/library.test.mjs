@@ -13,6 +13,7 @@ import {
   swapLibraryDownload,
   deleteLibraryEntry,
   deleteLocalFiles,
+  moveLibraryEntry,
   overrideLibraryEntry,
   scanLibrary,
   getLibraryIndex,
@@ -870,5 +871,125 @@ describe('writePlaylistSnapshot / enrichPlaylistEntry', () => {
     // A later "enrich" with another dead title (title === videoId) must not clobber the real one just set.
     const reEnriched = enrichPlaylistEntry({ libraryDir, playlistId: 'PL123', videoId: 'v2', title: 'v2' });
     expect(reEnriched.entries.find((e) => e.videoId === 'v2').title).toBe('Real Title');
+  });
+});
+
+describe('moveLibraryEntry', () => {
+  it('refuses to move a videoDir outside the configured library folder', () => {
+    expect(() => moveLibraryEntry({ libraryDir, videoDir: '/etc', targetTag: 'Music' }))
+      .toThrow(/outside the configured library folder/);
+  });
+
+  it('moves the whole video folder into the target tag, under the same channel folder name', () => {
+    const { videoDir, channelDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ uploader: 'Some Channel' }) });
+    createLibraryTag(libraryDir, 'Music');
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    const expectedVideoDir = path.join(libraryTagDir(libraryDir, 'Music'), path.basename(channelDir), path.basename(videoDir));
+    expect(result.videoDir).toBe(expectedVideoDir);
+    expect(fs.existsSync(videoDir)).toBe(false);
+    expect(fs.existsSync(result.videoDir)).toBe(true);
+  });
+
+  it('lazily creates the target tag folder if it does not already exist', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    expect(listLibraryTags(libraryDir).map((t) => t.folderName)).not.toContain('Music');
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    expect(fs.existsSync(result.videoDir)).toBe(true);
+    expect(listLibraryTags(libraryDir).map((t) => t.folderName)).toContain('Music');
+  });
+
+  it('repairs downloadedFilePath/downloadedAudioFilePath in every moved epoch to the new location', () => {
+    const { videoDir, epochDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    const videoFile = path.join(epochDir, 'video.mp4');
+    const audioFile = path.join(epochDir, 'audio.mp3');
+    fs.writeFileSync(videoFile, 'fake video bytes');
+    fs.writeFileSync(audioFile, 'fake audio bytes');
+    recordLibraryDownload({ videoDir, epoch, filePath: videoFile, resolution: '1080', format: 'mp4' });
+    recordLibraryDownload({ videoDir, epoch, filePath: audioFile, kind: 'audio' });
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    const moved = readMetadata(result.videoDir, epoch);
+    expect(moved.downloadedFilePath).toBe(path.join(result.videoDir, epoch, 'video.mp4'));
+    expect(moved.downloadedAudioFilePath).toBe(path.join(result.videoDir, epoch, 'audio.mp3'));
+    // The bytes moved with the folder, at the now-repaired path.
+    expect(fs.readFileSync(moved.downloadedFilePath, 'utf-8')).toBe('fake video bytes');
+  });
+
+  it('leaves an epoch with nothing downloaded (both fields null) untouched by the repair', () => {
+    const { videoDir, epochDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    const moved = readMetadata(result.videoDir, epoch);
+    expect(moved.downloadedFilePath).toBeNull();
+    expect(moved.downloadedAudioFilePath).toBeNull();
+    expect(fs.existsSync(epochDir)).toBe(false);
+  });
+
+  it('preserves clips -- clips.json resolves against the new videoDir with no repair needed', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clipPath = buildClipFilePath(videoDir, 'My Clip', 'mp4');
+    fs.mkdirSync(path.dirname(clipPath), { recursive: true });
+    fs.writeFileSync(clipPath, 'fake clip bytes');
+    const clip = recordClip({ libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 5 });
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    expect(listClips({ libraryDir, videoDir: result.videoDir })).toEqual([clip]);
+  });
+
+  it('copies the channel icon into the target only when the target channel folder does not already exist', () => {
+    const { videoDir, channelDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ uploader: 'Some Channel' }) });
+    fs.writeFileSync(path.join(channelDir, 'channel-icon.jpg'), 'source icon bytes');
+
+    const result = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    const targetChannelDir = path.dirname(result.videoDir);
+    expect(fs.readFileSync(path.join(targetChannelDir, 'channel-icon.jpg'), 'utf-8')).toBe('source icon bytes');
+  });
+
+  it('does not overwrite an existing icon already sitting in the target channel folder', () => {
+    const { videoDir: firstVideoDir, channelDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'vid1', uploader: 'Some Channel' }) });
+    fs.writeFileSync(path.join(channelDir, 'channel-icon.jpg'), 'source icon bytes');
+    // First move creates the target channel folder + copies the icon.
+    moveLibraryEntry({ libraryDir, videoDir: firstVideoDir, targetTag: 'Music' });
+    const targetChannelDir = path.join(libraryTagDir(libraryDir, 'Music'), path.basename(channelDir));
+    fs.writeFileSync(path.join(targetChannelDir, 'channel-icon.jpg'), 'a different, already-there icon');
+
+    const { videoDir: secondVideoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'vid2', uploader: 'Some Channel' }) });
+    moveLibraryEntry({ libraryDir, videoDir: secondVideoDir, targetTag: 'Music' });
+
+    expect(fs.readFileSync(path.join(targetChannelDir, 'channel-icon.jpg'), 'utf-8')).toBe('a different, already-there icon');
+  });
+
+  it('refuses when the target sublibrary already has this exact video', () => {
+    const { videoDir, channelDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ uploader: 'Some Channel' }) });
+    const targetChannelDir = path.join(libraryTagDir(libraryDir, 'Music'), path.basename(channelDir));
+    fs.mkdirSync(path.join(targetChannelDir, path.basename(videoDir)), { recursive: true });
+
+    expect(() => moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' }))
+      .toThrow(/already exists in the target sublibrary/);
+    // Refused before anything was touched -- the source is still intact.
+    expect(fs.existsSync(videoDir)).toBe(true);
+  });
+
+  it('does not clean up the source channel folder even when this was its only video', () => {
+    const { videoDir, channelDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ uploader: 'Some Channel' }) });
+    fs.writeFileSync(path.join(channelDir, 'channel-icon.jpg'), 'source icon bytes');
+
+    moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+
+    // Deliberately left as-is (per decided scope: moving and cleanup are
+    // separate responsibilities) -- the now-video-less source channel
+    // folder, and its icon, both still exist.
+    expect(fs.existsSync(channelDir)).toBe(true);
+    expect(fs.existsSync(path.join(channelDir, 'channel-icon.jpg'))).toBe(true);
   });
 });

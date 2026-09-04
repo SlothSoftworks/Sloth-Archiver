@@ -41,6 +41,7 @@ import LibraryBottomBar from '../components/LibraryBottomBar';
 import BulkDownloadQualityDialog from '../components/BulkDownloadQualityDialog';
 import BulkDeleteConfirmDialog from '../components/BulkDeleteConfirmDialog';
 import CreateSubLibraryDialog from '../components/CreateSubLibraryDialog';
+import MoveToSubLibraryDialog from '../components/MoveToSubLibraryDialog';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
 import type { LibraryVideoMetadata } from '../../types';
@@ -152,6 +153,9 @@ export default function LibraryScreen() {
   const [bulkDeleteLocalFilesDialogOpen, setBulkDeleteLocalFilesDialogOpen] = useState(false);
   const [bulkDeletingLocalFiles, setBulkDeletingLocalFiles] = useState(false);
   const [bulkDeleteLocalFilesError, setBulkDeleteLocalFilesError] = useState<string | null>(null);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
   const [playlistBulkBar, setPlaylistBulkBar] = useState<PlaylistBulkBar | null>(null);
   const [libraryTags, setLibraryTags] = useState<LibraryTag[]>([]);
   const [activeLibraryTag, setActiveLibraryTagState] = useState('');
@@ -283,6 +287,12 @@ export default function LibraryScreen() {
   // gating style as Download selected), rather than silently skipping the
   // ones with nothing to delete.
   const canDeleteLocalFiles = selectedVideos.length > 0 && selectedVideos.every((v) => getBestDownloadedQuality(v.epochs) !== null);
+  // Only meaningful once another sublibrary actually exists -- there's
+  // nowhere else to move a video to otherwise. Every video qualifies
+  // regardless of download state (unlike canBulkDownload/canDeleteLocalFiles
+  // above), so this doesn't need to inspect selectedVideos at all.
+  const canMove = libraryTags.length > 1;
+  const moveTargetOptions = libraryTags.filter((tag) => tag.folderName !== activeLibraryTag);
 
   const handleConfirmBulkDownload = (targetResolution: string) => {
     const isMp3 = targetResolution.toLowerCase() === 'mp3';
@@ -345,6 +355,37 @@ export default function LibraryScreen() {
       handleChannelsUpdated(index.channels);
     } finally {
       setBulkDeletingLocalFiles(false);
+    }
+  };
+
+  const handleConfirmMove = async (targetTag: string) => {
+    setMoving(true);
+    setMoveError(null);
+    try {
+      const { success, results } = await window.electronAPI.moveLibraryEntries([...selectedVideoDirs], targetTag);
+      if (!success) {
+        const failed = results.filter((r) => !r.success);
+        // Each result already carries the specific reason it failed (e.g. a
+        // video already existing at the target) -- surface it per-video
+        // rather than a generic count, so the user knows which ones and why.
+        const failedDetails = failed
+          .map((r) => `${videoByDir.get(r.videoDir)?.metadata.title ?? r.videoDir}${r.error ? `: ${r.error}` : ''}`)
+          .join('\n');
+        setMoveError(`${failed.length} of ${results.length} video(s) couldn't be moved:\n${failedDetails}`);
+        // Only the failed ones stay selected, so the user can immediately
+        // retry just those via the same bottom-bar button.
+        setSelectedVideoDirs(new Set(failed.map((r) => r.videoDir)));
+      } else {
+        setMoveDialogOpen(false);
+        clearSelection();
+      }
+      // The index already refreshed server-side inside the IPC handler --
+      // this just pulls the updated channels list, same pattern as
+      // refreshChannelsSilently.
+      const index = await window.electronAPI.refreshLibraryIndex();
+      handleChannelsUpdated(index.channels);
+    } finally {
+      setMoving(false);
     }
   };
 
@@ -591,6 +632,8 @@ export default function LibraryScreen() {
           canDeleteLocalFiles={canDeleteLocalFiles}
           onDeleteLocalFiles={() => setBulkDeleteLocalFilesDialogOpen(true)}
           onDeleteFromLibrary={() => setBulkDeleteDialogOpen(true)}
+          canMove={canMove}
+          onMoveSelected={() => setMoveDialogOpen(true)}
         />}
       {!loading && libraryDir && librarySection === 'playlists' && playlistBulkBar &&
         <LibraryBottomBar
@@ -631,6 +674,15 @@ export default function LibraryScreen() {
         error={bulkDeleteLocalFilesError}
         onCancel={() => { setBulkDeleteLocalFilesDialogOpen(false); setBulkDeleteLocalFilesError(null); }}
         onConfirm={handleConfirmBulkDeleteLocalFiles}
+      />
+      <MoveToSubLibraryDialog
+        open={moveDialogOpen}
+        onClose={() => { setMoveDialogOpen(false); setMoveError(null); }}
+        count={selectedVideoDirs.size}
+        options={moveTargetOptions}
+        moving={moving}
+        error={moveError}
+        onConfirm={handleConfirmMove}
       />
       <Snackbar
         open={!!deepLinkError}

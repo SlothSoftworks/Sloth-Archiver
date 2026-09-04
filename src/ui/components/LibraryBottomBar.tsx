@@ -4,6 +4,7 @@ import PhotoSizeSelectLargeIcon from '@mui/icons-material/PhotoSizeSelectLarge';
 import DownloadIcon from '@mui/icons-material/Download';
 import FolderDeleteIcon from '@mui/icons-material/FolderDelete';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
+import DriveFileMoveIcon from '@mui/icons-material/DriveFileMove';
 
 export const THUMBNAIL_SIZE_MIN = 160;
 export const THUMBNAIL_SIZE_MAX = 360;
@@ -17,6 +18,7 @@ export default function LibraryBottomBar({
   thumbnailSize, onThumbnailSizeChange, onThumbnailSizeCommit,
   selectedCount, canBulkDownload, onDownloadSelected,
   canDeleteLocalFiles, onDeleteLocalFiles, onDeleteFromLibrary,
+  canMove, onMoveSelected,
 }: {
   thumbnailSize?: number;
   onThumbnailSizeChange?: (size: number) => void;
@@ -27,6 +29,11 @@ export default function LibraryBottomBar({
   canDeleteLocalFiles: boolean;
   onDeleteLocalFiles: () => void;
   onDeleteFromLibrary: () => void;
+  // Optional -- omitted by the Playlists section's own bulk bar, same as
+  // thumbnailSize above. Only ever true when more than one sublibrary
+  // exists (there's nowhere else to move a video to otherwise).
+  canMove?: boolean;
+  onMoveSelected?: () => void;
 }) {
   return (
     // A flex sibling of the scrollable content region, not an in-flow
@@ -47,6 +54,10 @@ export default function LibraryBottomBar({
             {canBulkDownload &&
               <Button size="small" variant="outlined" startIcon={<DownloadIcon fontSize="small" />} onClick={onDownloadSelected}>
                 Download selected
+              </Button>}
+            {canMove && onMoveSelected &&
+              <Button size="small" variant="outlined" startIcon={<DriveFileMoveIcon fontSize="small" />} onClick={onMoveSelected}>
+                Move selected
               </Button>}
             {canDeleteLocalFiles &&
               <Button size="small" variant="outlined" color="error" startIcon={<FolderDeleteIcon fontSize="small" />} onClick={onDeleteLocalFiles}>

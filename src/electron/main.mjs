@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -883,6 +883,27 @@ ipcMain.handle('library:deleteEntries', async (e, { videoDirs }) => {
     const results = videoDirs.map((videoDir) => {
         try {
             deleteLibraryEntry({ libraryDir, videoDir });
+            return { videoDir, success: true };
+        } catch (err) {
+            return { videoDir, success: false, error: err instanceof Error ? err.message : String(err) };
+        }
+    });
+    await refreshLibraryIndex(libraryDir, activeLibraryTag);
+    return { success: results.every((r) => r.success), results };
+});
+
+// Batched "Move selected" -- moves N whole videos into a different
+// sublibrary tag (see moveLibraryEntry, library.mjs) and refreshes the
+// *active* tag's index once at the end, same shape as deleteEntries/
+// deleteLocalFiles above: the moved videos vanish from whatever's currently
+// being viewed (the source), and the target tag's own index will scan fresh
+// the next time someone actually switches to it (getLibraryIndex's cache is
+// keyed per-tag, so there's nothing stale to bust there).
+ipcMain.handle('library:moveEntries', async (e, { videoDirs, targetTag }) => {
+    const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    const results = videoDirs.map((videoDir) => {
+        try {
+            moveLibraryEntry({ libraryDir, videoDir, targetTag });
             return { videoDir, success: true };
         } catch (err) {
             return { videoDir, success: false, error: err instanceof Error ? err.message : String(err) };

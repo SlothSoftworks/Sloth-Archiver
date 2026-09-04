@@ -114,6 +114,7 @@ declare global {
             swapLibraryDownload: (payload: { videoDir: string; epoch: string; tempFilePath: string; oldFilePath: string | null; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<LibraryVideoMetadata>
             deleteLibraryEntry: (videoDir: string, epoch?: string) => Promise<{ success: boolean; videoDeleted: boolean }>
             deleteLibraryEntries: (videoDirs: string[]) => Promise<{ success: boolean; results: { videoDir: string; success: boolean; error?: string }[] }>
+            moveLibraryEntries: (videoDirs: string[], targetTag: string) => Promise<{ success: boolean; results: { videoDir: string; success: boolean; error?: string }[] }>
             deleteLocalFiles: (videoDirs: string[]) => Promise<{ success: boolean; results: { videoDir: string; success: boolean; error?: string }[] }>
             onLibraryBackgroundUpdate: (callback: () => void) => void
             removeLibraryBackgroundUpdateListener: () => void
