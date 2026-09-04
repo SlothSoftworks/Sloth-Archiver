@@ -260,6 +260,23 @@ function startRendererServer() {
 // video.seekable.end() stays 0 and the scrub bar silently does nothing. So
 // the Range math is done here ourselves; net.fetch is only ever asked for
 // the exact byte range already decided.
+// NO_STORE_HEADERS goes on every single response this handler returns,
+// success or failure. Chromium treats a protocol.handle response as a
+// genuine, cacheable network response (see the file-level comment on why
+// this handler already can't rely on real file:// navigation's own
+// behavior) -- without an explicit no-store, a request that 404s once (e.g.
+// a library entry's stored path going stale, see checkAndRepairEpochFiles/
+// library.mjs) can get served straight back out of cache on every later
+// request for that exact same URL, even after the file genuinely reappears
+// on disk and this handler itself would now answer differently. Bumping the
+// player's own cacheBustKey works around this for an already-mounted
+// player (a new URL was never cached), but a *fresh* one (e.g. after
+// navigating away and back to the same video) resets that counter back to
+// its initial value and requests the identical URL that failed before --
+// with no-store, the handler is guaranteed to be asked fresh every time
+// either way, rather than depending on the query string alone.
+const NO_STORE_HEADERS = { 'Cache-Control': 'no-store' };
+
 async function handleAppVideoRequest(request) {
     const url = new URL(request.url);
     const filePath = decodeURIComponent(url.pathname.slice(1));
@@ -267,14 +284,14 @@ async function handleAppVideoRequest(request) {
     const { libraryDir } = readSettings();
     const resolvedFilePath = resolveInsideLibrary(libraryDir, filePath);
     if (!resolvedFilePath) {
-        return new Response('Forbidden', { status: 403 });
+        return new Response('Forbidden', { status: 403, headers: NO_STORE_HEADERS });
     }
 
     let stat;
     try {
         stat = fs.statSync(resolvedFilePath);
     } catch {
-        return new Response('Not Found', { status: 404 });
+        return new Response('Not Found', { status: 404, headers: NO_STORE_HEADERS });
     }
     const fileSize = stat.size;
 
@@ -289,7 +306,7 @@ async function handleAppVideoRequest(request) {
         if (!match || (!hasStart && !hasEnd)) {
             return new Response('Range Not Satisfiable', {
                 status: 416,
-                headers: { 'Content-Range': `bytes */${fileSize}` },
+                headers: { 'Content-Range': `bytes */${fileSize}`, ...NO_STORE_HEADERS },
             });
         }
         if (hasStart) {
@@ -305,7 +322,7 @@ async function handleAppVideoRequest(request) {
         if (start > end || start < 0 || end >= fileSize) {
             return new Response('Range Not Satisfiable', {
                 status: 416,
-                headers: { 'Content-Range': `bytes */${fileSize}` },
+                headers: { 'Content-Range': `bytes */${fileSize}`, ...NO_STORE_HEADERS },
             });
         }
         status = 206;
@@ -321,6 +338,7 @@ async function handleAppVideoRequest(request) {
             'Content-Type': innerResponse.headers.get('Content-Type') || 'application/octet-stream',
             'Accept-Ranges': 'bytes',
             'Content-Length': String(end - start + 1),
+            ...NO_STORE_HEADERS,
         };
         if (status === 206) {
             headers['Content-Range'] = `bytes ${start}-${end}/${fileSize}`;
@@ -329,7 +347,7 @@ async function handleAppVideoRequest(request) {
         return new Response(innerResponse.body, { status, headers });
     } catch (err) {
         log('[app-video] fetch error', String(err));
-        return new Response('Internal Error', { status: 500 });
+        return new Response('Internal Error', { status: 500, headers: NO_STORE_HEADERS });
     }
 }
 

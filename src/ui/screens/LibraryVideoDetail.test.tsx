@@ -511,7 +511,7 @@ describe('LibraryVideoDetail', () => {
 
       expect(await screen.findByText('Video file not found')).toBeInTheDocument();
       const user = userEvent.setup();
-      await user.click(screen.getByRole('button', { name: 'OK' }));
+      await user.click(screen.getByRole('button', { name: 'Dismiss' }));
       await waitFor(() => expect(screen.queryByText('Video file not found')).not.toBeInTheDocument());
     });
 
@@ -535,6 +535,37 @@ describe('LibraryVideoDetail', () => {
 
       await waitFor(() => expect(onLibraryChanged).toHaveBeenCalled());
       expect(screen.queryByText(/not found/)).not.toBeInTheDocument();
+    });
+
+    // The bug this covers: a file that was missing, then restored to the
+    // exact same stored path (so checkAndRepairEpochFiles' own repair never
+    // fires -- nothing about the path itself needed to change) never
+    // re-triggers a check on its own once the dialog is showing, since
+    // nothing about metadata/selectedEpoch/video.videoDir changes value
+    // either. Retry is the explicit way back from that; LibraryVideoPlayer
+    // itself is mocked out in this file (see the top-of-file comment), so
+    // what's covered here is the re-check firing and the dialog clearing --
+    // the player's own cacheBustKey-driven reload was verified live in the
+    // real app.
+    it('Retry re-runs the check and clears the warning once the file is confirmed present again', async () => {
+      const mockCheck = window.electronAPI.checkAndRepairEpochFiles as ReturnType<typeof vi.fn>;
+      mockCheck.mockResolvedValueOnce({
+        success: true, videoRepaired: false, audioRepaired: false, videoMissing: true, audioMissing: false,
+      });
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4' });
+      renderDetail(video);
+      await screen.findByText('Video file not found');
+
+      // Same stored path both times -- the file just became valid again,
+      // nothing for the repair itself to change.
+      mockCheck.mockResolvedValueOnce({
+        success: true, videoRepaired: false, audioRepaired: false, videoMissing: false, audioMissing: false,
+      });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Retry' }));
+
+      expect(mockCheck).toHaveBeenCalledTimes(2);
+      await waitFor(() => expect(screen.queryByText('Video file not found')).not.toBeInTheDocument());
     });
   });
 });
