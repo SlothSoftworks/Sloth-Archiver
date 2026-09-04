@@ -3,6 +3,7 @@ import { useMatch, useNavigate, useSearchParams } from 'react-router';
 import {
   Alert,
   Avatar,
+  Badge,
   Box,
   Card,
   CardActionArea,
@@ -34,6 +35,7 @@ import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import FilterListIcon from '@mui/icons-material/FilterList';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns } from '../../utils/utils.ts';
 import LibraryVideoDetail from './LibraryVideoDetail';
 import PlaylistsSection, { type PlaylistBulkBar } from '../components/PlaylistsSection';
@@ -44,6 +46,7 @@ import BulkDeleteConfirmDialog from '../components/BulkDeleteConfirmDialog';
 import CreateSubLibraryDialog from '../components/CreateSubLibraryDialog';
 import MoveToSubLibraryDialog from '../components/MoveToSubLibraryDialog';
 import TagSelectedDialog from '../components/TagSelectedDialog';
+import TagFilterPopover from '../components/TagFilterPopover';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
 import type { LibraryVideoMetadata } from '../../types';
@@ -917,8 +920,29 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
     entries.sort((a, b) => compareFlatVideos(a, b, sortField) * directionMultiplier);
     return entries;
   }, [channels, sortField, sortDirection]);
+
+  // Ephemeral, like search below -- resets on navigation/reload rather than
+  // persisting to settings the way sortField/sortDirection do, since this is
+  // a "narrow what I'm looking at right now" tool, not a standing
+  // preference. AND semantics (every selected tag, not just one): a video
+  // must carry all of them to match.
+  const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(null);
+  const [selectedFilterTags, setSelectedFilterTags] = useState<Set<string>>(new Set());
+  const toggleFilterTag = (tag: string, checked: boolean) => {
+    setSelectedFilterTags((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(tag);
+      else next.delete(tag);
+      return next;
+    });
+  };
+  const tagFilteredVideos = useMemo(() => {
+    if (selectedFilterTags.size === 0) return flatVideos;
+    return flatVideos.filter(({ video }) => [...selectedFilterTags].every((tag) => videoTags[tag]?.includes(video.metadata.videoId)));
+  }, [flatVideos, selectedFilterTags, videoTags]);
+
   const { query, setQuery, isSearching, filtered, clear } = useLibrarySearch(
-    flatVideos,
+    tagFilteredVideos,
     ({ video }) => video.metadata.title || video.videoFolderName,
   );
 
@@ -930,6 +954,18 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
           <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
         </Stack>
         <Stack direction="row" spacing={1} alignItems="center">
+          <Tooltip title="Filter by tag">
+            <IconButton
+              size="small"
+              onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+              aria-label="Filter by tag"
+              color={selectedFilterTags.size > 0 ? 'primary' : 'default'}
+            >
+              <Badge badgeContent={selectedFilterTags.size} color="primary">
+                <FilterListIcon fontSize="small" />
+              </Badge>
+            </IconButton>
+          </Tooltip>
           {/* Grouped into one bordered container so the field picker and
               direction toggle read as a single "sort" instrument -- Select
               uses variant="standard" so this outer Paper is the only
@@ -975,9 +1011,20 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
         <Typography variant="body2" color="text.secondary">
           Nothing in the library yet -- use the library-add button next to the URL field on the Downloader tab.
         </Typography>
-      ) : isSearching && filtered.length === 0 && (
-        <Typography variant="body2" color="text.secondary">No videos match "{query}".</Typography>
+      ) : filtered.length === 0 && (
+        <Typography variant="body2" color="text.secondary">
+          {isSearching ? `No videos match "${query}".` : 'No videos match the selected tag filter.'}
+        </Typography>
       )}
+      <TagFilterPopover
+        open={!!filterAnchorEl}
+        anchorEl={filterAnchorEl}
+        onClose={() => setFilterAnchorEl(null)}
+        allTags={Object.keys(videoTags)}
+        selectedTags={selectedFilterTags}
+        onToggle={toggleFilterTag}
+        onClear={() => setSelectedFilterTags(new Set())}
+      />
       <Box sx={{ display: 'grid', gridTemplateColumns: thumbnailGridTemplateColumns(thumbnailSize), gap: 2 }}>
         {filtered.map(({ video, channelName }) => (
           <VideoCard

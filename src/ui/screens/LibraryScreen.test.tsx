@@ -607,6 +607,77 @@ describe('LibraryScreen', () => {
     });
   });
 
+  describe('tag filter', () => {
+    it('shows the filter popover with a checkbox per known tag', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA'], games: ['vidB'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+
+      expect(screen.getByRole('checkbox', { name: 'TVshows' })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: 'games' })).toBeInTheDocument();
+    });
+
+    it('filters to only videos carrying every selected tag (AND, not ANY)', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA'], games: ['vidB'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+
+      // Only Alpha (TVshows) matches -- Beta (games only) is filtered out.
+      expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+      expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
+
+      // Selecting a second tag neither video carries both of -- AND
+      // semantics means the result narrows to nothing, not widens.
+      await user.click(screen.getByRole('checkbox', { name: 'games' }));
+      expect(screen.queryByText('Alpha Video')).not.toBeInTheDocument();
+      expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
+      expect(screen.getByText('No videos match the selected tag filter.')).toBeInTheDocument();
+    });
+
+    it('the tag filter composes with search, narrowing within the already-filtered set', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA', 'vidB'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+      expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+      expect(screen.getByText('Beta Video')).toBeInTheDocument();
+
+      await user.keyboard('{Escape}');
+      await user.type(screen.getByPlaceholderText('Search videos...'), 'Alpha');
+
+      await waitFor(() => expect(screen.queryByText('Beta Video')).not.toBeInTheDocument());
+      expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+    });
+
+    it('"Clear filter" resets the selection and shows every video again', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+      expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Clear filter' }));
+      expect(await screen.findByText('Beta Video')).toBeInTheDocument();
+    });
+  });
+
   describe('deep link with ?tag=', () => {
     it('switches to the linked sublibrary before resolving the video, when it differs from the active one', async () => {
       (window.electronAPI.listLibraryTags as ReturnType<typeof vi.fn>).mockResolvedValue({
