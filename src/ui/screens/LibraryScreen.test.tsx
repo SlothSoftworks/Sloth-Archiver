@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactElement } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import LibraryScreen from './LibraryScreen';
@@ -100,6 +100,9 @@ beforeEach(() => {
     deleteLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
     moveLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
     deleteLocalFiles: vi.fn().mockResolvedValue({ success: true, results: [] }),
+    listVideoTags: vi.fn().mockResolvedValue({ tags: {} }),
+    setVideoTag: vi.fn().mockResolvedValue({ success: true, tags: {} }),
+    tagVideos: vi.fn().mockResolvedValue({ success: true, tags: {} }),
     // useBulkAddQueue's start() (fired by "Download selected") unconditionally
     // calls this -- stubbed so bulk-select's download tests don't hit an
     // unmocked IPC call, even though they don't assert on its result.
@@ -144,6 +147,21 @@ describe('LibraryScreen', () => {
     render(<LibraryScreen />);
     await user.click(await screen.findByText('Channel A'));
     expect(screen.getByText('3 clips')).toBeInTheDocument();
+  });
+
+  it('shows a tag chip on a video card only for tags actually applied to that video', async () => {
+    (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+    (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA'], games: ['vidB'] } });
+    render(<LibraryScreen />);
+    await screen.findByText('Alpha Video');
+
+    expect(screen.getByText('TVshows')).toBeInTheDocument();
+    expect(screen.getByText('games')).toBeInTheDocument();
+    // Alpha Video only carries TVshows -- games (Beta Video's own tag)
+    // shouldn't also render on Alpha's card.
+    const alphaCard = screen.getByText('Alpha Video').closest('.MuiCard-root');
+    expect(alphaCard).not.toBeNull();
+    expect(alphaCard && within(alphaCard as HTMLElement).queryByText('games')).toBeNull();
   });
 
   it('drills into a channel, shows its videos, and back returns to the channel list', async () => {
@@ -529,6 +547,50 @@ describe('LibraryScreen', () => {
 
       expect(await screen.findByText(/couldn't be moved/)).toBeInTheDocument();
       expect(screen.getByText('1 item selected')).toBeInTheDocument();
+    });
+
+    it('"Tag selected" is offered whenever anything is selected, unlike Move\'s multi-sublibrary gate', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+
+      expect(screen.getByRole('button', { name: /Tag selected/ })).toBeInTheDocument();
+    });
+
+    it('tags the selection with a picked existing tag and clears the selection on confirm', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidC'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('button', { name: /Tag selected/ }));
+
+      expect(await screen.findByText(/Tag 1 selected video/)).toBeInTheDocument();
+      await user.type(screen.getByRole('combobox'), 'TVshows');
+      await user.click(screen.getByRole('button', { name: 'Tag' }));
+
+      await waitFor(() => expect(window.electronAPI.tagVideos).toHaveBeenCalledWith(['vidA'], 'TVshows'));
+      expect(screen.queryByText(/Tag 1 selected video/)).not.toBeInTheDocument();
+      expect(screen.queryByText('1 item selected')).not.toBeInTheDocument();
+    });
+
+    it('tags the selection with a brand-new, freely typed tag', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('button', { name: /Tag selected/ }));
+      await user.type(screen.getByRole('combobox'), 'brandNewTag');
+      await user.click(await screen.findByRole('button', { name: 'Tag' }));
+
+      await waitFor(() => expect(window.electronAPI.tagVideos).toHaveBeenCalledWith(['vidA'], 'brandNewTag'));
     });
 
     it('resets the selection when navigating back to the channel list', async () => {

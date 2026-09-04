@@ -52,12 +52,17 @@ type LibraryVideo = {
 // that change added -- "Refresh from YouTube" is what fixes it.
 const CURRENT_VIDEO_SCHEMA_VERSION = 3;
 
-export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, onDeleted, onVersionsChanged }: {
+export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, onDeleted, onVersionsChanged, videoTags, onVideoTagsChanged }: {
   video: LibraryVideo;
   onBack: () => void;
   onLibraryChanged: () => Promise<void> | void;
   onDeleted: () => void;
   onVersionsChanged: () => Promise<void> | void;
+  // The active sublibrary's whole tag map -- this video's own applied tags
+  // are derived from it below, rather than fetched separately, same shape
+  // LibraryScreen.tsx already loads for the bulk "Tag selected" dialog.
+  videoTags: Record<string, string[]>;
+  onVideoTagsChanged: () => Promise<void> | void;
 }) {
   const [selectedEpoch, setSelectedEpoch] = useState(video.latestEpoch);
   const [metadata, setMetadata] = useState(video.metadata);
@@ -817,6 +822,8 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
               <VideoQualityDownload
                 video={video}
                 metadata={metadata}
+                videoTags={videoTags}
+                onVideoTagsChanged={onVideoTagsChanged}
                 selectedEpoch={selectedEpoch}
                 onSelectEpoch={handleSelectEpoch}
                 videoResolutions={videoResolutions}

@@ -53,6 +53,25 @@ export function libraryTagDir(libraryDir, tagName = DEFAULT_LIBRARY_DIR_NAME) {
     return path.join(libraryDir, tagName);
 }
 
+function libraryTagManifestPath(libraryDir, tagName) {
+    return path.join(libraryTagDir(libraryDir, tagName), LIBRARY_METADATA_FILE_NAME);
+}
+
+// Read-only counterpart to ensureLibraryTagMetadata below -- returns null
+// (never creates anything) so the video-tag functions further down can tell
+// "no manifest yet" apart from "manifest exists but has no tags field".
+function readLibraryTagManifest(libraryDir, tagName) {
+    try {
+        return JSON.parse(fs.readFileSync(libraryTagManifestPath(libraryDir, tagName), 'utf-8'));
+    } catch {
+        return null;
+    }
+}
+
+function writeLibraryTagManifest(libraryDir, tagName, metadata) {
+    fs.writeFileSync(libraryTagManifestPath(libraryDir, tagName), JSON.stringify(metadata, null, 2), 'utf-8');
+}
+
 // Lazily creates a tag folder + its library.json manifest the first time
 // something is actually about to be written into it. For DEFAULT_LIBRARY_DIR_NAME
 // specifically this is never eager (not at app start, not when libraryDir is
@@ -60,19 +79,28 @@ export function libraryTagDir(libraryDir, tagName = DEFAULT_LIBRARY_DIR_NAME) {
 // layer -- callers rely on that. A no-op past the first call for a given
 // (libraryDir, tagName) pair, which also makes it safe to call unconditionally
 // from createLibraryTag()'s own eager creation path below.
+//
+// The manifest's own name field was renamed tagName -> sublibraryName (to
+// stop colliding with the unrelated per-video "tags" concept below) without
+// a migration step -- a sublibrary folder written before this rename still
+// only has `tagName` on disk, so every reader falls back to it. New writes
+// only ever produce sublibraryName; the on-disk key is the only thing that
+// changed, the JS-facing shape returned to callers/the renderer is untouched.
 function ensureLibraryTagMetadata(libraryDir, tagName = DEFAULT_LIBRARY_DIR_NAME) {
     const dir = libraryTagDir(libraryDir, tagName);
     const metadataPath = path.join(dir, LIBRARY_METADATA_FILE_NAME);
     if (fs.existsSync(metadataPath)) {
         try {
-            return JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+            if (metadata.sublibraryName) return metadata;
+            return { ...metadata, sublibraryName: metadata.tagName };
         } catch {
             // Falls through to rewrite a fresh one below if the existing
             // file is somehow corrupt.
         }
     }
     fs.mkdirSync(dir, { recursive: true });
-    const metadata = { tagName, createdEpoch: Date.now() };
+    const metadata = { sublibraryName: tagName, createdEpoch: Date.now() };
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
     return metadata;
 }
@@ -97,8 +125,9 @@ export function listLibraryTags(libraryDir) {
         const metadataPath = path.join(libraryDir, entry.name, LIBRARY_METADATA_FILE_NAME);
         try {
             const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
-            if (!metadata.tagName) continue;
-            tags.push({ tagName: metadata.tagName, folderName: entry.name, createdEpoch: metadata.createdEpoch || null });
+            const sublibraryName = metadata.sublibraryName || metadata.tagName;
+            if (!sublibraryName) continue;
+            tags.push({ tagName: sublibraryName, folderName: entry.name, createdEpoch: metadata.createdEpoch || null });
         } catch {
             continue;
         }
@@ -124,7 +153,116 @@ export function createLibraryTag(libraryDir, requestedName) {
         throw new Error(`"${folderName}" already exists in your library folder -- pick a different name.`);
     }
     const metadata = ensureLibraryTagMetadata(libraryDir, folderName);
-    return { tagName: metadata.tagName, folderName, createdEpoch: metadata.createdEpoch };
+    return { tagName: metadata.sublibraryName, folderName, createdEpoch: metadata.createdEpoch };
+}
+
+// Video tags -- a small map living in the SAME per-sublibrary library.json
+// manifest as sublibraryName/createdEpoch (not a per-video file), keyed by
+// tag name to an array of videoIds carrying that tag within this
+// sublibrary. Piggybacking on this file (already read once per sublibrary,
+// not once per video) avoids scanLibrary needing a second per-video file
+// read it doesn't already do. Deliberately named videoTag(s) everywhere,
+// never bare "tag", to stay unambiguous against the unrelated sublibrary
+// concept above.
+export function listVideoTags(libraryDir, tagName = DEFAULT_LIBRARY_DIR_NAME) {
+    const manifest = readLibraryTagManifest(libraryDir, tagName);
+    return (manifest && manifest.tags) || {};
+}
+
+// Single video/single tag toggle, used by the video-detail popover (the
+// only place a tag is ever removed) and, with applied:true, its "create a
+// new tag" field -- creating the tag key on first use needs no separate
+// function. Removing the last videoId under a tag deletes that key
+// entirely, so unchecking a video's last tag doesn't leave a permanent
+// empty entry cluttering the picker.
+export function setVideoTag({ libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAME, tagName, videoId, applied }) {
+    ensureLibraryTagMetadata(libraryDir, libraryTag);
+    const manifest = readLibraryTagManifest(libraryDir, libraryTag) || {};
+    const tags = { ...(manifest.tags || {}) };
+    const current = tags[tagName] || [];
+    if (applied) {
+        if (!current.includes(videoId)) tags[tagName] = [...current, videoId];
+    } else if (current.includes(videoId)) {
+        const next = current.filter((id) => id !== videoId);
+        if (next.length === 0) delete tags[tagName];
+        else tags[tagName] = next;
+    }
+    writeLibraryTagManifest(libraryDir, libraryTag, { ...manifest, tags });
+    return { tags };
+}
+
+// Bulk add for "Tag selected" -- one read-modify-write appending every
+// given videoId into one tag's array (deduped), regardless of how many
+// videos were selected. Add-only by design (removal only ever happens
+// per-video, via setVideoTag above).
+export function addTagToVideos({ libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAME, tagName, videoIds }) {
+    ensureLibraryTagMetadata(libraryDir, libraryTag);
+    const manifest = readLibraryTagManifest(libraryDir, libraryTag) || {};
+    const tags = { ...(manifest.tags || {}) };
+    const current = new Set(tags[tagName] || []);
+    for (const id of videoIds) current.add(id);
+    tags[tagName] = [...current];
+    writeLibraryTagManifest(libraryDir, libraryTag, { ...manifest, tags });
+    return { tags };
+}
+
+// Called once after a whole bulk-delete loop finishes (not per video, see
+// library:deleteEntries in main.mjs) -- prunes every deleted videoId out of
+// every tag in this sublibrary in one read-modify-write, dropping a tag
+// entirely if removing these ids empties it. A no-op write is skipped
+// entirely when nothing in the manifest actually referenced any of them.
+export function removeVideosFromTags(libraryDir, libraryTag, videoIds) {
+    if (!videoIds || videoIds.length === 0) return;
+    const manifest = readLibraryTagManifest(libraryDir, libraryTag);
+    if (!manifest || !manifest.tags) return;
+    const remove = new Set(videoIds);
+    let changed = false;
+    const tags = {};
+    for (const [name, ids] of Object.entries(manifest.tags)) {
+        const kept = ids.filter((id) => !remove.has(id));
+        if (kept.length !== ids.length) changed = true;
+        if (kept.length > 0) tags[name] = kept;
+    }
+    if (!changed) return;
+    writeLibraryTagManifest(libraryDir, libraryTag, { ...manifest, tags });
+}
+
+// Called once after a whole bulk-move loop finishes (see
+// library:moveEntries in main.mjs) -- each moved video keeps whatever tag
+// names it already had, only which sublibrary's manifest holds the
+// association changes. Exactly two writes total (one per manifest file)
+// regardless of how many videos moved or how many tags were involved.
+export function transferVideoTags(libraryDir, sourceTag, targetTag, videoIds) {
+    if (!videoIds || videoIds.length === 0) return;
+    const sourceManifest = readLibraryTagManifest(libraryDir, sourceTag);
+    if (!sourceManifest || !sourceManifest.tags) return;
+
+    const moving = new Set(videoIds);
+    const movedByTag = {};
+    let sourceChanged = false;
+    const sourceTags = {};
+    for (const [name, ids] of Object.entries(sourceManifest.tags)) {
+        const kept = [];
+        const moved = [];
+        for (const id of ids) (moving.has(id) ? moved : kept).push(id);
+        if (moved.length > 0) {
+            movedByTag[name] = moved;
+            sourceChanged = true;
+        }
+        if (kept.length > 0) sourceTags[name] = kept;
+    }
+    if (!sourceChanged) return;
+    writeLibraryTagManifest(libraryDir, sourceTag, { ...sourceManifest, tags: sourceTags });
+
+    ensureLibraryTagMetadata(libraryDir, targetTag);
+    const targetManifest = readLibraryTagManifest(libraryDir, targetTag) || {};
+    const targetTags = { ...(targetManifest.tags || {}) };
+    for (const [name, ids] of Object.entries(movedByTag)) {
+        const current = new Set(targetTags[name] || []);
+        for (const id of ids) current.add(id);
+        targetTags[name] = [...current];
+    }
+    writeLibraryTagManifest(libraryDir, targetTag, { ...targetManifest, tags: targetTags });
 }
 
 // Bumped whenever buildEpochMetadata's/writePlaylistSnapshot's own written
@@ -470,6 +608,28 @@ export function swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath,
     return metadata;
 }
 
+// Every epoch of one video shares the same videoId, so reading it off any
+// single one is enough -- used right before a whole-video delete removes
+// the folder these live in.
+function findAnyEpochVideoId(videoDir) {
+    let entries;
+    try {
+        entries = fs.readdirSync(videoDir, { withFileTypes: true });
+    } catch {
+        return null;
+    }
+    for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name === CLIPS_DIR_NAME) continue;
+        try {
+            const metadata = JSON.parse(fs.readFileSync(path.join(videoDir, entry.name, 'metadata.json'), 'utf-8'));
+            if (metadata.videoId) return metadata.videoId;
+        } catch {
+            continue;
+        }
+    }
+    return null;
+}
+
 // Guard-railed against libraryDir even though videoDir always originates
 // from our own index -- deleting is destructive enough to be worth defense
 // in depth. epoch, when given, deletes just that one version instead of the
@@ -486,8 +646,14 @@ export function deleteLibraryEntry({ libraryDir, videoDir, epoch }) {
     }
 
     if (!epoch) {
+        // Read before the rmSync below removes it -- every epoch's
+        // metadata.json shares the same videoId, so any one of them will
+        // do. Callers use this to prune the video out of the sublibrary's
+        // tag map in one batched write after a whole bulk-delete finishes,
+        // rather than per video (see library:deleteEntries in main.mjs).
+        const videoId = findAnyEpochVideoId(resolvedVideoDir);
         fs.rmSync(resolvedVideoDir, { recursive: true, force: true });
-        return { videoDeleted: true };
+        return { videoDeleted: true, videoId };
     }
 
     fs.rmSync(path.join(resolvedVideoDir, epoch), { recursive: true, force: true });
@@ -564,13 +730,20 @@ export function deleteLocalFiles({ libraryDir, videoDir }) {
 // clips.json is untouched on purpose -- it only ever stores clip fileNames,
 // resolved against videoDir fresh at read time, so a folder move can't make
 // those stale in the first place.
+//
+// Also returns the video's videoId (every epoch shares the same one, so the
+// first metadata.json parsed is enough) -- moveLibraryEntry passes it back
+// up so callers can transfer the video's tag membership in one batched
+// write after a whole bulk-move finishes, rather than per video (see
+// library:moveEntries in main.mjs).
 function repairMovedEpochPaths(oldVideoDir, newVideoDir) {
     let epochEntries;
     try {
         epochEntries = fs.readdirSync(newVideoDir, { withFileTypes: true });
     } catch {
-        return;
+        return { videoId: null };
     }
+    let videoId = null;
     for (const entry of epochEntries) {
         if (!entry.isDirectory() || entry.name === CLIPS_DIR_NAME) continue;
         const metadataPath = path.join(newVideoDir, entry.name, 'metadata.json');
@@ -580,6 +753,7 @@ function repairMovedEpochPaths(oldVideoDir, newVideoDir) {
         } catch {
             continue;
         }
+        if (!videoId && metadata.videoId) videoId = metadata.videoId;
         let changed = false;
         if (metadata.downloadedFilePath && metadata.downloadedFilePath.startsWith(oldVideoDir)) {
             metadata.downloadedFilePath = newVideoDir + metadata.downloadedFilePath.slice(oldVideoDir.length);
@@ -593,6 +767,7 @@ function repairMovedEpochPaths(oldVideoDir, newVideoDir) {
             fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
         }
     }
+    return { videoId };
 }
 
 // Moves one video (every epoch, its clips/ folder, its own video-thumbnail.*
@@ -643,9 +818,9 @@ export function moveLibraryEntry({ libraryDir, videoDir, targetTag }) {
     }
 
     fs.renameSync(resolvedVideoDir, targetVideoDir);
-    repairMovedEpochPaths(resolvedVideoDir, targetVideoDir);
+    const { videoId } = repairMovedEpochPaths(resolvedVideoDir, targetVideoDir);
 
-    return { videoDir: targetVideoDir };
+    return { videoDir: targetVideoDir, videoId };
 }
 
 // "Override" means replace the tracked entry, not add another version.

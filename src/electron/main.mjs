@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -419,6 +419,27 @@ ipcMain.handle('library:createTag', async (e, name) => {
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
+});
+
+// Video tags -- an unrelated, per-video concept from the sublibrary
+// switching above (hence "videoTag(s)" naming throughout, never bare
+// "tag"). All three scope to whichever sublibrary is currently active.
+ipcMain.handle('library:listVideoTags', async () => {
+    const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    if (!libraryDir) return { tags: {} };
+    return { tags: listVideoTags(libraryDir, activeLibraryTag) };
+});
+
+ipcMain.handle('library:setVideoTag', async (e, { tagName, videoId, applied }) => {
+    const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    const { tags } = setVideoTag({ libraryDir, libraryTag: activeLibraryTag, tagName, videoId, applied });
+    return { success: true, tags };
+});
+
+ipcMain.handle('library:tagVideos', async (e, { videoIds, tagName }) => {
+    const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    const { tags } = addTagToVideos({ libraryDir, libraryTag: activeLibraryTag, tagName, videoIds });
+    return { success: true, tags };
 });
 
 ipcMain.handle('settings:getActiveLibraryTag', async () => {
@@ -882,12 +903,15 @@ ipcMain.handle('library:deleteEntries', async (e, { videoDirs }) => {
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const results = videoDirs.map((videoDir) => {
         try {
-            deleteLibraryEntry({ libraryDir, videoDir });
-            return { videoDir, success: true };
+            const { videoId } = deleteLibraryEntry({ libraryDir, videoDir });
+            return { videoDir, success: true, videoId };
         } catch (err) {
             return { videoDir, success: false, error: err instanceof Error ? err.message : String(err) };
         }
     });
+    // One batched read-modify-write of the sublibrary's tag map instead of
+    // touching it per video -- see removeVideosFromTags (library.mjs).
+    removeVideosFromTags(libraryDir, activeLibraryTag, results.filter((r) => r.success && r.videoId).map((r) => r.videoId));
     await refreshLibraryIndex(libraryDir, activeLibraryTag);
     return { success: results.every((r) => r.success), results };
 });
@@ -903,12 +927,16 @@ ipcMain.handle('library:moveEntries', async (e, { videoDirs, targetTag }) => {
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const results = videoDirs.map((videoDir) => {
         try {
-            moveLibraryEntry({ libraryDir, videoDir, targetTag });
-            return { videoDir, success: true };
+            const { videoId } = moveLibraryEntry({ libraryDir, videoDir, targetTag });
+            return { videoDir, success: true, videoId };
         } catch (err) {
             return { videoDir, success: false, error: err instanceof Error ? err.message : String(err) };
         }
     });
+    // One batched transfer of the moved videos' tag membership from the
+    // source sublibrary's manifest to the target's, instead of touching
+    // either file per video -- see transferVideoTags (library.mjs).
+    transferVideoTags(libraryDir, activeLibraryTag, targetTag, results.filter((r) => r.success && r.videoId).map((r) => r.videoId));
     await refreshLibraryIndex(libraryDir, activeLibraryTag);
     return { success: results.every((r) => r.success), results };
 });

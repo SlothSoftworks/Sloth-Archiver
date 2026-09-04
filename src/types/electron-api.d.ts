@@ -29,6 +29,12 @@ type LibraryTag = {
     createdEpoch: number | null;
 };
 
+// A per-sublibrary map of user-defined video tags to the videoIds carrying
+// them (see listVideoTags, library.mjs) -- unrelated to LibraryTag above
+// (that's sublibrary switching); named videoTag(s) everywhere to keep the
+// two concepts unambiguous.
+type VideoTagsMap = Record<string, string[]>;
+
 type LibraryIndex = {
     channels: {
         channelFolderName: string;
@@ -80,6 +86,9 @@ declare global {
             setLibraryDir: (dir: string) => Promise<{ success: boolean; libraryDir: string }>
             listLibraryTags: () => Promise<{ tags: LibraryTag[] }>
             createLibraryTag: (name: string) => Promise<{ success: boolean; tag?: LibraryTag; message?: string }>
+            listVideoTags: () => Promise<{ tags: VideoTagsMap }>
+            setVideoTag: (tagName: string, videoId: string, applied: boolean) => Promise<{ success: boolean; tags: VideoTagsMap }>
+            tagVideos: (videoIds: string[], tagName: string) => Promise<{ success: boolean; tags: VideoTagsMap }>
             getActiveLibraryTag: () => Promise<{ activeLibraryTag: string; activeLibraryTagDir: string }>
             setActiveLibraryTag: (tag: string) => Promise<{ success: boolean; activeLibraryTag: string }>
             getLibraryViewMode: () => Promise<{ libraryViewMode: 'channel' | 'video' }>

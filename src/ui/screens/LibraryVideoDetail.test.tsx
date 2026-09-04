@@ -113,6 +113,7 @@ beforeEach(() => {
     // (fired on mount/epoch-change whenever a downloaded path is set) is a
     // no-op for every test that isn't specifically exercising it.
     checkAndRepairEpochFiles: vi.fn().mockResolvedValue({ success: true, videoRepaired: false, audioRepaired: false, videoMissing: false, audioMissing: false }),
+    setVideoTag: vi.fn().mockResolvedValue({ success: true, tags: {} }),
   };
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),
@@ -122,11 +123,12 @@ beforeEach(() => {
   } as unknown as typeof window.electronAPIPythonDownload;
 });
 
-function renderDetail(video: ReturnType<typeof makeVideo>) {
+function renderDetail(video: ReturnType<typeof makeVideo>, videoTags: Record<string, string[]> = {}) {
   const onBack = vi.fn();
   const onLibraryChanged = vi.fn().mockResolvedValue(undefined);
   const onDeleted = vi.fn();
   const onVersionsChanged = vi.fn().mockResolvedValue(undefined);
+  const onVideoTagsChanged = vi.fn().mockResolvedValue(undefined);
   const utils = render(
     <LibraryVideoDetail
       video={video}
@@ -134,9 +136,11 @@ function renderDetail(video: ReturnType<typeof makeVideo>) {
       onLibraryChanged={onLibraryChanged}
       onDeleted={onDeleted}
       onVersionsChanged={onVersionsChanged}
+      videoTags={videoTags}
+      onVideoTagsChanged={onVideoTagsChanged}
     />,
   );
-  return { ...utils, onBack, onLibraryChanged, onDeleted, onVersionsChanged };
+  return { ...utils, onBack, onLibraryChanged, onDeleted, onVersionsChanged, onVideoTagsChanged };
 }
 
 describe('LibraryVideoDetail', () => {
@@ -566,6 +570,60 @@ describe('LibraryVideoDetail', () => {
 
       expect(mockCheck).toHaveBeenCalledTimes(2);
       await waitFor(() => expect(screen.queryByText('Video file not found')).not.toBeInTheDocument());
+    });
+  });
+
+  describe('video tags', () => {
+    it('renders a pink chip for every tag currently applied to this video', () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      renderDetail(video, { TVshows: ['vid1'], games: ['someone-else'] });
+      expect(screen.getByText('TVshows')).toBeInTheDocument();
+      expect(screen.queryByText('games')).not.toBeInTheDocument();
+    });
+
+    it('the edit-tags popover lists every known tag as a checkbox, checked only for applied ones', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      renderDetail(video, { TVshows: ['vid1'], games: ['someone-else'] });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Edit tags' }));
+
+      const tvShowsCheckbox = screen.getByRole('checkbox', { name: 'TVshows' });
+      const gamesCheckbox = screen.getByRole('checkbox', { name: 'games' });
+      expect(tvShowsCheckbox).toBeChecked();
+      expect(gamesCheckbox).not.toBeChecked();
+    });
+
+    it('checking an unapplied tag calls setVideoTag with applied:true', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      renderDetail(video, { games: ['someone-else'] });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Edit tags' }));
+      await user.click(screen.getByRole('checkbox', { name: 'games' }));
+
+      expect(window.electronAPI.setVideoTag).toHaveBeenCalledWith('games', 'vid1', true);
+    });
+
+    it('unchecking an applied tag calls setVideoTag with applied:false', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      renderDetail(video, { TVshows: ['vid1'] });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Edit tags' }));
+      await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+
+      expect(window.electronAPI.setVideoTag).toHaveBeenCalledWith('TVshows', 'vid1', false);
+    });
+
+    it('creating a new tag from the text field calls setVideoTag with applied:true and clears the field', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      renderDetail(video);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Edit tags' }));
+
+      const input = screen.getByPlaceholderText('New tag');
+      await user.type(input, 'brandNew{Enter}');
+
+      expect(window.electronAPI.setVideoTag).toHaveBeenCalledWith('brandNew', 'vid1', true);
+      expect(input).toHaveValue('');
     });
   });
 });

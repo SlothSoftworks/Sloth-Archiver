@@ -5,6 +5,7 @@ import DownloadIcon from '@mui/icons-material/Download';
 import FolderDeleteIcon from '@mui/icons-material/FolderDelete';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import DriveFileMoveIcon from '@mui/icons-material/DriveFileMove';
+import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 
 export const THUMBNAIL_SIZE_MIN = 160;
 export const THUMBNAIL_SIZE_MAX = 360;
@@ -19,6 +20,7 @@ export default function LibraryBottomBar({
   selectedCount, canBulkDownload, onDownloadSelected,
   canDeleteLocalFiles, onDeleteLocalFiles, onDeleteFromLibrary,
   canMove, onMoveSelected,
+  canTag, onTagSelected,
 }: {
   thumbnailSize?: number;
   onThumbnailSizeChange?: (size: number) => void;
@@ -34,6 +36,11 @@ export default function LibraryBottomBar({
   // exists (there's nowhere else to move a video to otherwise).
   canMove?: boolean;
   onMoveSelected?: () => void;
+  // Optional, same reason as canMove above -- Playlists has no tags. Unlike
+  // canMove there's no sublibrary-count gate: tagging only ever touches the
+  // one active sublibrary, so it's available whenever anything is selected.
+  canTag?: boolean;
+  onTagSelected?: () => void;
 }) {
   return (
     // A flex sibling of the scrollable content region, not an in-flow
@@ -54,6 +61,10 @@ export default function LibraryBottomBar({
             {canBulkDownload &&
               <Button size="small" variant="outlined" startIcon={<DownloadIcon fontSize="small" />} onClick={onDownloadSelected}>
                 Download selected
+              </Button>}
+            {canTag && onTagSelected &&
+              <Button size="small" variant="outlined" startIcon={<LocalOfferIcon fontSize="small" />} onClick={onTagSelected}>
+                Tag selected
               </Button>}
             {canMove && onMoveSelected &&
               <Button size="small" variant="outlined" startIcon={<DriveFileMoveIcon fontSize="small" />} onClick={onMoveSelected}>
