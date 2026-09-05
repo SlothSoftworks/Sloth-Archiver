@@ -129,7 +129,7 @@ pasted in at once, working through them several at a time in the background
 with per-item progress, retry, and skip, so one bad link never holds up the
 rest.
 
-<video src="https://github.com/user-attachments/assets/9103a0ef-9929-49c4-985c-5f39c6ad1196" autoplay loop muted playsinline width="800"></video>
+<video src="https://github.com/user-attachments/assets/ae270e37-7404-4b67-9583-3731b2fe47e7" autoplay loop muted playsinline width="800"></video>
 
 ### Version history
 
@@ -139,7 +139,7 @@ along later, grab that too — SlothArchiver keeps both side by side instead of
 overwriting what you already had. This is a level of history most archivers,
 paid or free, don't track at all.
 
-<img width="800" alt="demo_versions" src="https://github.com/user-attachments/assets/572badb7-5b30-4b67-bb32-89bdf88e22fe" />
+<img width="800" alt="demo_versions" src="https://github.com/user-attachments/assets/b80e7155-3e30-434a-ad19-8e291c43f77c" />
 
 ### Handles seriously long videos
 
@@ -147,7 +147,7 @@ Thanks to working directly with yt-dlp at a low level instead of a lightweight
 wrapper, SlothArchiver can pull down videos that trip up other tools — tested
 successfully on uploads over 12 hours long.
 
-<video src="https://github.com/user-attachments/assets/7e43f8f7-19e3-49c3-b8e0-d2c346137ec0" autoplay loop muted playsinline width="800"></video>
+<video src="https://github.com/user-attachments/assets/dd3211c0-45d0-4f8f-b20c-0839b610cae2" autoplay loop muted playsinline width="800"></video>
 
 ### Up to 8K quality
 
@@ -155,9 +155,9 @@ SlothArchiver supports every quality YouTube (and whatever platform the
 source video is on) actually offers — up to and including 8K, personally
 tested at 4320p.
 
-<img width="800" alt="demo_8k" src="https://github.com/user-attachments/assets/86ef78c2-a488-4056-a788-e7ef8c04cf99" />
+<img width="800" alt="demo_8k" src="https://github.com/user-attachments/assets/fd0e7d20-170c-4ec7-b479-375050922165" />
 
-<video src="https://github.com/user-attachments/assets/8c643fc2-f8a3-47aa-99ff-b0a89243fd24" autoplay loop muted playsinline width="800"></video>
+<video src="https://github.com/user-attachments/assets/455d5e70-94ee-482f-bb40-777085577ffb" autoplay loop muted playsinline width="800"></video>
 
 ### Fast library search & sorting
 
@@ -165,7 +165,7 @@ Find anything in your archive in seconds. Search across your whole library,
 sort by date, channel, title, or quality, and browse by channel or by
 playlist — whichever fits how you think about your collection.
 
-<video src="https://github.com/user-attachments/assets/b9010a07-93ae-4aa3-bc09-4cc4d1b51356" autoplay loop muted playsinline width="800"></video>
+<video src="https://github.com/user-attachments/assets/aab82ff2-d446-4ec5-97ae-4e52a3146480" autoplay loop muted playsinline width="800"></video>
 
 ### Light footprint, no lock-in
 
@@ -174,7 +174,7 @@ you can't get to, and no Elasticsearch or Redis instance to maintain in the
 background. Want it gone? Delete the folder and it's gone, completely, with
 nothing left behind.
 
-<video src="https://github.com/user-attachments/assets/b1884a23-6825-4eaf-bf54-96b28cd0feed" autoplay loop muted playsinline width="800"></video>
+<video src="https://github.com/user-attachments/assets/17d11e08-8e32-4b90-99d4-92bef067c7b2" autoplay loop muted playsinline width="800"></video>
 
 ### Built-in media utilities
 
@@ -182,7 +182,7 @@ Extract the audio as an MP3, embed metadata and cover art, cut out just the
 clip you want at full quality, or convert to any format ffmpeg supports —
 all straight from the library view, no other software required.
 
-<video src="https://github.com/user-attachments/assets/8d9caa6d-bdf1-45e4-a87e-102b327d536e" autoplay loop muted playsinline width="800"></video>
+<video src="https://github.com/user-attachments/assets/1583d070-e822-4a6d-b595-3447aa7041f6" autoplay loop muted playsinline width="800"></video>
 
 ### Download from virtually any site yt-dlp supports
 
@@ -192,7 +192,7 @@ including SoundCloud, TikTok, Instagram, Facebook, Dailymotion, and more.
 Paste a link from any of them and SlothArchiver figures out the platform
 automatically and gets you a download, no separate tool needed for each site.
 
-<video src="https://github.com/user-attachments/assets/d4d55669-654f-485a-9b41-62277d9d8fce" autoplay loop muted playsinline width="800"></video>
+<video src="https://github.com/user-attachments/assets/634b1fe0-dbf1-444f-acfe-ebf279080731" autoplay loop muted playsinline width="800"></video>
 
 
 
@@ -209,11 +209,11 @@ Here's how to get past each OS's warning:
 
 Step 1 — click **More info**:
 
-<img width="532" height="498" alt="Windows SmartScreen: click More info" src="https://github.com/user-attachments/assets/e24e4c9e-c646-4852-965c-9e0daadd979e" />
+<img width="532" height="498" alt="Windows SmartScreen: click More info" src="https://github.com/user-attachments/assets/3b11a6f1-c797-4262-a851-99842ec3f7e4" />
 
 Step 2 — click **Run anyway**:
 
-<img width="532" height="498" alt="Windows SmartScreen: click Run anyway" src="https://github.com/user-attachments/assets/4966ed70-e54e-4e6d-b1f4-67202d64e7a3" />
+<img width="532" height="498" alt="Windows SmartScreen: click Run anyway" src="https://github.com/user-attachments/assets/f746e0e6-d41f-4abf-9814-45a3e9cbe66c" />
 
 **macOS** — you'll see a message that the app "cannot be opened because it is
 from an unidentified developer," and just double-clicking won't offer a way
@@ -223,7 +223,7 @@ that, it opens normally.
 
 Step 1 — the Gatekeeper block you'll see on first launch:
 
-<img width="260" height="285" alt="macOS: cannot be opened, unidentified developer" src="https://github.com/user-attachments/assets/79ca8b4b-4cec-49c8-8c2b-49cc81f7c712" />
+<img width="520" height="570" alt="macOS: cannot be opened, unidentified developer" src="https://github.com/user-attachments/assets/d06a069a-381b-42ea-ac71-a1a2461e2542" />
 
 If macOS still blocks it, go to **System Settings → Privacy & Security**,
 scroll down to the security section, and click **Open Anyway** next to the
@@ -231,11 +231,11 @@ message about SlothArchiver.
 
 Step 2 — find the security section in **Privacy & Security**:
 
-<img width="652" height="163" alt="macOS: Privacy & Security section" src="https://github.com/user-attachments/assets/d9f2009d-59b0-4a28-b0e2-6fe72d642601" />
+<img width="1304" height="326" alt="macOS: Privacy & Security section" src="https://github.com/user-attachments/assets/65999064-803b-4cd3-9b11-08fb45778469" />
 
 Step 3 — click **Open Anyway**:
 
-<img width="700" height="601" alt="macOS: click Open Anyway" src="https://github.com/user-attachments/assets/fb3aeb47-0010-4b45-bc63-f0ea44fa442d" />
+<img width="700" height="601" alt="macOS: click Open Anyway" src="https://github.com/user-attachments/assets/131abfdb-eb96-445e-b1d4-fdb836b9b9a4" />
 
 **Linux (AppImage)** — make it executable first, then run it directly:
 ```
