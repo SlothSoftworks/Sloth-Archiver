@@ -88,7 +88,10 @@ export default function LibraryBottomBar({
             min={THUMBNAIL_SIZE_MIN}
             max={THUMBNAIL_SIZE_MAX}
             step={THUMBNAIL_SIZE_STEP}
+            // SAFETY: this Slider has a single scalar `value`, never a
+            // [min, max] range, so MUI's value callback is always a number.
             onChange={(_e, value) => onThumbnailSizeChange(value as number)}
+            // SAFETY: same single-scalar `value` as onChange above.
             onChangeCommitted={(_e, value) => onThumbnailSizeCommit(value as number)}
             aria-label="Thumbnail size"
           />

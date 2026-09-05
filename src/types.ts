@@ -122,6 +122,16 @@ export type DownloadProgressMessage = {
     }
   }
 
+// A download's error state after useDownloadVideo.tsx's 'error' case -- the
+// raw progress message on a first failure, or a { previous, current }
+// wrapper once a second failure arrives while an earlier one was still
+// being displayed (see useDownloadVideo.tsx's accumErr). Consumers that
+// only care about the latest failure should read through to `.current`
+// when this is the wrapped shape.
+export type DownloadFailure =
+    | DownloadProgressMessage
+    | { previous: DownloadFailure; current: DownloadProgressMessage };
+
   export type DownloadVideoParams = {
     videoUrl: string;
     outputPath: string;

@@ -38,6 +38,9 @@ if (typeof HTMLMediaElement !== 'undefined') {
 // jsdom doesn't implement at all (not even a stub), unlike most of the other
 // gaps here.
 if (typeof window !== 'undefined' && !window.matchMedia) {
+  // SAFETY: this stub only implements the MediaQueryList members Vidstack
+  // actually calls in tests (addEventListener/removeEventListener and
+  // friends) -- the rest of the real interface is never exercised here.
   window.matchMedia = (query: string) => ({
     matches: false,
     media: query,
@@ -67,6 +70,11 @@ if (typeof window !== 'undefined') {
     unobserve() {}
     disconnect() {}
   }
+  // SAFETY: ResizeObserverStub only implements the observe/unobserve/
+  // disconnect methods these tests call, not the full ResizeObserver
+  // interface -- the double cast through `unknown` is required because the
+  // stub's shape doesn't structurally satisfy the real one.
+  // oxlint-disable-next-line anti-slop/no-chained-type-assertions
   window.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver;
 
   class IntersectionObserverStub {
@@ -75,17 +83,28 @@ if (typeof window !== 'undefined') {
       this.#callback = callback;
     }
     observe(target: Element) {
+      // SAFETY: this stub only fills in the IntersectionObserverEntry
+      // fields Vidstack's "visible" load strategy actually reads
+      // (isIntersecting and the two rects) -- the rest are never used.
       const entry = {
         target, isIntersecting: true, intersectionRatio: 1,
         boundingClientRect: target.getBoundingClientRect(),
         intersectionRect: target.getBoundingClientRect(),
         rootBounds: null, time: 0,
       } as IntersectionObserverEntry;
+      // SAFETY: the real callback signature only needs `this` to identify
+      // the observer instance the entry came from -- this stub class is
+      // never used as a real IntersectionObserver beyond that.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions
       this.#callback([entry], this as unknown as IntersectionObserver);
     }
     unobserve() {}
     disconnect() {}
     takeRecords() { return []; }
   }
+  // SAFETY: same reasoning as the ResizeObserver stub above -- this only
+  // implements the subset of IntersectionObserver's interface these tests
+  // exercise.
+  // oxlint-disable-next-line anti-slop/no-chained-type-assertions
   window.IntersectionObserver ??= IntersectionObserverStub as unknown as typeof IntersectionObserver;
 }

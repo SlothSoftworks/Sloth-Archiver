@@ -34,6 +34,12 @@ import BulkDeleteConfirmDialog from '../components/BulkDeleteConfirmDialog';
 // here rather than main.mjs's SUPPORTED_COOKIE_BROWSERS (the source of truth
 // for the actual list), which is plain lowercase keyring names, not fit for
 // a dropdown.
+// The keys here do match a fixed, closed set (cookies.mjs's
+// SUPPORTED_COOKIE_BROWSERS), but every lookup below indexes by a plain
+// `browser`/`cookiesBrowser` string, not a narrowed union -- narrowing this
+// properly means threading a dedicated CookieBrowser type through settings
+// state too, out of scope here.
+// oxlint-disable-next-line anti-slop/no-known-value-widening
 const COOKIE_BROWSER_LABELS: Record<string, string> = {
   brave: 'Brave',
   chrome: 'Chrome',

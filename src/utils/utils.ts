@@ -23,6 +23,10 @@ function isValidUrl(string: string) {
 // worth a friendly name instead of a bare hostname. Falls back to a
 // capitalized first hostname segment for anything else, e.g. "vimeo.com" ->
 // "Vimeo".
+// This dictionary is deliberately open (looked up by arbitrary hostname,
+// with the documented fallback above for anything not listed), not a fixed
+// set of known keys.
+// oxlint-disable-next-line anti-slop/no-known-value-widening
 const KNOWN_PLATFORM_LABELS: Record<string, string> = {
   'soundcloud.com': 'SoundCloud',
   'instagram.com': 'Instagram',
@@ -88,6 +92,10 @@ function getBestDownloadedQuality(epochs: { metadata: LibraryVideoMetadata }[]):
     const videoOnly = downloaded.filter((e) => e.metadata.downloadedResolution !== 'MP3');
     const pool = videoOnly.length > 0 ? videoOnly : downloaded;
     const best = pool.reduce((a, b) => (Number(b.metadata.downloadedResolution) > Number(a.metadata.downloadedResolution) ? b : a));
+    // SAFETY: recordLibraryDownload/swapLibraryDownload (library.mjs) always
+    // pass a real resolution string alongside downloadedFilePath; it's only
+    // null for entries with no downloaded file at all, which the filter above
+    // already excludes.
     return { resolution: best.metadata.downloadedResolution as string, format: best.metadata.downloadedFormat };
   }
   // No video download in any version -- a separately-downloaded MP3 still

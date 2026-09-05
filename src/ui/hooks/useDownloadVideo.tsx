@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { DownloadProgressMessage, DownloadVideoParams } from '../../types'
+import type { DownloadFailure, DownloadProgressMessage, DownloadVideoParams } from '../../types'
 
 function useDownloadVideo() {
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -13,7 +13,7 @@ function useDownloadVideo() {
   const [finalFilePath, setFinalFilePath] = useState<string>('');
   const [isDone, setIsDone] = useState(false);
   const [isError, setIsError] = useState(false);
-  const [downloadError, setDownloadError] = useState<object | null> ();
+  const [downloadError, setDownloadError] = useState<DownloadFailure | null>(null);
   // Clean, single-purpose readout of the classified failure kind (see
   // src/electron/downloadErrors.mjs) -- 'cancelled' specifically lets
   // consumers show "Cancelled" instead of a generic "Download failed" for a
@@ -66,7 +66,7 @@ function useDownloadVideo() {
       const listener = window.electronAPIPythonDownload.onProgressUpdate((msg: DownloadProgressMessage) => {
         if (msg.requestId !== requestIdRef.current) return;
         const { type, payload } = msg;
-        let accumErr: object = msg;
+        let accumErr: DownloadFailure = msg;
         // A retry that starts making progress again (or finishes) is no
         // longer "retrying" -- only the 'retrying' case itself should leave
         // this true.

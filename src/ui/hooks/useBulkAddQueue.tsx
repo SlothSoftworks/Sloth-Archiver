@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import useDownloadVideo from './useDownloadVideo.tsx';
+import type { DownloadFailure, DownloadProgressMessage } from '../../types';
 import { MAX_SIMULTANEOUS_DOWNLOADS_CEILING } from '../../utils/constants.ts';
 import { cleanElectronErrorMessage } from '../../utils/utils.ts';
 
@@ -100,13 +101,21 @@ function pickClosestResolution(resolutions: { resolution: string }[], target: st
   return String(best);
 }
 
+// downloadError is either the raw failure message, or a { previous, current }
+// wrapper if a second failure arrived while an earlier one was still being
+// displayed (see useDownloadVideo.tsx's accumErr) -- read through to the
+// latest one either way.
+function latestDownloadFailure(downloadError: DownloadFailure | null): DownloadProgressMessage | null {
+  if (downloadError == null) return null;
+  return 'current' in downloadError ? downloadError.current : downloadError;
+}
+
 // Best-effort extraction of the classified error message threaded through
 // from main.mjs's downloadErrors.mjs (see useDownloadVideo.tsx's 'error'
 // case) -- falls back to a generic message for failure paths (fetch/
 // add-to-library) that never went through that classifier.
-function extractDownloadErrorMessage(downloadError: unknown): string {
-  const message = (downloadError as { payload?: { message?: string } } | null)?.payload?.message;
-  return message || 'Download failed.';
+function extractDownloadErrorMessage(downloadError: DownloadFailure | null): string {
+  return latestDownloadFailure(downloadError)?.payload.message || 'Download failed.';
 }
 
 // One concurrent "download worker" -- wraps a single useDownloadVideo()
@@ -116,7 +125,7 @@ function extractDownloadErrorMessage(downloadError: unknown): string {
 // every parent re-render.
 function useDownloadSlot(
   slotIndex: number,
-  onDone: (slotIndex: number, result: { isError: boolean; finalFilePath: string; downloadError: unknown }) => void,
+  onDone: (slotIndex: number, result: { isError: boolean; finalFilePath: string; downloadError: DownloadFailure | null }) => void,
   onProgress: (slotIndex: number, progress: { downloadProgress: number; postprocessProgress: number }) => void,
   onRetrying: (slotIndex: number, isRetrying: boolean) => void,
 ) {
@@ -331,13 +340,13 @@ function useBulkAddQueueState() {
   // Fired by whichever download slot's own isDone/isError just flipped (see
   // useDownloadSlot above) -- finishes recording that one item, independent
   // of the other slots.
-  const handleSlotDone = async (slot: number, result: { isError: boolean; finalFilePath: string; downloadError: unknown }) => {
+  const handleSlotDone = async (slot: number, result: { isError: boolean; finalFilePath: string; downloadError: DownloadFailure | null }) => {
     const itemId = slotItemRef.current[slot];
     const meta = slotDownloadMetaRef.current[slot];
     if (!itemId || !meta) return;
     slotDownloadMetaRef.current[slot] = null;
     if (result.isError) {
-      const kind = (result.downloadError as { payload?: { kind?: string } } | null)?.payload?.kind;
+      const kind = latestDownloadFailure(result.downloadError)?.payload.kind;
       // A cancellation already reads clearly from the 'Cancelled' status chip
       // alone -- an additional red error caption (and the generic "Download
       // failed." fallback extractDownloadErrorMessage would produce here)
