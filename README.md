@@ -28,22 +28,22 @@ itself.
 
 ## Download
 
-<!-- Update the version in these 5 links on every release -- currently 0.27.0.
+<!-- Update the version in these 5 links on every release -- currently 0.27.1.
      Each filename must match exactly what GitHub actually named the asset on
      the release page, NOT the local build's own filename -- GitHub's release
      upload sanitizes spaces in asset names to dots, so the two Windows .exe
      files differ from what "npm run dist" produces locally (e.g. the local
-     "SlothArchiver Setup 0.27.0.exe" becomes the asset
-     "SlothArchiver.Setup.0.27.0.exe"). Check the release's actual assets
+     "SlothArchiver Setup 0.27.1.exe" becomes the asset
+     "SlothArchiver.Setup.0.27.1.exe"). Check the release's actual assets
      list if unsure, don't assume the local build's naming carries over. -->
 
 | Platform | Link |
 |---|---|
-| Windows (installer) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.0/SlothArchiver.Setup.0.27.0.exe) |
-| Windows (portable, no install) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.0/SlothArchiver.0.27.0.exe) |
-| macOS (Apple Silicon) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.0/SlothArchiver-0.27.0-arm64.dmg) |
-| macOS (Intel) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.0/SlothArchiver-0.27.0.dmg) |
-| Linux (AppImage) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.0/SlothArchiver-0.27.0.AppImage) |
+| Windows (installer) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.1/SlothArchiver.Setup.0.27.1.exe) |
+| Windows (portable, no install) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.1/SlothArchiver.0.27.1.exe) |
+| macOS (Apple Silicon) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.1/SlothArchiver-0.27.1-arm64.dmg) |
+| macOS (Intel) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.1/SlothArchiver-0.27.1.dmg) |
+| Linux (AppImage) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v0.27.1/SlothArchiver-0.27.1.AppImage) |
 
 All builds are unsigned, so your OS will show a first-run security warning —
 see [Installing](#installing) below.
@@ -223,7 +223,7 @@ that, it opens normally.
 
 Step 1 — the Gatekeeper block you'll see on first launch:
 
-<img width="520" height="570" alt="macOS: cannot be opened, unidentified developer" src="https://github.com/user-attachments/assets/d06a069a-381b-42ea-ac71-a1a2461e2542" />
+<img width="260" alt="macOS: cannot be opened, unidentified developer" src="https://github.com/user-attachments/assets/d06a069a-381b-42ea-ac71-a1a2461e2542" />
 
 If macOS still blocks it, go to **System Settings → Privacy & Security**,
 scroll down to the security section, and click **Open Anyway** next to the
@@ -231,11 +231,11 @@ message about SlothArchiver.
 
 Step 2 — find the security section in **Privacy & Security**:
 
-<img width="1304" height="326" alt="macOS: Privacy & Security section" src="https://github.com/user-attachments/assets/65999064-803b-4cd3-9b11-08fb45778469" />
+<img width="652" alt="macOS: Privacy & Security section" src="https://github.com/user-attachments/assets/65999064-803b-4cd3-9b11-08fb45778469" />
 
 Step 3 — click **Open Anyway**:
 
-<img width="700" height="601" alt="macOS: click Open Anyway" src="https://github.com/user-attachments/assets/131abfdb-eb96-445e-b1d4-fdb836b9b9a4" />
+<img width="700" alt="macOS: click Open Anyway" src="https://github.com/user-attachments/assets/131abfdb-eb96-445e-b1d4-fdb836b9b9a4" />
 
 **Linux (AppImage)** — make it executable first, then run it directly:
 ```

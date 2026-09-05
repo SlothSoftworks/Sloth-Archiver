@@ -152,7 +152,7 @@ const { readVideoInfoCache, writeVideoInfoCache } = createVideoInfoCache(videoIn
 const { ensureChannelIcon, ensureVideoThumbnail, ensurePlaylistThumbnail } = createThumbnailFetchers({
     ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, onLog: log,
 });
-const ffmpegRunner = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath });
+const ffmpegRunner = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog: log, isDev });
 const { getMediaDurationSeconds, getFfmpegVersion, runFfmpegWithProgress, convertWithFallback, clipAndConvert } = ffmpegRunner;
 
 // Registers app-video:// as a privileged scheme so the Library tab's player
@@ -1269,10 +1269,12 @@ const cancelledDownloadRequestIds = new Set();
 // silently do nothing until the next attempt actually started.
 const pendingRetryCancellers = new Map();
 
-// No progress line (download OR postprocess) for this long is treated as a
-// stall and killed -- deliberately not a fixed total-duration cap, since this
-// app's own differentiator is handling very long downloads (9+ hour videos
-// per the README); only *silence* is suspicious, not overall length.
+// No progress line for this long during the actual *download* is treated as
+// a stall and killed -- deliberately not a fixed total-duration cap, since
+// this app's own differentiator is handling very long downloads (9+ hour
+// videos per the README); only *silence* is suspicious, not overall length.
+// Does NOT apply while a postprocessor (e.g. yt-dlp's own audio+video
+// Merger) is running -- see inPostprocess in attemptDownload below for why.
 const STALL_TIMEOUT_MS = 5 * 60 * 1000;
 const STALL_CHECK_INTERVAL_MS = 30 * 1000;
 
@@ -1356,6 +1358,8 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
         downloadArgs = buildDownloadArgs(options);
     }
 
+    log(`[download] ${options.requestId} starting: url=${options.videoUrl} resolution=${options.resolution} format=${options.format} postprocess=${postprocess} outputPath=${options.outputPath}`);
+
     // Only actually decrements/untracks once -- called from whichever branch
     // (success, or a failure that's giving up rather than retrying) turns out
     // to be this download's true end.
@@ -1372,6 +1376,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     // restarting from zero.
     async function handleFailure({ kind, message }, attempt) {
         if (kind === ERROR_KINDS.CANCELLED) {
+            log(`[download] ${options.requestId} attempt ${attempt} cancelled: ${message}`);
             finishDownload();
             if (rawDir) fs.rmSync(rawDir, { recursive: true, force: true });
             send({ type: 'error', payload: { message, kind, retryable: false } });
@@ -1379,6 +1384,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
         }
         if (isAutoRetryable(kind) && attempt < MAX_AUTO_RETRIES) {
             const nextAttemptInMs = getBackoffMs(attempt);
+            log(`[download] ${options.requestId} attempt ${attempt} failed (${kind}): ${message} -- retrying (attempt ${attempt + 1}) in ${nextAttemptInMs}ms`);
             send({ type: 'retrying', payload: { attempt: attempt + 1, kind, message, nextAttemptInMs } });
             const timer = setTimeout(() => {
                 pendingRetryCancellers.delete(options.requestId);
@@ -1390,12 +1396,14 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
             });
             return;
         }
+        log(`[download] ${options.requestId} attempt ${attempt} failed (${kind}): ${message} -- giving up`);
         finishDownload();
         if (rawDir) fs.rmSync(rawDir, { recursive: true, force: true });
         send({ type: 'error', payload: { message, kind, retryable: false } });
     }
 
     function attemptDownload(attempt) {
+        log(`[download] ${options.requestId} attempt ${attempt} spawning: ${ytdlpPath} ${downloadArgs.join(' ')}`);
         // detached only on POSIX -- see killDownloadProcessTree above.
         const script = spawn(ytdlpPath, downloadArgs, { detached: process.platform !== 'win32', env: ytdlpSpawnEnv() });
         activeDownloadProcesses.set(options.requestId, script);
@@ -1407,11 +1415,33 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
         // whichever happens first wins, the other is a no-op.
         let settled = false;
         const touch = () => { lastActivity = Date.now(); };
+        // yt-dlp's postprocess progress-template (see POSTPROCESS| handling
+        // in parseLine below) only ever reports 'started' and 'finished' --
+        // there's no real progress heartbeat for the time in between, which
+        // for something like an audio+video Merger on a very long recording
+        // can legitimately run well past STALL_TIMEOUT_MS with zero output.
+        // Confirmed to have actually caused a stuck-in-a-loop bug: the
+        // watchdog was killing an in-progress (not hung, just silent) merge,
+        // classifying it as a stall, and auto-retrying -- which restarts the
+        // merge from scratch every time, forever. The stall watchdog exists
+        // to catch a genuinely dead *network* transfer; it has no way to
+        // distinguish that from "ffmpeg is still working," so it's suspended
+        // entirely for the whole postprocessing phase rather than guessed at
+        // with a longer fixed timeout.
+        let inPostprocess = false;
+        // dev-only throttle for the (very high-volume, once-per-second-ish)
+        // download PROGRESS lines -- logging every one of those for a
+        // multi-hour download would make main.log unreadable, so only the
+        // low-volume status transitions (below) are always logged, and raw
+        // in-progress percentages are sampled at most this often.
+        let lastDevProgressLogAt = 0;
+        const DEV_PROGRESS_LOG_INTERVAL_MS = 30 * 1000;
 
         const stallCheck = setInterval(() => {
-            if (settled || Date.now() - lastActivity < STALL_TIMEOUT_MS) return;
+            if (settled || inPostprocess || Date.now() - lastActivity < STALL_TIMEOUT_MS) return;
             settled = true;
             clearInterval(stallCheck);
+            log(`[download] ${options.requestId} attempt ${attempt} STALLED -- no progress/output for ${Math.round((Date.now() - lastActivity) / 1000)}s, killing process tree`);
             killDownloadProcessTree(script);
             handleFailure({ kind: ERROR_KINDS.STALLED, message: 'No progress for several minutes -- the connection may have dropped.' }, attempt);
         }, STALL_CHECK_INTERVAL_MS);
@@ -1422,6 +1452,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
             clearInterval(stallCheck);
             activeDownloadProcesses.delete(options.requestId);
             const classified = classifyDownloadError({ spawnError: err });
+            log(`[download] ${options.requestId} attempt ${attempt} failed to spawn yt-dlp: ${err.message}`);
             handleFailure(classified, attempt);
         });
 
@@ -1430,6 +1461,13 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
             if (line.startsWith('PROGRESS|')) {
                 const [, status, downloadedBytes, totalBytes, percent, eta, speed] = line.split('|');
                 if (status === 'downloading') {
+                    // High-volume (near-continuous for the life of the
+                    // download) -- only sampled in dev mode, see
+                    // DEV_PROGRESS_LOG_INTERVAL_MS above.
+                    if (isDev && Date.now() - lastDevProgressLogAt >= DEV_PROGRESS_LOG_INTERVAL_MS) {
+                        lastDevProgressLogAt = Date.now();
+                        log(`[download] ${options.requestId} attempt ${attempt} downloading: ${percent.trim()} eta=${eta} speed=${speed.trim()} (${downloadedBytes}/${totalBytes} bytes)`);
+                    }
                     send({
                         type: 'progress',
                         payload: {
@@ -1441,14 +1479,34 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                         },
                     });
                 } else if (status === 'finished') {
+                    log(`[download] ${options.requestId} attempt ${attempt} yt-dlp reports download finished`);
                     send({ type: 'downloadDone', payload: {} });
                 }
             } else if (line.startsWith('POSTPROCESS|')) {
                 const [, status, processor] = line.split('|');
+                // Always logged, unlike PROGRESS| above -- postprocess
+                // (e.g. yt-dlp's own audio+video Merger) only ever emits a
+                // handful of these per download, and this is exactly the
+                // stage that's been observed hanging with no other feedback.
+                log(`[download] ${options.requestId} attempt ${attempt} postprocess ${status}: ${processor}`);
+                // See inPostprocess's own comment above the stall watchdog:
+                // suspend stall-based auto-retry for the whole span between a
+                // postprocessor starting and finishing, since yt-dlp reports
+                // nothing in between it can be judged against.
+                if (status === 'finished') {
+                    inPostprocess = false;
+                } else {
+                    inPostprocess = true;
+                }
                 send({
                     type: 'postprocessing',
                     payload: { stage: status === 'started' ? 'start' : status, processor },
                 });
+            } else if (isDev) {
+                // Any other stdout line (yt-dlp's own non-progress chatter --
+                // e.g. "[Merger] Merging formats into ...", extractor debug
+                // output) -- dev-only since this is otherwise unfiltered.
+                log(`[download] ${options.requestId} attempt ${attempt} stdout: ${line}`);
             }
         }
 
@@ -1472,6 +1530,11 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                 parseLine(line);
             } else {
                 error += line + '\n';
+                // Previously console.error-only, invisible in a packaged
+                // build with no attached terminal -- this is where a real
+                // ffmpeg/merge failure's actual explanation lands, so it now
+                // always goes to main.log too, not just dev mode.
+                log(`[download] ${options.requestId} attempt ${attempt} stderr: ${line}`);
                 console.error('yt-dlp stderr:', line);
             }
         }));
@@ -1481,6 +1544,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
             settled = true;
             clearInterval(stallCheck);
             activeDownloadProcesses.delete(options.requestId);
+            log(`[download] ${options.requestId} attempt ${attempt} yt-dlp exited with code ${code}`);
 
             if (cancelledDownloadRequestIds.delete(options.requestId)) {
                 handleFailure({ kind: ERROR_KINDS.CANCELLED, message: 'Cancelled.' }, attempt);
@@ -1497,6 +1561,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
             if (!postprocess) {
                 finishDownload();
                 const finalFile = findFinalFile(options.outputPath);
+                log(`[download] ${options.requestId} attempt ${attempt} done -> ${finalFile}`);
                 rememberAppPath(finalFile);
                 send({ type: 'done', payload: { filename: finalFile } });
                 return;
@@ -1504,7 +1569,9 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
 
             try {
                 const rawFile = findRawDownloadedFile(rawDir);
+                log(`[download] ${options.requestId} attempt ${attempt} yt-dlp finished, starting direct ffmpeg postprocess pass: rawFile=${rawFile} target=${postprocessOutputPath}`);
                 const duration = await getMediaDurationSeconds(rawFile);
+                log(`[download] ${options.requestId} attempt ${attempt} probed raw file duration: ${duration}s`);
                 const onFfmpegProgress = (postprocessPercent) => send({
                     type: 'postprocessing',
                     payload: { stage: 'progress', processor: 'ffmpeg', postprocessPercent },
@@ -1530,6 +1597,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
 
                 fs.rmSync(rawDir, { recursive: true, force: true });
                 finishDownload();
+                log(`[download] ${options.requestId} attempt ${attempt} postprocess complete -> ${postprocessOutputPath}`);
                 rememberAppPath(postprocessOutputPath);
                 send({ type: 'done', payload: { filename: postprocessOutputPath } });
             } catch (err) {
@@ -1541,6 +1609,7 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                 // codec) that retrying won't fix.
                 const rawMessage = err instanceof Error ? err.message : String(err);
                 const kind = await recheckDiskSpaceIfAmbiguous(ERROR_KINDS.UNKNOWN, options.outputPath);
+                log(`[download] ${options.requestId} attempt ${attempt} postprocess FAILED (${kind}): ${rawMessage}`);
                 finishDownload();
                 if (rawDir) fs.rmSync(rawDir, { recursive: true, force: true });
                 send({ type: 'error', payload: { message: rawMessage, kind, retryable: false } });

@@ -174,7 +174,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     return () => window.electronAPI.removeFfmpegUtilityProgressListener();
   }, []);
 
-  const { downloadProgress, postprocessProgress, downloadStatus, finalFilePath, isDone, isError, downloadErrorKind, isRetrying, startDownload, cancelDownload } = useDownloadVideo();
+  const { downloadProgress, postprocessProgress, postprocessIndeterminate, downloadStatus, finalFilePath, isDone, isError, downloadErrorKind, isRetrying, startDownload, cancelDownload } = useDownloadVideo();
 
   // A genuinely different video was selected (not just a data refresh of the
   // same one, e.g. after a download/swap/version-add) -- jump to its latest.
@@ -836,6 +836,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 downloadStatus={downloadStatus}
                 downloadProgress={downloadProgress}
                 postprocessProgress={postprocessProgress}
+                postprocessIndeterminate={postprocessIndeterminate}
                 swappingQuality={swappingQuality}
                 onCancelQualitySwap={() => setSwappingQuality(false)}
                 isDownloading={isDownloading}

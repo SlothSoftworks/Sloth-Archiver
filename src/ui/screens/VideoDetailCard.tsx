@@ -31,7 +31,7 @@ import BugReportIcon from '@mui/icons-material/BugReport';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CancelIcon from '@mui/icons-material/Cancel';
 
-import { convertYYYYMMDDStringToDate } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, isLongVideoForPostprocess } from '../../utils/utils.ts';
 import { formatComment } from '../components/componentUtils';
 
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
@@ -53,6 +53,7 @@ interface VideoDataProps {
         thumbnail: string;
         resolutions: Resolution[];
         originalUrl: string;
+        duration?: number | null;
         durationString: string;
         uploadDate: string;
     }
@@ -70,7 +71,7 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
   const [overwriteDialogOpen, setOverwriteDialogOpen] = useState(false);
   const [pendingDownload, setPendingDownload] = useState<{ outputPath: string; resolution: string } | null>(null);
 
-  const { finalFilePath, downloadStatus, downloadProgress, postprocessProgress, isDone, isError, downloadError, downloadErrorKind, isRetrying, startDownload, cancelDownload } = useDownloadVideo();
+  const { finalFilePath, downloadStatus, downloadProgress, postprocessProgress, postprocessIndeterminate, isDone, isError, downloadError, downloadErrorKind, isRetrying, startDownload, cancelDownload } = useDownloadVideo();
 
   const beginDownload = (outputPath: string, resolution: string, overwriteMode?: DownloadVideoParams['overwriteMode']) => {
     setSelectedResolution(resolution);
@@ -188,7 +189,11 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
                   <Typography variant="caption" color="warning.main" textAlign="center">
                     Retrying after a download error...
                   </Typography>}
-                <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} />
+                <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} indeterminate={postprocessIndeterminate} />
+                {!isDone && isLongVideoForPostprocess(videoMetaData.duration) &&
+                  <Typography variant="caption" color="warning.main" textAlign="center">
+                    This is a long video -- postprocessing may take a while with no visible progress.
+                  </Typography>}
               </Stack>
             ) : (
               <>
