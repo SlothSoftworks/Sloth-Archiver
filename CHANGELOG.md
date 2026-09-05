@@ -4,6 +4,21 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [0.27.1] — 2026-09-04
+- **Fixed a bug where downloading a very long video could get stuck looping
+  forever.** The step that joins the downloaded video and audio together
+  doesn't report progress while it runs, and on a long enough recording that
+  silence was being mistaken for a stalled connection — killing the merge
+  partway through and restarting the whole download from scratch, repeatedly,
+  with no way out short of force-quitting the app.
+- **The postprocessing step now shows a proper loading animation instead of a
+  progress bar stuck at 50%**, since that stage genuinely has no percentage
+  to report — the old fixed value looked broken on anything that took more
+  than a few seconds.
+- **Downloading a video over 3 hours long now shows a heads-up** that the
+  postprocessing step may take a while with no visible progress, so it's
+  clear that's expected rather than a sign something's wrong.
+
 ## [0.27.0] — 2026-09-03
 - **Split your library into separate sublibraries.** Create as many as you
   want from the Library tab, switch between them, and pick which one a new
