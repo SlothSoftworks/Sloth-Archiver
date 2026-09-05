@@ -245,8 +245,8 @@ For YouTube, yes. As of now this is only supported as part of a bulk add feature
 #### Does SlothArchiver collect any of my data?
 No, I designed the app precisely not to collect or require data anywhere whenever possible. That is also the reason the library management is done via pure filesystem instead of depending on a local database.
 
-#### Why does the app need to download extra components on first run?
-These components are required for the low-level features of the app, which include yt-dlp and Deno, which support the download for videos and metadata. And ffmpeg, which supports the extra features like converting your download to MP3 or making clips inside the library view.
+#### Why does the app set up extra components on first run?
+yt-dlp and ffmpeg (the low-level tools that handle actual downloading and media processing) are bundled directly inside the installer itself, not fetched over the network afterward. The one thing that does happen on first run is copying yt-dlp into a per-user writable folder, since the app needs to be able to replace it later (see the next question) and the installer's own resources folder generally isn't writable without elevated permissions.
 
 #### How do I update SlothArchiver?
 Come back to this page and click on the download button for your platform. It's also worth noting that the "update yt-dlp" feature inside the app doesn't update the archiver app itself, only the low-level download library, and you might need to make sure you have both of them properly updated before using the app.

@@ -61,8 +61,9 @@ Skip either for a deliberate WIP commit/push with `git commit --no-verify` /
 `git push --no-verify` — the Husky hooks are a local convenience, not the
 enforcement layer. Both also run in CI, in `.github/workflows/ci.yml`, on
 every pull request targeting `master` (not on every push — see that file's
-own comments for why). See `docs/RELEASING.md` for what the separate
-release-build workflow does and doesn't cover.
+own comments for why). The separate release-build workflow
+(`.github/workflows/build.yml`) is a different, heavier pipeline that
+actually packages and publishes installers — not covered by this guide.
 
 ## What the build scripts do
 
@@ -79,7 +80,7 @@ The full dependency chain, from `package.json`'s `scripts`:
 | `build:electron` | Runs `build:copy:electron` → `build:ytdlp:bin` → `build:copy:ffmpeg`, in order. |
 | `build:all` | `build:renderer` + `build:electron` — everything needed to run the app locally via `dev`, and also what CI/`dist` uses. |
 | `electron-build` | Runs `electron-builder` (packages `dist/` into a real installer for your current OS) without publishing anywhere. |
-| `dist` | `build:all` + `electron-build` — produces an actual installer in `dist/`, the same thing a release build does. See `docs/RELEASING.md` for how that connects to an actual GitHub release. |
+| `dist` | `build:all` + `electron-build` — produces an actual installer in `dist/`, the same thing a release build does. |
 | `prepare` | Runs `husky` to install the pre-commit hook. `npm` runs this automatically after `npm install`/`npm ci` — you shouldn't need to run it yourself. |
 
 If you only need to run the app locally, `build:all` is what you want.

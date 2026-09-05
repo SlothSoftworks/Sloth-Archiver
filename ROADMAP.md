@@ -1,10 +1,6 @@
 # Roadmap
 
-A running, informal list of what's being worked on or explored for
-SlothArchiver next. This isn't a commitment or a timeline — just visibility
-into where the project's headed. Order isn't priority. This is a solo
-project worked on in spare time, so things move at their own pace — see the
-README's FAQ for more on that.
+What's being developed right now? These are some of the topic that I'm working or planning to add to the app in the future. All subject to change and improvement.
 
 ## In progress / being explored
 

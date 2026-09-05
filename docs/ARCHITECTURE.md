@@ -49,7 +49,6 @@ flowchart TB
     subgraph Tools["Bundled command-line tools (child processes)"]
         YtDlp["yt-dlp — fetch metadata / download media"]
         Ffmpeg["ffmpeg — postprocess, convert, clip"]
-        Deno["deno — JS runtime yt-dlp needs for some sites"]
     end
 
     FS[("Local filesystem\nlibrary folder + app settings")]
@@ -58,7 +57,6 @@ flowchart TB
     IPC <--> Handlers
     Handlers --> YtDlp
     Handlers --> Ffmpeg
-    YtDlp -.-> Deno
     Handlers <--> LibraryStore
     LibraryStore <--> FS
     Protocol <--> FS
@@ -70,6 +68,13 @@ processes, or reads settings directly. Everything it needs happens by asking the
 main process to do it and getting a result back. The main process is the only part
 of the app with real system access, and it's also the only part that knows how to
 talk to `yt-dlp` and `ffmpeg`.
+
+`yt-dlp` needs a real JavaScript runtime to solve some sites' anti-bot
+challenges (e.g. YouTube's nsig signature check). Rather than bundling a
+separate JS runtime for this, the main process points `yt-dlp` at Electron's
+own bundled Node.js binary, re-invoked with `ELECTRON_RUN_AS_NODE=1` so it
+behaves as a plain `node` executable — no extra tool, and no extra bundled
+bytes, beyond Electron itself.
 
 ## Process model
 
@@ -176,13 +181,21 @@ involved.
 
 ## Playback
 
-Downloaded video files are played back inside the app itself using a standard HTML5
-player, not an external application. Because the renderer has no filesystem access,
-it can't simply be pointed at a local file path the way a native desktop app could;
-instead, the main process serves the requested file back to the player through the
-same custom local protocol mentioned earlier, complete with support for partial
-("range") requests — the mechanism a browser's video player relies on to seek
-around inside a file, rather than only being able to play it start to finish.
+Downloaded video files are played back inside the app itself, not an external
+application, using a custom-built player rather than the browser's bare default
+`<video controls>` element: Vidstack's headless player primitives provide the
+underlying accessible interaction logic (play/pause, seeking, volume,
+fullscreen), rendered entirely through this app's own MUI-styled controls so
+every pixel of the player matches the rest of the UI. This is also where
+library-specific features live that a stock player has no concept of, like
+setting in/out clip markers directly on the timeline for the clipping tool.
+
+Because the renderer has no filesystem access, the player can't simply be
+pointed at a local file path the way a native desktop app could; instead, the
+main process serves the requested file back to it through the same custom
+local protocol mentioned earlier, complete with support for partial ("range")
+requests — the mechanism the player relies on to seek around inside a file,
+rather than only being able to play it start to finish.
 
 Not every downloaded file can play in an embedded web-based player, though — some
 container formats simply aren't supported by the underlying browser engine. When
@@ -199,8 +212,12 @@ than introducing a new one:
   that downloads can authenticate as them — useful for content that would otherwise
   be blocked by anti-bot checks or that requires being signed in.
 - **A self-updating `yt-dlp`** — because video platforms change frequently and
-  break older extraction logic, the app can rebuild its bundled copy of `yt-dlp` to
-  the latest version on demand, entirely on the user's own machine.
+  break older extraction logic, the app can update its bundled copy of `yt-dlp`
+  on demand. Rather than rebuilding it from source, this fetches `yt-dlp`'s own
+  official prebuilt release binary, verifies its checksum and GPG signature
+  against `yt-dlp`'s published signing key, and only then swaps it into place —
+  the same fetch/verify path the build pipeline itself uses to bundle `yt-dlp`
+  in the first place (see [Distribution](#distribution)).
 - **Library-side `ffmpeg` utilities** — once a video is in the library, the app
   offers direct local tools for extracting an MP3, converting to a different
   format, trimming a clip, and embedding metadata/cover art into the file — all
@@ -217,8 +234,7 @@ nothing beyond the installer itself needs to be present on a user's machine.
 Because those bundled tools are native, platform-specific binaries rather than
 portable scripts, a build produced on one operating system can only ever ship
 that same operating system's binaries; a release for a different platform has
-to actually be built on (or for) that platform's toolchain. CI now handles this
-per-platform building automatically — see `docs/RELEASING.md` for how a code
-change actually turns into a published release, including the version-bump
-trigger, which is a build-pipeline detail this document doesn't otherwise
+to actually be built on (or for) that platform's toolchain. CI handles this
+per-platform building automatically, triggered by a version bump — the release
+pipeline itself is a build-system detail this document doesn't otherwise
 cover.
