@@ -14,8 +14,8 @@ actually contains.
 ## Setup
 
 ```
-git clone <repo-url>
-cd SlothArchiver
+git clone https://github.com/SlothSoftworks/Sloth-Archiver.git
+cd Sloth-Archiver
 npm ci
 ```
 

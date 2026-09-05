@@ -60,7 +60,7 @@ your own machine.
 
 ## Why SlothArchiver?
 
-Most tools in this space seem make you work for a real archive. Self-hosted servers give
+Most tools in this space make you work for a real archive. Self-hosted servers give
 you one, but only if you're willing to run Docker, manage a server, and keep a
 machine on around the clock. Lightweight desktop downloaders skip all of that
 setup, but most of them just drop files in a folder and call it done — no real
@@ -88,7 +88,7 @@ that.
 | macOS / Windows / Linux | ✅ | ✅ | Mac/Win only | ✅ (via Docker) |
 
 No other tool in this space currently checks every one of those boxes at once —
-that combination is the whole point of SlothArchiver; A simple catalogued library, organized in one place and fully local.
+that combination is the whole point of SlothArchiver — a simple catalogued library, organized in one place and fully local.
 
 ## Features
 
@@ -129,7 +129,7 @@ pasted in at once, working through them several at a time in the background
 with per-item progress, retry, and skip, so one bad link never holds up the
 rest.
 
-<video src="https://github.com/user-attachments/assets/ae270e37-7404-4b67-9583-3731b2fe47e7" autoplay loop muted playsinline width="800"></video>
+<img width="800" height="433" alt="playlist" src="https://github.com/user-attachments/assets/cb1308fa-e135-44d6-8350-f405ad774606" />
 
 ### Version history
 
@@ -145,9 +145,9 @@ paid or free, don't track at all.
 
 Thanks to working directly with yt-dlp at a low level instead of a lightweight
 wrapper, SlothArchiver can pull down videos that trip up other tools — tested
-successfully on uploads over 12 hours long.
+successfully on uploads up to 12 hours long.
 
-<video src="https://github.com/user-attachments/assets/dd3211c0-45d0-4f8f-b20c-0839b610cae2" autoplay loop muted playsinline width="800"></video>
+<img width="800" height="440" alt="long-videos" src="https://github.com/user-attachments/assets/3fb866f9-4972-448c-a324-c2ab1e7ac937" />
 
 ### Up to 8K quality
 
@@ -157,15 +157,13 @@ tested at 4320p.
 
 <img width="800" alt="demo_8k" src="https://github.com/user-attachments/assets/fd0e7d20-170c-4ec7-b479-375050922165" />
 
-<video src="https://github.com/user-attachments/assets/455d5e70-94ee-482f-bb40-777085577ffb" autoplay loop muted playsinline width="800"></video>
-
 ### Fast library search & sorting
 
 Find anything in your archive in seconds. Search across your whole library,
 sort by date, channel, title, or quality, and browse by channel or by
 playlist — whichever fits how you think about your collection.
 
-<video src="https://github.com/user-attachments/assets/aab82ff2-d446-4ec5-97ae-4e52a3146480" autoplay loop muted playsinline width="800"></video>
+<img width="800" height="433" alt="library-org" src="https://github.com/user-attachments/assets/cba4b7c2-7acb-40dc-a754-21e26e577c2e" />
 
 ### Light footprint, no lock-in
 
@@ -174,7 +172,7 @@ you can't get to, and no Elasticsearch or Redis instance to maintain in the
 background. Want it gone? Delete the folder and it's gone, completely, with
 nothing left behind.
 
-<video src="https://github.com/user-attachments/assets/17d11e08-8e32-4b90-99d4-92bef067c7b2" autoplay loop muted playsinline width="800"></video>
+<img width="800" height="438" alt="library-files" src="https://github.com/user-attachments/assets/92018182-c136-4c57-9293-605fd13f7dbe" />
 
 ### Built-in media utilities
 
@@ -182,71 +180,17 @@ Extract the audio as an MP3, embed metadata and cover art, cut out just the
 clip you want at full quality, or convert to any format ffmpeg supports —
 all straight from the library view, no other software required.
 
-<video src="https://github.com/user-attachments/assets/1583d070-e822-4a6d-b595-3447aa7041f6" autoplay loop muted playsinline width="800"></video>
+<img width="800" height="433" alt="clipping" src="https://github.com/user-attachments/assets/ab42cf7e-fde4-46b4-abd1-dc6f58e80d87" />
 
 ### Download from virtually any site yt-dlp supports
 
 Not just YouTube — SlothArchiver works with virtually any of the
 [1800+ sites yt-dlp itself supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md),
-including SoundCloud, TikTok, Instagram, Facebook, Dailymotion, and more.
+including SoundCloud, TikTok, Instagram, Facebook, Dailymotion, Archive.org and more.
 Paste a link from any of them and SlothArchiver figures out the platform
 automatically and gets you a download, no separate tool needed for each site.
 
-<video src="https://github.com/user-attachments/assets/634b1fe0-dbf1-444f-acfe-ebf279080731" autoplay loop muted playsinline width="800"></video>
-
-
-
-## Installing
-
-SlothArchiver's builds aren't code-signed (that requires a paid certificate
-this project doesn't have set up) — so the first time you open one, your OS
-will warn you it's from an unidentified/unrecognized developer. This is
-expected for any unsigned app, not a sign anything's actually wrong.
-Here's how to get past each OS's warning:
-
-**Windows** — you'll see "Windows protected your PC" (SmartScreen). Click
-**More info**, then **Run anyway**.
-
-Step 1 — click **More info**:
-
-<img width="532" height="498" alt="Windows SmartScreen: click More info" src="https://github.com/user-attachments/assets/3b11a6f1-c797-4262-a851-99842ec3f7e4" />
-
-Step 2 — click **Run anyway**:
-
-<img width="532" height="498" alt="Windows SmartScreen: click Run anyway" src="https://github.com/user-attachments/assets/f746e0e6-d41f-4abf-9814-45a3e9cbe66c" />
-
-**macOS** — you'll see a message that the app "cannot be opened because it is
-from an unidentified developer," and just double-clicking won't offer a way
-past it. Instead: right-click (or Control-click) the app → **Open** → confirm
-**Open** in the dialog that appears. You only need to do this once — after
-that, it opens normally.
-
-Step 1 — the Gatekeeper block you'll see on first launch:
-
-<img width="260" alt="macOS: cannot be opened, unidentified developer" src="https://github.com/user-attachments/assets/d06a069a-381b-42ea-ac71-a1a2461e2542" />
-
-If macOS still blocks it, go to **System Settings → Privacy & Security**,
-scroll down to the security section, and click **Open Anyway** next to the
-message about SlothArchiver.
-
-Step 2 — find the security section in **Privacy & Security**:
-
-<img width="652" alt="macOS: Privacy & Security section" src="https://github.com/user-attachments/assets/65999064-803b-4cd3-9b11-08fb45778469" />
-
-Step 3 — click **Open Anyway**:
-
-<img width="700" alt="macOS: click Open Anyway" src="https://github.com/user-attachments/assets/131abfdb-eb96-445e-b1d4-fdb836b9b9a4" />
-
-**Linux (AppImage)** — make it executable first, then run it directly:
-```
-chmod +x SlothArchiver-<version>.AppImage
-./SlothArchiver-<version>.AppImage
-```
-If it fails to launch at all with a FUSE-related error, your distro likely
-needs `libfuse2` installed (common on newer distros that dropped FUSE2 by
-default, e.g. recent Ubuntu/Fedora releases) — install it via your package
-manager and try again.
-
+<img width="800" height="433" alt="more-platforms" src="https://github.com/user-attachments/assets/5e361fba-d0a6-4547-8716-24076ca6e936" />
 
 ## How it works
 
@@ -321,8 +265,59 @@ Raise an issue, but only if you have the proper evidence and description on how 
 #### What features are still in development?
 Check the [Roadmap](ROADMAP.md) for a running list of what's currently being worked on or explored.
 
-### Do you accept contributions?
+#### Do you accept contributions?
 At this moment in time I don't but once I prepare a proper contribution guide and a pipeline and if an actual community forms for this app I might.
+
+## Installing
+
+SlothArchiver's builds aren't code-signed (that requires a paid yearly certificate
+this solo project doesn't have) — so the first time you open one, your OS
+will warn you it's from an unidentified/unrecognized developer. This is
+expected for any unsigned app, not a sign anything's actually wrong.
+Here's how to get past each OS's warning:
+
+**Windows** — you'll see "Windows protected your PC" (SmartScreen). Click
+**More info**, then **Run anyway**.
+
+Step 1 — click **More info**:
+
+<img width="532" height="498" alt="Windows SmartScreen: click More info" src="https://github.com/user-attachments/assets/3b11a6f1-c797-4262-a851-99842ec3f7e4" />
+
+Step 2 — click **Run anyway**:
+
+<img width="532" height="498" alt="Windows SmartScreen: click Run anyway" src="https://github.com/user-attachments/assets/f746e0e6-d41f-4abf-9814-45a3e9cbe66c" />
+
+**macOS** — you'll see a message that the app "cannot be opened because it is
+from an unidentified developer," and just double-clicking won't offer a way
+past it. Instead: right-click (or Control-click) the app → **Open** → confirm
+**Open** in the dialog that appears. You only need to do this once — after
+that, it opens normally.
+
+Step 1 — the Gatekeeper block you'll see on first launch:
+
+<img width="260" alt="macOS: cannot be opened, unidentified developer" src="https://github.com/user-attachments/assets/d06a069a-381b-42ea-ac71-a1a2461e2542" />
+
+If macOS still blocks it, go to **System Settings → Privacy & Security**,
+scroll down to the security section, and click **Open Anyway** next to the
+message about SlothArchiver.
+
+Step 2 — find the security section in **Privacy & Security**:
+
+<img width="652" alt="macOS: Privacy & Security section" src="https://github.com/user-attachments/assets/65999064-803b-4cd3-9b11-08fb45778469" />
+
+Step 3 — click **Open Anyway**:
+
+<img width="700" alt="macOS: click Open Anyway" src="https://github.com/user-attachments/assets/131abfdb-eb96-445e-b1d4-fdb836b9b9a4" />
+
+**Linux (AppImage)** — make it executable first, then run it directly:
+```
+chmod +x SlothArchiver-<version>.AppImage
+./SlothArchiver-<version>.AppImage
+```
+If it fails to launch at all with a FUSE-related error, your distro likely
+needs `libfuse2` installed (common on newer distros that dropped FUSE2 by
+default, e.g. recent Ubuntu/Fedora releases) — install it via your package
+manager and try again.
 
 ## Support the author
 
