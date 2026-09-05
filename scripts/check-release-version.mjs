@@ -8,7 +8,13 @@ const rootDir = path.resolve(__dirname, '..');
 const { version } = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
 const errors = [];
 
-const readme = fs.readFileSync(path.join(rootDir, 'README.md'), 'utf-8');
+// Normalized before matching -- on Windows checkouts (core.autocrlf=true,
+// the default there) these files are CRLF on disk, and a literal \n in the
+// regexes below never matches inside a \r\n pair. Without this, both regex
+// matches below silently fail on every Windows machine regardless of the
+// actual README/CHANGELOG content, which is exactly the bug this comment is
+// here to prevent someone from reintroducing.
+const readme = fs.readFileSync(path.join(rootDir, 'README.md'), 'utf-8').replace(/\r\n/g, '\n');
 const downloadSection = readme.match(/## Download\n([\s\S]*?)\n## /)?.[1];
 if (!downloadSection) {
     errors.push('could not find the "## Download" section in README.md');

@@ -30,12 +30,7 @@ itself.
 
 <!-- Update the version in these 5 links on every release -- currently 0.27.1.
      Each filename must match exactly what GitHub actually named the asset on
-     the release page, NOT the local build's own filename -- GitHub's release
-     upload sanitizes spaces in asset names to dots, so the two Windows .exe
-     files differ from what "npm run dist" produces locally (e.g. the local
-     "SlothArchiver Setup 0.27.1.exe" becomes the asset
-     "SlothArchiver.Setup.0.27.1.exe"). Check the release's actual assets
-     list if unsure, don't assume the local build's naming carries over. -->
+     the release page -->
 
 | Platform | Link |
 |---|---|
