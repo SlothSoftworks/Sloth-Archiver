@@ -28,6 +28,10 @@ const emptyLibraryVideoMetadata: LibraryVideoMetadata = {
 // has no global type declaration (App.tsx sets it dynamically) -- same cast
 // used in App.test.tsx.
 export function getInitialDownloaderVideoInfo() {
+  // SAFETY: window.mockingElectron has no global type declaration (App.tsx
+  // sets it dynamically); the double cast through `unknown` is required
+  // because `Window` doesn't structurally have this property at all.
+  // oxlint-disable-next-line anti-slop/no-chained-type-assertions
   const mocking = (window as unknown as { mockingElectron?: unknown }).mockingElectron;
   return mocking === 'yes' ? videoResponseMock.data.response : null;
 }

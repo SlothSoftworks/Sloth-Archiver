@@ -17,6 +17,8 @@ import type { LibraryClip, LibraryVideoMetadata } from '../../types';
 // Placeholder metadata for LibraryVideoPlayerWithTools -- overrideFilePath
 // takes priority over every field here, this just satisfies the required
 // prop without pretending a clip has a real video identity.
+// SAFETY: overrideFilePath always takes priority over these fields in
+// LibraryVideoPlayerWithTools, so the properties missing here are never read.
 const EMPTY_METADATA = { downloadedFilePath: null, thumbnail: null, videoId: '' } as LibraryVideoMetadata;
 
 function getClipExtension(fileName: string): string {

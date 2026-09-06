@@ -223,11 +223,12 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
     setCheckingFiles(false);
     if (!result.success) return;
     if (result.videoRepaired || result.audioRepaired) {
-      setMetadata((prev) => ({
-        ...prev,
-        ...(result.videoRepaired ? { downloadedFilePath: result.metadata!.downloadedFilePath } : {}),
-        ...(result.audioRepaired ? { downloadedAudioFilePath: result.metadata!.downloadedAudioFilePath } : {}),
-      }));
+      setMetadata((prev) => {
+        const next = { ...prev };
+        if (result.videoRepaired) next.downloadedFilePath = result.metadata!.downloadedFilePath;
+        if (result.audioRepaired) next.downloadedAudioFilePath = result.metadata!.downloadedAudioFilePath;
+        return next;
+      });
       onLibraryChanged();
     }
     const stillMissing = result.videoMissing || result.audioMissing;

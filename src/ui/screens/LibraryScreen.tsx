@@ -99,6 +99,11 @@ const SORT_FIELD_LABELS: Record<SortField, string> = {
   quality: 'Quality',
 };
 
+// SAFETY: SORT_FIELD_LABELS is a Record<SortField, string>, so Object.keys
+// can only return SortField values. Computed once here instead of inline in
+// the Select's render below, which recomputed this same array every render.
+const SORT_FIELD_OPTIONS = Object.keys(SORT_FIELD_LABELS) as SortField[];
+
 // "Date added to library" means when the video was first tracked, not when
 // its latest version happened to be added -- epochs are already newest-first
 // (scanLibrary, library.mjs), so the earliest one is simply the last entry.
@@ -977,9 +982,11 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
                 labelId="library-sort-field-label"
                 label="Order by"
                 value={sortField}
+                // SAFETY: every MenuItem below is keyed by a SortField, so
+                // this Select can only ever emit one of those values.
                 onChange={(e) => setSortField(e.target.value as SortField)}
               >
-                {(Object.keys(SORT_FIELD_LABELS) as SortField[]).map((field) => (
+                {SORT_FIELD_OPTIONS.map((field) => (
                   <MenuItem key={field} value={field}>{SORT_FIELD_LABELS[field]}</MenuItem>
                 ))}
               </Select>

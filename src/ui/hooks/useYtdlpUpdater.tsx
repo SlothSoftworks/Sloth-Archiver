@@ -54,6 +54,8 @@ function useYtdlpUpdaterState() {
 
   useEffect(() => {
     window.electronAPI.onYtdlpUpdateProgress(({ stage, verificationFailure }: { stage: string; verificationFailure?: boolean }) => {
+      // SAFETY: main.mjs's ytdlp:startUpdate handler only ever broadcasts
+      // one of YtdlpUpdateStage's known stage values on this channel.
       setStage(stage as YtdlpUpdateStage);
       if (stage === 'error') setVerificationFailure(!!verificationFailure);
     });
