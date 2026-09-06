@@ -4,16 +4,17 @@ What's being developed right now? These are some of the topic that I'm working o
 
 ## In progress / being explored
 
-- **Playlist mode** — a dynamic player that works across the whole app,
+- **Playlist mode** - a dynamic player that works across the whole app,
   letting you queue up videos and watch them back to back instead of one at
   a time in isolation.
-- **PoToken support** — implementing YouTube's proof-of-origin token flow
+- **PoToken support** - implementing YouTube's proof-of-origin token flow
   to make downloads more resilient against bot-detection failures.
-- **Full yt-dlp site support** — extending downloads beyond the platforms
+- **Full yt-dlp site support** - extending downloads beyond the platforms
   currently supported to, eventually, everything yt-dlp itself supports.
-- **Custom player improvements** — new playback features and general
+- **Custom player improvements** - new playback features and general
   improvements to the app's built-in player.
-- **More Library flexibility** — More options to tag and explore libraries in different partitions so you can save and catalogue your downloads in different library navigation views if you choose.
+- **More Library flexibility** - More options to tag and explore libraries in different partitions so you can save and catalogue your downloads in different library navigation views if you choose.
+- **Expanded library** - Expanding the library function from only youtube to more platforms and adding more flexibility so all your videos can use the built in ffmpeg tools
 
 Got a feature you'd like to see? Check the README's FAQ for how to raise it
 as an issue.
