@@ -20,6 +20,14 @@ export default defineConfig({
     ".roo/**",
     ".windsurf/**",
     "tools/oxlint/anti-slop/**",
+    // Test files are exempt: the overwhelming majority of hits here are
+    // `as SomeMockType` assertions on `window.electronAPI`/vi.mock setups --
+    // the same test-isolation pattern no-module-mocking is already turned
+    // off for below. Requiring a SAFETY: comment on every mock cast (or
+    // rewriting them to avoid a cast at all) would mean auditing every test
+    // file for no real safety benefit, not fixing a real risk.
+    "**/*.test.ts",
+    "**/*.test.tsx",
   ],
   jsPlugins: [
     { name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" },
