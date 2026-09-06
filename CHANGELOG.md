@@ -4,6 +4,25 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [1.0.0] — 2026-09-05
+- **First public release** 🎉🎉🥳🎉🎉
+- **Added a theme selector.** Options now has a "Theme" dropdown alongside
+  the existing Light/Dark toggle: the original plain look ("Default MUI")
+  or a new "SlothUI" theme matching the color scheme from SlothArchiver's
+  own website. SlothUI (dark) is now the default look for a fresh install;
+  existing installs keep whatever they already had.
+- **Cookie handling is clearer and safer.** The warning explains what
+  cookies are actually for (age-restricted or members-only content, not
+  something to leave on for every download) and links to yt-dlp's own
+  cookie usage guide. A new "Save across sessions" checkbox, off by
+  default, controls whether a saved cookie (or cookies-from-browser choice)
+  is kept the next time the app opens or cleared as soon as it closes --
+  so an authenticated session can't accidentally outlive the run that
+  created it. Existing saved cookies are unaffected by this change.
+- **Fixed a bug in the bulk-add queue where a retried download could show
+  a generic "Download failed" message** instead of the actual reason,
+  once an earlier failure on the same item was still being displayed.
+
 ## [0.27.1] — 2026-09-04
 - **Fixed a bug where downloading a very long video could get stuck looping
   forever.** The step that joins the downloaded video and audio together
