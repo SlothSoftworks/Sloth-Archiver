@@ -44,10 +44,10 @@ function useRendererErrorLogging() {
 // ancestor) can pick the actual MUI theme object -- ThemeModeProvider has to
 // wrap this, not live inside it.
 function AppContent() {
-  const { mode } = useThemeMode();
+  const { mode, themeName } = useThemeMode();
 
   return (
-    <ThemeProvider theme={getTheme(mode)}>
+    <ThemeProvider theme={getTheme(mode, themeName)}>
       <CssBaseline />
       <YtdlpUpdaterProvider>
         <LibraryNotificationProvider>

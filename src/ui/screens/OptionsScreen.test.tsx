@@ -10,7 +10,7 @@ beforeEach(() => {
   window.electronAPI = {
     ...window.electronAPI,
     getCookieStatus: vi.fn().mockResolvedValue({ loaded: false, cookieCount: 0 }),
-    getCookiesConfig: vi.fn().mockResolvedValue({ cookiesMode: 'file', cookiesBrowser: '', supportedBrowsers: ['firefox', 'chrome'] }),
+    getCookiesConfig: vi.fn().mockResolvedValue({ cookiesMode: 'file', cookiesBrowser: '', supportedBrowsers: ['firefox', 'chrome'], cookiesPersistAcrossSessions: false }),
     getDownloadDir: vi.fn().mockResolvedValue({ downloadDir: '' }),
     getLibraryDir: vi.fn().mockResolvedValue({ libraryDir: '' }),
     getErrorLogInfo: vi.fn().mockResolvedValue({ exists: false, path: '/log' }),
@@ -22,6 +22,7 @@ beforeEach(() => {
     saveCookie: vi.fn(),
     deleteCookie: vi.fn().mockResolvedValue({ success: true }),
     setCookiesConfig: vi.fn().mockResolvedValue({ success: true, cookiesMode: 'file', cookiesBrowser: '' }),
+    setCookiesPersistAcrossSessions: vi.fn().mockResolvedValue({ success: true, cookiesPersistAcrossSessions: true }),
     openErrorLog: vi.fn(),
     checkForYtdlpUpdate: vi.fn().mockResolvedValue({ current: '2026.7.4', latest: '2026.7.4', updateAvailable: false }),
     startYtdlpUpdate: vi.fn(),
@@ -30,6 +31,8 @@ beforeEach(() => {
     removeYtdlpUpdateProgressListener: vi.fn(),
     getThemeMode: vi.fn().mockResolvedValue({ themeMode: 'light' }),
     setThemeMode: vi.fn().mockResolvedValue({ success: true, themeMode: 'dark' }),
+    getThemeName: vi.fn().mockResolvedValue({ themeName: 'default' }),
+    setThemeName: vi.fn().mockResolvedValue({ success: true, themeName: 'slothui' }),
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
     setMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ success: true, maxSimultaneousDownloads: 1 }),
     getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
@@ -59,6 +62,25 @@ describe('OptionsScreen', () => {
     renderScreen();
     await user.click(screen.getByRole('button', { name: 'Dark' }));
     expect(window.electronAPI.setThemeMode).toHaveBeenCalledWith('dark');
+  });
+
+  it('switching the theme name dropdown persists the new theme', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(screen.getByRole('combobox', { name: 'Theme' }));
+    await user.click(screen.getByRole('option', { name: 'SlothUI' }));
+    expect(window.electronAPI.setThemeName).toHaveBeenCalledWith('slothui');
+  });
+
+  it('defaults the "Save across sessions" checkbox off, and persists it when checked', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    const checkbox = await screen.findByRole('checkbox', { name: 'Save across sessions' });
+    expect(checkbox).not.toBeChecked();
+
+    await user.click(checkbox);
+
+    expect(window.electronAPI.setCookiesPersistAcrossSessions).toHaveBeenCalledWith(true);
   });
 
   it('choosing a download folder persists the picked path and updates the display', async () => {

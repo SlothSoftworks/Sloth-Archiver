@@ -65,6 +65,7 @@ import {
   rememberAppPath,
   makeCookiesArgs,
   reapStaleCookieCopies,
+  getCookiesPersistAcrossSessions,
 } from './main.mjs';
 
 fs.mkdirSync(electronMocks.mockUserDataDir, { recursive: true });
@@ -472,6 +473,29 @@ describe('cookiesArgs', () => {
     resetSettingsAndCookies();
     fs.writeFileSync(settingsPath, JSON.stringify({ cookiesMode: 'browser', cookiesBrowser: 'not-a-real-browser' }));
     expect(cookiesArgs()).toEqual([]);
+  });
+});
+
+describe('getCookiesPersistAcrossSessions', () => {
+  it('respects an explicit true/false setting regardless of whether a cookie file exists', () => {
+    resetSettingsAndCookies();
+    fs.writeFileSync(settingsPath, JSON.stringify({ cookiesPersistAcrossSessions: true }));
+    expect(getCookiesPersistAcrossSessions()).toBe(true);
+
+    fs.writeFileSync(cookiesPath, '# Netscape HTTP Cookie File\n');
+    fs.writeFileSync(settingsPath, JSON.stringify({ cookiesPersistAcrossSessions: false }));
+    expect(getCookiesPersistAcrossSessions()).toBe(false);
+  });
+
+  it('defaults to true (grandfathered in) when no setting exists yet but a cookie file is already saved', () => {
+    resetSettingsAndCookies();
+    fs.writeFileSync(cookiesPath, '# Netscape HTTP Cookie File\n');
+    expect(getCookiesPersistAcrossSessions()).toBe(true);
+  });
+
+  it('defaults to false (the safer default) when no setting exists yet and no cookie file is saved', () => {
+    resetSettingsAndCookies();
+    expect(getCookiesPersistAcrossSessions()).toBe(false);
   });
 });
 
