@@ -129,6 +129,46 @@ export function assertValidHttpUrl(url, label = 'URL') {
 const { readSettings, writeSettings } = createSettingsStore(settingsPath);
 export const cookiesArgs = makeCookiesArgs(readSettings, cookiesPath);
 
+// Whether a saved cookie (the pasted-cookie file, or a cookies-from-browser
+// choice) is allowed to outlive the app instance that saved it. Off means
+// both get wiped at the start and end of every run -- so an authenticated
+// session accidentally left saved can never quietly persist into a later
+// launch, per the actual risk this setting exists for (a user getting into
+// trouble with a platform's ToS over a cookie they forgot was still active).
+//
+// No explicit setting yet (a genuinely first run, or an upgrade from before
+// this existed) defaults to whichever behavior keeps existing users
+// unaffected: true if a cookies.txt is already sitting on disk (they were
+// already relying on it persisting), false otherwise -- a fresh install
+// starts on the safer, session-only default rather than inheriting the old
+// always-persist behavior.
+export function getCookiesPersistAcrossSessions() {
+    const { cookiesPersistAcrossSessions } = readSettings();
+    if (typeof cookiesPersistAcrossSessions === 'boolean') return cookiesPersistAcrossSessions;
+    return fs.existsSync(cookiesPath);
+}
+
+// Called at both startup and shutdown (see app.on('before-quit') below) --
+// covers both "clean up whatever a previous session left behind" and "don't
+// leave anything behind for the next one," since either point alone would
+// miss the other half (a crash skips shutdown; an upgrade skips startup
+// cleanup for a file already written this run).
+function clearSessionOnlyCookiesIfNeeded() {
+    if (getCookiesPersistAcrossSessions()) return;
+    if (fs.existsSync(cookiesPath)) {
+        fs.unlinkSync(cookiesPath);
+    }
+    const settings = readSettings();
+    if (settings.cookiesMode || settings.cookiesBrowser) {
+        settings.cookiesMode = 'file';
+        settings.cookiesBrowser = '';
+        writeSettings(settings);
+    }
+}
+
+clearSessionOnlyCookiesIfNeeded();
+app.on('before-quit', clearSessionOnlyCookiesIfNeeded);
+
 // cookies.txt holds a live, authenticated Google/YouTube session -- fixed up
 // on every startup (not just at write time, see cookies:save below) so an
 // existing file from before this app started restricting permissions gets
@@ -1041,7 +1081,15 @@ ipcMain.handle('cookies:getConfig', async () => {
         cookiesMode: cookiesMode === 'browser' ? 'browser' : 'file',
         cookiesBrowser: cookiesBrowser || '',
         supportedBrowsers: SUPPORTED_COOKIE_BROWSERS,
+        cookiesPersistAcrossSessions: getCookiesPersistAcrossSessions(),
     };
+});
+
+ipcMain.handle('cookies:setPersistAcrossSessions', async (e, persist) => {
+    const settings = readSettings();
+    settings.cookiesPersistAcrossSessions = !!persist;
+    writeSettings(settings);
+    return { success: true, cookiesPersistAcrossSessions: settings.cookiesPersistAcrossSessions };
 });
 
 ipcMain.handle('cookies:setConfig', async (e, { cookiesMode, cookiesBrowser }) => {

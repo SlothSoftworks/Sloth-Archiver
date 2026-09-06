@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getCookieStatus: () => ipcRenderer.invoke('cookies:status'),
     getCookiesConfig: () => ipcRenderer.invoke('cookies:getConfig'),
     setCookiesConfig: (payload) => ipcRenderer.invoke('cookies:setConfig', payload),
+    setCookiesPersistAcrossSessions: (persist) => ipcRenderer.invoke('cookies:setPersistAcrossSessions', persist),
     getDownloadDir: () => ipcRenderer.invoke('settings:getDownloadDir'),
     setDownloadDir: (dir) => ipcRenderer.invoke('settings:setDownloadDir', dir),
     checkFileExists: (filePath) => ipcRenderer.invoke('system:pathExists', filePath),

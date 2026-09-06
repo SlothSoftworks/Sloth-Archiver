@@ -69,8 +69,9 @@ declare global {
             saveCookie: (cookieText: string) => Promise<{ success: boolean; cookieCount: number; skipped: number }>
             deleteCookie: () => Promise<{ success: boolean }>
             getCookieStatus: () => Promise<{ loaded: boolean; cookieCount: number; path?: string; savedAtEpoch?: number }>
-            getCookiesConfig: () => Promise<{ cookiesMode: 'file' | 'browser'; cookiesBrowser: string; supportedBrowsers: string[] }>
+            getCookiesConfig: () => Promise<{ cookiesMode: 'file' | 'browser'; cookiesBrowser: string; supportedBrowsers: string[]; cookiesPersistAcrossSessions: boolean }>
             setCookiesConfig: (payload: { cookiesMode: 'file' | 'browser'; cookiesBrowser: string }) => Promise<{ success: boolean; cookiesMode: 'file' | 'browser'; cookiesBrowser: string }>
+            setCookiesPersistAcrossSessions: (persist: boolean) => Promise<{ success: boolean; cookiesPersistAcrossSessions: boolean }>
             getDownloadDir: () => Promise<{ downloadDir: string }>
             setDownloadDir: (dir: string) => Promise<{ success: boolean; downloadDir: string }>
             checkFileExists: (filePath: string) => Promise<boolean>

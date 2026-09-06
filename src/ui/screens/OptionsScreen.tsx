@@ -1,16 +1,18 @@
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent, type ReactNode } from 'react';
 import {
   Alert,
   Autocomplete,
   Box,
   Button,
   Card,
+  Checkbox,
   Chip,
   Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
   DialogTitle,
+  FormControlLabel,
   Grid,
   IconButton,
   Link,
@@ -120,6 +122,7 @@ export default function OptionsScreen() {
   // IPC bridge method (e.g. setDownloadDirState vs. electronAPI.setDownloadDir).
   const [cookiesMode, setCookiesModeState] = useState<'file' | 'browser'>('file');
   const [cookiesBrowser, setCookiesBrowserState] = useState('');
+  const [cookiesPersistAcrossSessions, setCookiesPersistAcrossSessionsState] = useState(false);
   const [supportedBrowsers, setSupportedBrowsers] = useState<string[]>([]);
   const [browserSavedMessage, setBrowserSavedMessage] = useState('');
   const [downloadDir, setDownloadDirState] = useState('');
@@ -142,6 +145,13 @@ export default function OptionsScreen() {
     setCookiesModeState(config.cookiesMode);
     setCookiesBrowserState(config.cookiesBrowser);
     setSupportedBrowsers(config.supportedBrowsers);
+    setCookiesPersistAcrossSessionsState(config.cookiesPersistAcrossSessions);
+  };
+
+  const handlePersistAcrossSessionsChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const persist = e.target.checked;
+    setCookiesPersistAcrossSessionsState(persist);
+    await window.electronAPI.setCookiesPersistAcrossSessions(persist);
   };
 
   const refreshDownloadDir = async () => {
@@ -520,19 +530,36 @@ export default function OptionsScreen() {
               you're not a bot" error at you.
             </Typography>
             <Alert severity="warning" variant="outlined" sx={{ mb: 2 }}>
-              This authenticates as your real account, so using it at a high volume can get that
-              account flagged or suspended -- this applies whether you paste a cookie or pull
-              live from a browser below. Use it in moderation, and consider a throwaway account's
-              cookies instead of your main one if you expect to be downloading a lot. This matches
+              This is meant for videos that actually need it -- age-restricted content or
+              members-only uploads -- not as something to leave on for every download. It
+              authenticates as your real account, so high-volume use, whether from a pasted
+              cookie or pulled live from a browser below, risks that account getting flagged or
+              suspended. For more information, see
               {' '}
               <Link
                 target="_blank"
                 rel="noopener noreferrer"
                 href="https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies"
               >
-                yt-dlp's own recommended cookie usage
+                yt-dlp's own cookie usage guide
               </Link>.
             </Alert>
+            <FormControlLabel
+              sx={{ mb: 1, display: 'block' }}
+              control={
+                <Checkbox
+                  size="small"
+                  checked={cookiesPersistAcrossSessions}
+                  onChange={handlePersistAcrossSessionsChange}
+                />
+              }
+              label="Save across sessions"
+            />
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2, mt: -1 }}>
+              {cookiesPersistAcrossSessions
+                ? 'The saved cookie (or browser selection) will still be here the next time you open the app.'
+                : "Off by default -- the saved cookie (and browser selection) is cleared as soon as the app closes, so it can't be accidentally left active for next time."}
+            </Typography>
             <ToggleButtonGroup
               value={cookiesMode}
               exclusive
