@@ -47,6 +47,19 @@ export function clampLibrarySortDirection(value) {
     return value === 'desc' ? 'desc' : 'asc';
 }
 
+// The overall theme (color palette/typography), independent of light/dark
+// mode -- 'default' is this app's original plain-MUI look, 'slothui' is the
+// palette pulled from SlothArchiver-info's landing page (see theme.ts).
+export const THEME_NAMES = ['default', 'slothui'];
+// SlothUI is the default for a fresh install -- 'default' (plain MUI) is
+// still fully supported and one toggle away, just no longer what a new user
+// sees before ever touching Options.
+export const THEME_NAME_DEFAULT = 'slothui';
+
+export function clampThemeName(value) {
+    return THEME_NAMES.includes(value) ? value : THEME_NAME_DEFAULT;
+}
+
 // Bounds for the Library tab's thumbnail-size slider (LibraryBottomBar.tsx).
 // 160px floor keeps a video card's title/quality-chip row from wrapping
 // awkwardly; 360px ceiling still fits 2+ columns at typical content widths.

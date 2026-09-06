@@ -30,6 +30,8 @@ beforeEach(() => {
     removeYtdlpUpdateProgressListener: vi.fn(),
     getThemeMode: vi.fn().mockResolvedValue({ themeMode: 'light' }),
     setThemeMode: vi.fn().mockResolvedValue({ success: true, themeMode: 'dark' }),
+    getThemeName: vi.fn().mockResolvedValue({ themeName: 'default' }),
+    setThemeName: vi.fn().mockResolvedValue({ success: true, themeName: 'slothui' }),
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
     setMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ success: true, maxSimultaneousDownloads: 1 }),
     getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
@@ -59,6 +61,14 @@ describe('OptionsScreen', () => {
     renderScreen();
     await user.click(screen.getByRole('button', { name: 'Dark' }));
     expect(window.electronAPI.setThemeMode).toHaveBeenCalledWith('dark');
+  });
+
+  it('switching the theme name dropdown persists the new theme', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(screen.getByRole('combobox', { name: 'Theme' }));
+    await user.click(screen.getByRole('option', { name: 'SlothUI' }));
+    expect(window.electronAPI.setThemeName).toHaveBeenCalledWith('slothui');
   });
 
   it('choosing a download folder persists the picked path and updates the display', async () => {

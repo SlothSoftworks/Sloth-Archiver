@@ -97,6 +97,8 @@ declare global {
             setLibrarySort: (payload: { sortField: LibrarySortField; sortDirection: LibrarySortDirection }) => Promise<{ success: boolean; sortField: LibrarySortField; sortDirection: LibrarySortDirection }>
             getThemeMode: () => Promise<{ themeMode: 'light' | 'dark' }>
             setThemeMode: (mode: 'light' | 'dark') => Promise<{ success: boolean; themeMode: 'light' | 'dark' }>
+            getThemeName: () => Promise<{ themeName: 'default' | 'slothui' }>
+            setThemeName: (name: 'default' | 'slothui') => Promise<{ success: boolean; themeName: 'default' | 'slothui' }>
             getCustomConvertFormats: () => Promise<{ customConvertFormats: string[] }>
             setCustomConvertFormats: (formats: string[]) => Promise<{ success: boolean; customConvertFormats: string[] }>
             getMaxSimultaneousDownloads: () => Promise<{ maxSimultaneousDownloads: number }>

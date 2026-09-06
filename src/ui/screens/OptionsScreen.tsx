@@ -97,7 +97,7 @@ export default function OptionsScreen() {
   // (YtdlpUpdateDialog, mounted once at MainPage level) regardless of which
   // tab triggered it -- this screen only needs to check/kick off the update.
   const { currentVersion, latestVersion, updateAvailable, checking, checkError, stage, checkForUpdate, startUpdate } = useYtdlpUpdater();
-  const { mode: themeMode, setMode: setThemeMode } = useThemeMode();
+  const { mode: themeMode, setMode: setThemeMode, themeName, setThemeName } = useThemeMode();
   const isUpdating = IN_PROGRESS_STAGES.has(stage);
   const [cookieLoaded, setCookieLoaded] = useState(false);
   const [cookieCount, setCookieCount] = useState(0);
@@ -269,6 +269,10 @@ export default function OptionsScreen() {
     setThemeMode(mode);
   };
 
+  const handleThemeNameChange = (name: 'default' | 'slothui') => {
+    setThemeName(name);
+  };
+
   // Switching to 'browser' mode alone doesn't need a browser picked yet --
   // only persisted once cookiesBrowser is also set, by handleSelectBrowser
   // below. Switching back to 'file' saves immediately.
@@ -429,15 +433,31 @@ export default function OptionsScreen() {
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Choose the app's color theme. Saved between sessions.
             </Typography>
-            <ToggleButtonGroup
-              value={themeMode}
-              exclusive
-              onChange={handleThemeModeChange}
-              size="small"
-            >
-              <ToggleButton value="light">Light</ToggleButton>
-              <ToggleButton value="dark">Dark</ToggleButton>
-            </ToggleButtonGroup>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
+              <TextField
+                select
+                label="Theme"
+                size="small"
+                value={themeName}
+                // SAFETY: this TextField's only children are the two
+                // MenuItems below (values "default"/"slothui"), so the
+                // native select's value can only ever be one of those two.
+                onChange={(e) => handleThemeNameChange(e.target.value as 'default' | 'slothui')}
+                sx={{ minWidth: 140 }}
+              >
+                <MenuItem value="default">Default MUI</MenuItem>
+                <MenuItem value="slothui">SlothUI</MenuItem>
+              </TextField>
+              <ToggleButtonGroup
+                value={themeMode}
+                exclusive
+                onChange={handleThemeModeChange}
+                size="small"
+              >
+                <ToggleButton value="light">Light</ToggleButton>
+                <ToggleButton value="dark">Dark</ToggleButton>
+              </ToggleButtonGroup>
+            </Stack>
           </Grid>
 
           <Grid size={{ xs: 12, sm: 6 }} sx={dividerLeftOnSmTopOnXs}>

@@ -11,7 +11,7 @@ import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs'
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
 import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
-import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection } from './settings.mjs';
+import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampThemeName } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
@@ -494,7 +494,11 @@ ipcMain.handle('settings:setLibrarySort', async (e, { sortField, sortDirection }
 
 ipcMain.handle('settings:getThemeMode', async () => {
     const { themeMode } = readSettings();
-    return { themeMode: themeMode === 'dark' ? 'dark' : 'light' };
+    // Dark is the default for a fresh install (paired with SlothUI as the
+    // default theme name, see THEME_NAME_DEFAULT) -- only an explicit
+    // 'light' choice overrides it, so this checks for 'light' rather than
+    // defaulting to it.
+    return { themeMode: themeMode === 'light' ? 'light' : 'dark' };
 });
 
 ipcMain.handle('settings:setThemeMode', async (e, mode) => {
@@ -502,6 +506,18 @@ ipcMain.handle('settings:setThemeMode', async (e, mode) => {
     settings.themeMode = mode === 'dark' ? 'dark' : 'light';
     writeSettings(settings);
     return { success: true, themeMode: settings.themeMode };
+});
+
+ipcMain.handle('settings:getThemeName', async () => {
+    const { themeName } = readSettings();
+    return { themeName: clampThemeName(themeName) };
+});
+
+ipcMain.handle('settings:setThemeName', async (e, name) => {
+    const settings = readSettings();
+    settings.themeName = clampThemeName(name);
+    writeSettings(settings);
+    return { success: true, themeName: settings.themeName };
 });
 
 ipcMain.handle('settings:getMaxSimultaneousDownloads', async () => {

@@ -44,6 +44,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setLibrarySort: (payload) => ipcRenderer.invoke('settings:setLibrarySort', payload),
     getThemeMode: () => ipcRenderer.invoke('settings:getThemeMode'),
     setThemeMode: (mode) => ipcRenderer.invoke('settings:setThemeMode', mode),
+    getThemeName: () => ipcRenderer.invoke('settings:getThemeName'),
+    setThemeName: (name) => ipcRenderer.invoke('settings:setThemeName', name),
     getCustomConvertFormats: () => ipcRenderer.invoke('settings:getCustomConvertFormats'),
     setCustomConvertFormats: (formats) => ipcRenderer.invoke('settings:setCustomConvertFormats', formats),
     getMaxSimultaneousDownloads: () => ipcRenderer.invoke('settings:getMaxSimultaneousDownloads'),
