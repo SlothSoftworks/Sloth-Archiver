@@ -98,12 +98,20 @@ export function jsRuntimeArgs() {
     return ['--js-runtimes', `node:${process.execPath}`];
 }
 
-// Every yt-dlp child process needs this env so that the Electron-binary-as-
-// node trick above actually works -- yt-dlp spawns process.execPath itself
-// as a nested child, which inherits whatever env yt-dlp was spawned with.
-// Harmless for yt-dlp's own (Python) process, which never checks this var.
+// Curated, not a full process.env copy -- the nsig-solving runtime
+// (jsRuntimeArgs above) inherits this too, and Node's --permission sandbox
+// doesn't gate env access, so a compromised solver script could otherwise
+// read any secret a user's shell happens to have exported. HOME/
+// USERPROFILE/APPDATA/LOCALAPPDATA are kept because --cookies-from-browser
+// (cookies.mjs) needs them to locate a browser's profile directory.
+const YTDLP_ENV_ALLOWLIST = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PATH', 'TEMP', 'TMP', 'TMPDIR'];
+
 export function ytdlpSpawnEnv() {
-    return { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+    const env = { ELECTRON_RUN_AS_NODE: '1' };
+    for (const key of YTDLP_ENV_ALLOWLIST) {
+        if (process.env[key] !== undefined) env[key] = process.env[key];
+    }
+    return env;
 }
 
 // Defense-in-depth for every IPC handler that hands a caller-supplied URL to
