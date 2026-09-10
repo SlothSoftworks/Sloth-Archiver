@@ -47,7 +47,7 @@ import BulkDeleteConfirmDialog from '../components/BulkDeleteConfirmDialog';
 import CreateSubLibraryDialog from '../components/CreateSubLibraryDialog';
 import MoveToSubLibraryDialog from '../components/MoveToSubLibraryDialog';
 import TagSelectedDialog from '../components/TagSelectedDialog';
-import TagFilterPopover from '../components/TagFilterPopover';
+import TagFilterPopover, { type SystemFilterKey } from '../components/TagFilterPopover';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
 import type { LibraryVideoMetadata } from '../../types';
@@ -698,6 +698,8 @@ export default function LibraryScreen() {
           canDeleteLocalFiles={playlistBulkBar.canDeleteLocalFiles}
           onDeleteLocalFiles={playlistBulkBar.onDeleteLocalFiles}
           onDeleteFromLibrary={playlistBulkBar.onDeleteFromLibrary}
+          canTag={playlistBulkBar.canTag}
+          onTagSelected={playlistBulkBar.onTagSelected}
         />}
       <CreateSubLibraryDialog
         open={createTagDialogOpen}
@@ -942,6 +944,7 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
   // must carry all of them to match.
   const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(null);
   const [selectedFilterTags, setSelectedFilterTags] = useState<Set<string>>(new Set());
+  const [selectedSystemFilters, setSelectedSystemFilters] = useState<Set<SystemFilterKey>>(new Set());
   const toggleFilterTag = (tag: string, checked: boolean) => {
     setSelectedFilterTags((prev) => {
       const next = new Set(prev);
@@ -950,10 +953,20 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
       return next;
     });
   };
-  const tagFilteredVideos = useMemo(() => {
-    if (selectedFilterTags.size === 0) return flatVideos;
-    return flatVideos.filter(({ video }) => [...selectedFilterTags].every((tag) => videoTags[tag]?.includes(video.metadata.videoId)));
-  }, [flatVideos, selectedFilterTags, videoTags]);
+  const toggleSystemFilter = (key: SystemFilterKey, checked: boolean) => {
+    setSelectedSystemFilters((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  };
+  const tagFilteredVideos = useMemo(() => flatVideos.filter(({ video }) => {
+    if (selectedSystemFilters.has('downloaded') && getBestDownloadedQuality(video.epochs) === null) return false;
+    if (selectedSystemFilters.has('notDownloaded') && getBestDownloadedQuality(video.epochs) !== null) return false;
+    if (selectedFilterTags.size > 0 && ![...selectedFilterTags].every((tag) => videoTags[tag]?.includes(video.metadata.videoId))) return false;
+    return true;
+  }), [flatVideos, selectedFilterTags, selectedSystemFilters, videoTags]);
 
   const { query, setQuery, isSearching, filtered, clear } = useLibrarySearch(
     tagFilteredVideos,
@@ -989,9 +1002,9 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
               size="small"
               onClick={(e) => setFilterAnchorEl(e.currentTarget)}
               aria-label="Filter by tag"
-              color={selectedFilterTags.size > 0 ? 'primary' : 'default'}
+              color={(selectedFilterTags.size > 0 || selectedSystemFilters.size > 0) ? 'primary' : 'default'}
             >
-              <Badge badgeContent={selectedFilterTags.size} color="primary">
+              <Badge badgeContent={selectedFilterTags.size + selectedSystemFilters.size} color="primary">
                 <FilterListIcon fontSize="small" />
               </Badge>
             </IconButton>
@@ -1045,7 +1058,7 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
         </Typography>
       ) : filtered.length === 0 && (
         <Typography variant="body2" color="text.secondary">
-          {isSearching ? `No videos match "${query}".` : 'No videos match the selected tag filter.'}
+          {isSearching ? `No videos match "${query}".` : 'No videos match the selected filter.'}
         </Typography>
       )}
       <TagFilterPopover
@@ -1055,7 +1068,9 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
         allTags={Object.keys(videoTags)}
         selectedTags={selectedFilterTags}
         onToggle={toggleFilterTag}
-        onClear={() => setSelectedFilterTags(new Set())}
+        selectedSystemFilters={selectedSystemFilters}
+        onToggleSystemFilter={toggleSystemFilter}
+        onClear={() => { setSelectedFilterTags(new Set()); setSelectedSystemFilters(new Set()); }}
       />
       <Box sx={{ display: 'grid', gridTemplateColumns: thumbnailGridTemplateColumns(thumbnailSize), gap: 2 }}>
         {filtered.map(({ video, channelName }) => (
