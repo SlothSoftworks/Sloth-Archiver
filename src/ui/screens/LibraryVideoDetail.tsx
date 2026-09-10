@@ -657,6 +657,14 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   };
 
   const isAudioActionActive = downloadTarget === 'audio' && !!selectedResolution && !isError;
+  // downloadTarget stays whatever the most recent startDownload call set it
+  // to (only the next call changes it), so these correctly attribute a
+  // shared isError to the flow that actually caused it -- video/swap and
+  // audio downloads share this one useDownloadVideo() instance, so without
+  // this split an audio download failure would also flash an unrelated
+  // "Download failed" on the video ResolutionPicker (and vice versa).
+  const isAudioError = downloadTarget === 'audio' && isError;
+  const isVideoError = downloadTarget === 'video' && isError;
   const isDownloading = downloadTarget === 'video' && !!selectedResolution && !isError && !metadata.downloadedFilePath && !swappingQuality;
   const isSwapDownloading = downloadTarget === 'video' && !!selectedResolution && !isError && swappingQuality;
   // Derived from the two flags above, not a standalone check, so it clears
@@ -832,7 +840,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 selectedFormat={selectedFormat}
                 onFormatChange={setSelectedFormat}
                 selectedResolution={selectedResolution}
-                isError={isError}
+                isError={isVideoError}
                 downloadErrorKind={downloadErrorKind}
                 downloadStatus={downloadStatus}
                 downloadProgress={downloadProgress}
@@ -845,6 +853,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
                 onDownload={handleDownload}
                 onSwapDownload={handleSwapDownload}
                 isAudioActionActive={isAudioActionActive}
+                isAudioError={isAudioError}
                 onOpenFileLocation={handleOpenFileLocation}
                 onOpenExternally={handleOpenExternally}
                 cacheBustKey={cacheBustKey}

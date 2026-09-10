@@ -190,6 +190,22 @@ describe('LibraryVideoDetail', () => {
     expect(window.electronAPI.openFileInDirectory).toHaveBeenCalledWith('/lib/Channel A/vidA/100/video.mp4');
   });
 
+  it('shows an error on the video quality picker when a video download fails, without bleeding into the audio section', async () => {
+    const video = makeVideo();
+    renderDetail(video);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: /720p/ }));
+    emit({ type: 'error', payload: { message: 'network gone', kind: 'network' } as unknown as DownloadProgressMessage['payload'] });
+
+    expect(await screen.findByText('Download failed -- try again.')).toBeInTheDocument();
+    // Only the video picker's message -- the Audio section's "Download
+    // MP3" button stays untouched, since this error belongs to the video
+    // flow, not audio.
+    expect(screen.getAllByText('Download failed -- try again.')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /Download MP3/ })).toBeInTheDocument();
+  });
+
   it('runs the quality-swap flow, excluding the currently-downloaded resolution', async () => {
     const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '480', downloadedFormat: 'dflt' });
     (window.electronAPI.swapLibraryDownload as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -246,6 +262,50 @@ describe('LibraryVideoDetail', () => {
     }));
 
     expect(await screen.findByRole('button', { name: 'Open audio file location' })).toBeInTheDocument();
+  });
+
+  it('shows an error message when an MP3 download fails, and clears it on retry', async () => {
+    const video = makeVideo();
+    renderDetail(video);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: /Download MP3/ }));
+    emit({ type: 'error', payload: { message: 'network gone', kind: 'network' } as unknown as DownloadProgressMessage['payload'] });
+
+    expect(await screen.findByText('Download failed -- try again.')).toBeInTheDocument();
+    // The download button itself stays reachable so the user can retry --
+    // it doesn't get replaced or hidden by the error.
+    expect(screen.getByRole('button', { name: /Download MP3/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Download MP3/ }));
+    expect(screen.queryByText('Download failed -- try again.')).not.toBeInTheDocument();
+  });
+
+  it('shows a distinct "Cancelled" message when an MP3 download is cancelled', async () => {
+    const video = makeVideo();
+    renderDetail(video);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: /Download MP3/ }));
+    emit({ type: 'error', payload: { message: 'Cancelled.', kind: 'cancelled' } as unknown as DownloadProgressMessage['payload'] });
+
+    expect(await screen.findByText('Cancelled.')).toBeInTheDocument();
+    expect(screen.queryByText('Download failed -- try again.')).not.toBeInTheDocument();
+  });
+
+  it('does not show the audio error on the video quality picker, and vice versa', async () => {
+    const video = makeVideo();
+    renderDetail(video);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: /Download MP3/ }));
+    emit({ type: 'error', payload: { message: 'network gone', kind: 'network' } as unknown as DownloadProgressMessage['payload'] });
+
+    expect(await screen.findByText('Download failed -- try again.')).toBeInTheDocument();
+    // Only one "Download failed" message should be showing (the audio
+    // one) -- the shared video ResolutionPicker must stay quiet, since this
+    // error belongs to the audio flow, not a video/swap download.
+    expect(screen.getAllByText('Download failed -- try again.')).toHaveLength(1);
   });
 
   it('re-downloads the MP3 through the swap path when one already exists', async () => {
