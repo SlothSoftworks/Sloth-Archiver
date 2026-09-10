@@ -223,3 +223,112 @@ describe('PlaylistsSection bulk select', () => {
     expect(onBulkBarUpdate).toHaveBeenLastCalledWith(null);
   });
 });
+
+describe('PlaylistsSection select all', () => {
+  it('starts unchecked, and checking it selects every selectable entry', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
+      }),
+    });
+    const onBulkBarUpdate = vi.fn();
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={onBulkBarUpdate} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByRole('checkbox', { name: 'Select Alpha Video' });
+
+    const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+    expect(selectAll).not.toBeChecked();
+
+    await user.click(selectAll);
+
+    expect(screen.getByRole('checkbox', { name: 'Select Alpha Video' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Select Gamma Video' })).toBeChecked();
+    expect(selectAll).toBeChecked();
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ selectedCount: 2 }),
+    ));
+  });
+
+  it('shows indeterminate once some but not all selectable entries are selected individually, then checked once all are', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
+      }),
+    });
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByRole('checkbox', { name: 'Select Alpha Video' });
+
+    const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+    await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+
+    // MUI's Checkbox never sets the native `input.indeterminate` IDL
+    // property -- it only reflects the indeterminate prop via
+    // `aria-checked="mixed"` (plus a `data-indeterminate` attribute used
+    // purely for styling). Assert on the a11y state, not the DOM property.
+    expect(selectAll).toHaveAttribute('aria-checked', 'mixed');
+    expect(selectAll).not.toBeChecked();
+
+    await user.click(screen.getByRole('checkbox', { name: 'Select Gamma Video' }));
+
+    expect(selectAll).not.toHaveAttribute('aria-checked', 'mixed');
+    expect(selectAll).toBeChecked();
+  });
+
+  it('unchecking "Select all" clears the whole selection', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
+      }),
+    });
+    const onBulkBarUpdate = vi.fn();
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={onBulkBarUpdate} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByRole('checkbox', { name: 'Select Alpha Video' });
+
+    const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+    await user.click(selectAll);
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ selectedCount: 2 }),
+    ));
+
+    await user.click(selectAll);
+
+    expect(screen.getByRole('checkbox', { name: 'Select Alpha Video' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Select Gamma Video' })).not.toBeChecked();
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ selectedCount: 0 }),
+    ));
+  });
+
+  it('excludes unavailable entries from "select all"', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidB', title: 'Beta Video', unavailable: true })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidB: null },
+      }),
+    });
+    const onBulkBarUpdate = vi.fn();
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={onBulkBarUpdate} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByRole('checkbox', { name: 'Select Alpha Video' });
+
+    const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+    await user.click(selectAll);
+
+    expect(screen.getByRole('checkbox', { name: 'Select Alpha Video' })).toBeChecked();
+    expect(screen.queryByRole('checkbox', { name: 'Select Beta Video' })).not.toBeInTheDocument();
+    // Only the one selectable entry counted -- an unavailable entry never
+    // enters the selection even though it's nominally "visible".
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ selectedCount: 1 }),
+    ));
+  });
+});

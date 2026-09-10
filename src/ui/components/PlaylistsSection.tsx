@@ -119,6 +119,8 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
   // already-in-library and not-yet-added ones.
   const selectableEntries = (selectedPlaylist?.entries || []).filter((e) => !e.unavailable);
   const selectedEntries = selectableEntries.filter((e) => selectedVideoIds.has(e.videoId));
+  const allVisibleSelected = selectableEntries.length > 0 && selectableEntries.every((e) => selectedVideoIds.has(e.videoId));
+  const someVisibleSelected = selectableEntries.some((e) => selectedVideoIds.has(e.videoId));
   // An in-library entry's downloaded quality comes from its own epochs; a
   // not-yet-added entry (no videoDir) has nothing downloaded by definition.
   // Backs both the bulk-download gating below and each row's quality chip.
@@ -423,6 +425,26 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
             <CircularProgress size={28} />
           </Box>
         ) : (
+          <>
+            {selectableEntries.length > 0 &&
+              <Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={0.5}>
+                <Typography variant="body2" color="text.secondary">Select all</Typography>
+                {/* Bare Checkbox in the same fixed-size Box used per-row below
+                    (not FormControlLabel, whose built-in margins would throw
+                    off the alignment) so this checkbox sits in the exact same
+                    column as the per-row ones. */}
+                <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Checkbox
+                    size="small"
+                    checked={allVisibleSelected}
+                    indeterminate={someVisibleSelected && !allVisibleSelected}
+                    onChange={() => setSelectedVideoIds(allVisibleSelected ? new Set() : new Set(selectableEntries.map((e) => e.videoId)))}
+                    inputProps={{ 'aria-label': 'Select all' }}
+                  />
+                </Box>
+                {/* Empty slot mirroring each row's "go to library" button slot below. */}
+                <Box sx={{ width: 34, height: 34 }} />
+              </Stack>}
           <List dense>
             {selectedPlaylist?.entries.map((entry) => {
               const videoDir = selectedPlaylist.localFiles[entry.videoId];
@@ -432,19 +454,27 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
                   key={entry.videoId}
                   secondaryAction={
                     <Stack direction="row" alignItems="center" spacing={0.5}>
-                      {!entry.unavailable &&
-                        <Checkbox
-                          size="small"
-                          checked={selectedVideoIds.has(entry.videoId)}
-                          onChange={() => toggleVideoSelected(entry.videoId)}
-                          inputProps={{ 'aria-label': `Select ${entry.title || entry.videoId}` }}
-                        />}
-                      {videoDir &&
-                        <Tooltip title="Go to library">
-                          <IconButton size="small" component={RouterLink} to={`/library/video/${entry.videoId}`} aria-label="Go to library">
-                            <OpenInNewIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>}
+                      {/* Both slots are always rendered (blank when not
+                          applicable) so the checkbox column stays aligned
+                          across rows regardless of whether an entry is
+                          unavailable or lacks a library link. */}
+                      <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {!entry.unavailable &&
+                          <Checkbox
+                            size="small"
+                            checked={selectedVideoIds.has(entry.videoId)}
+                            onChange={() => toggleVideoSelected(entry.videoId)}
+                            inputProps={{ 'aria-label': `Select ${entry.title || entry.videoId}` }}
+                          />}
+                      </Box>
+                      <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {videoDir &&
+                          <Tooltip title="Go to library">
+                            <IconButton size="small" component={RouterLink} to={`/library/video/${entry.videoId}`} aria-label="Go to library">
+                              <OpenInNewIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>}
+                      </Box>
                     </Stack>
                   }
                 >
@@ -477,6 +507,7 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
               );
             })}
           </List>
+          </>
         )}
 
         <Snackbar

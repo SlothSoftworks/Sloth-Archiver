@@ -12,6 +12,7 @@ import {
   Chip,
   CircularProgress,
   FormControl,
+  FormControlLabel,
   IconButton,
   InputLabel,
   MenuItem,
@@ -588,6 +589,7 @@ export default function LibraryScreen() {
       thumbnailSize={thumbnailSize}
       selectedVideoDirs={selectedVideoDirs}
       onToggleSelect={toggleVideoSelected}
+      onSelectAll={(dirs) => setSelectedVideoDirs(new Set(dirs))}
       onBack={() => { setSelectedChannel(null); clearSelection(); }}
       onSelectVideo={setSelectedVideo}
       onChannelsUpdated={handleChannelsUpdated}
@@ -601,6 +603,7 @@ export default function LibraryScreen() {
       thumbnailSize={thumbnailSize}
       selectedVideoDirs={selectedVideoDirs}
       onToggleSelect={toggleVideoSelected}
+      onSelectAll={(dirs) => setSelectedVideoDirs(new Set(dirs))}
       onViewModeChange={handleViewModeChange}
       onSelectVideo={setSelectedVideo}
       onRefresh={handleRefresh}
@@ -882,13 +885,19 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
   );
 }
 
-function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selectedVideoDirs, onToggleSelect, onViewModeChange, onSelectVideo, onRefresh, videoTags }: {
+function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selectedVideoDirs, onToggleSelect, onSelectAll, onViewModeChange, onSelectVideo, onRefresh, videoTags }: {
   channels: LibraryChannel[];
   openFolderDir: string;
   viewMode: LibraryViewMode;
   thumbnailSize: number;
   selectedVideoDirs: Set<string>;
   onToggleSelect: (videoDir: string) => void;
+  // Replaces the whole selection at once with exactly the given videoDirs
+  // -- unlike onToggleSelect, which only ever adds/removes one item. Used
+  // by the "Select all" checkbox below to select exactly what's currently
+  // visible (search + tag filter applied), not a union with whatever was
+  // selected before.
+  onSelectAll: (videoDirs: string[]) => void;
   onViewModeChange: (mode: LibraryViewMode) => void;
   onSelectVideo: (video: LibraryVideo) => void;
   onRefresh: () => void;
@@ -951,12 +960,28 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
     ({ video }) => video.metadata.title || video.videoFolderName,
   );
 
+  // "All"/"some" are both scoped to filtered -- exactly what's currently
+  // visible, after search + tag filter -- not the full unfiltered library.
+  const allVisibleSelected = filtered.length > 0 && filtered.every(({ video }) => selectedVideoDirs.has(video.videoDir));
+  const someVisibleSelected = filtered.some(({ video }) => selectedVideoDirs.has(video.videoDir));
+
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }} flexWrap="wrap" useFlexGap gap={1}>
         <Stack direction="row" spacing={2} alignItems="center">
           <Typography variant="h6">Library</Typography>
           <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
+          <FormControlLabel
+            control={
+              <Checkbox
+                size="small"
+                checked={allVisibleSelected}
+                indeterminate={someVisibleSelected && !allVisibleSelected}
+                onChange={() => onSelectAll(allVisibleSelected ? [] : filtered.map(({ video }) => video.videoDir))}
+              />
+            }
+            label="Select all"
+          />
         </Stack>
         <Stack direction="row" spacing={1} alignItems="center">
           <Tooltip title="Filter by tag">
@@ -1111,11 +1136,14 @@ function ChannelList({ channels, openFolderDir, viewMode, onViewModeChange, onSe
   );
 }
 
-function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, onBack, onSelectVideo, onChannelsUpdated, videoTags }: {
+function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, onSelectAll, onBack, onSelectVideo, onChannelsUpdated, videoTags }: {
   channel: LibraryChannel;
   thumbnailSize: number;
   selectedVideoDirs: Set<string>;
   onToggleSelect: (videoDir: string) => void;
+  // Same "replace the whole selection with exactly what's visible" contract
+  // as FlatVideoList's own onSelectAll.
+  onSelectAll: (videoDirs: string[]) => void;
   onBack: () => void;
   onSelectVideo: (video: LibraryVideo) => void;
   onChannelsUpdated: (channels: LibraryChannel[]) => void;
@@ -1127,6 +1155,8 @@ function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, 
     channel.videos,
     (video) => video.metadata.title || video.videoFolderName,
   );
+  const allVisibleSelected = filtered.length > 0 && filtered.every((video) => selectedVideoDirs.has(video.videoDir));
+  const someVisibleSelected = filtered.some((video) => selectedVideoDirs.has(video.videoDir));
 
   const handleRefreshIcon = async () => {
     setRefreshingIcon(true);
@@ -1155,6 +1185,17 @@ function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, 
         </Stack>
         <Stack direction="row" spacing={1} alignItems="center">
           <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
+          <FormControlLabel
+            control={
+              <Checkbox
+                size="small"
+                checked={allVisibleSelected}
+                indeterminate={someVisibleSelected && !allVisibleSelected}
+                onChange={() => onSelectAll(allVisibleSelected ? [] : filtered.map((video) => video.videoDir))}
+              />
+            }
+            label="Select all"
+          />
           <Tooltip title="Refresh channel icon">
             <span>
               <IconButton onClick={handleRefreshIcon} disabled={refreshingIcon} size="small" aria-label="Refresh channel icon">
