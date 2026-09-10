@@ -341,8 +341,11 @@ describe('assertValidHttpUrl', () => {
 });
 
 describe('jsRuntimeArgs', () => {
-  it('points yt-dlp at the running Electron binary via the node provider', () => {
-    expect(jsRuntimeArgs()).toEqual(['--js-runtimes', `node:${process.execPath}`]);
+  it('points yt-dlp at the bundled Deno binary via the deno provider', () => {
+    const [flag, value] = jsRuntimeArgs();
+    expect(flag).toBe('--js-runtimes');
+    expect(value.startsWith('deno:')).toBe(true);
+    expect(value.endsWith(process.platform === 'win32' ? 'deno.exe' : 'deno')).toBe(true);
   });
 });
 
@@ -351,8 +354,8 @@ describe('ytdlpSpawnEnv', () => {
     vi.unstubAllEnvs();
   });
 
-  it('always sets ELECTRON_RUN_AS_NODE, regardless of what is in process.env', () => {
-    expect(ytdlpSpawnEnv().ELECTRON_RUN_AS_NODE).toBe('1');
+  it('does not set ELECTRON_RUN_AS_NODE -- that was only ever needed for the Electron-as-node runtime, not Deno', () => {
+    expect(ytdlpSpawnEnv().ELECTRON_RUN_AS_NODE).toBeUndefined();
   });
 
   it('does not leak arbitrary secrets from process.env through to the spawned env', () => {

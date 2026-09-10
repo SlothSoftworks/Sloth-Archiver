@@ -59,6 +59,14 @@ const ffprobeBinaryName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprob
 const ffmpegBinaryPath = path.join(ffmpegDir, ffmpegBinaryName);
 const ffprobeBinaryPath = path.join(ffmpegDir, ffprobeBinaryName);
 
+// Bundled the same way as ffmpeg/ffprobe above (read directly from
+// extraResources, no userData relocation -- there's no Deno self-updater
+// the way yt-dlp has one, so nothing ever needs to overwrite this at
+// runtime). See jsRuntimeArgs below for why this is bundled at all.
+const denoDir = isDev ? path.resolve(__dirname, '../deno') : path.join(process.resourcesPath, 'deno');
+const denoBinaryName = process.platform === 'win32' ? 'deno.exe' : 'deno';
+const denoBinaryPath = path.join(denoDir, denoBinaryName);
+
 // extraResources (Contents/Resources on mac, the resources dir on Windows)
 // isn't reliably writable without elevation, so the updater could never swap
 // a fresh binary in there. Relocate to userData (always per-user-writable)
@@ -88,26 +96,26 @@ const VIDEO_INFO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // yt-dlp needs a real JS runtime to solve YouTube's nsig signature challenge;
 // without one, every real video/audio format silently disappears once a
-// request is authenticated, leaving only storyboard formats. Rather than
-// bundling a standalone JS runtime binary, this points yt-dlp's "node"
-// provider at the Electron binary itself -- Electron already embeds a full
-// Node.js runtime, and running it with ELECTRON_RUN_AS_NODE=1 (see
-// ytdlpSpawnEnv below) makes it behave as a plain `node` executable for
-// yt-dlp's purposes, at zero extra bundled bytes.
+// request is authenticated, leaving only storyboard formats. Points yt-dlp's
+// "deno" provider at the bundled Deno binary rather than running Electron
+// itself as Node: Deno sandboxes by default (no fs/net/env/subprocess access
+// unless explicitly granted, and yt-dlp's own deno.py adds zero --allow-*
+// flags), closing a gap the Electron-as-node approach couldn't -- Node's own
+// --permission model has no equivalent of network denial at all. Verified
+// directly against a real nsig solve before switching (see
+// 0tempFiles/deno-vs-electron-node-sandboxing-comparison.md).
 export function jsRuntimeArgs() {
-    return ['--js-runtimes', `node:${process.execPath}`];
+    return ['--js-runtimes', `deno:${denoBinaryPath}`];
 }
 
-// Curated, not a full process.env copy -- the nsig-solving runtime
-// (jsRuntimeArgs above) inherits this too, and Node's --permission sandbox
-// doesn't gate env access, so a compromised solver script could otherwise
-// read any secret a user's shell happens to have exported. HOME/
-// USERPROFILE/APPDATA/LOCALAPPDATA are kept because --cookies-from-browser
-// (cookies.mjs) needs them to locate a browser's profile directory.
+// Curated, not a full process.env copy -- Deno's own sandbox already denies
+// env access by default, but this still matters for --cookies-from-browser
+// (cookies.mjs), which needs HOME/USERPROFILE/APPDATA/LOCALAPPDATA to locate
+// a browser's profile directory regardless of which JS runtime is in use.
 const YTDLP_ENV_ALLOWLIST = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PATH', 'TEMP', 'TMP', 'TMPDIR'];
 
 export function ytdlpSpawnEnv() {
-    const env = { ELECTRON_RUN_AS_NODE: '1' };
+    const env = {};
     for (const key of YTDLP_ENV_ALLOWLIST) {
         if (process.env[key] !== undefined) env[key] = process.env[key];
     }

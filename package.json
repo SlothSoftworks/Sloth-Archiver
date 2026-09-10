@@ -29,6 +29,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "dist/deno/",
+        "to": "deno",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "directories": {
@@ -66,7 +73,8 @@
     "build:copy:electron": "node scripts/copy-electron.mjs",
     "build:ytdlp:bin": "node scripts/fetch-ytdlp-bin.mjs",
     "build:copy:ffmpeg": "node scripts/copy-ffmpeg.mjs",
-    "build:electron": "npm run build:copy:electron && npm run build:ytdlp:bin && npm run build:copy:ffmpeg",
+    "build:deno:bin": "node scripts/fetch-deno-bin.mjs",
+    "build:electron": "npm run build:copy:electron && npm run build:ytdlp:bin && npm run build:copy:ffmpeg && npm run build:deno:bin",
     "build:all": "npm run build:renderer && npm run build:electron",
     "test": "vitest run",
     "test:watch": "vitest",
