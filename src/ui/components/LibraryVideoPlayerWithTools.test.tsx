@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { forwardRef, useImperativeHandle } from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import LibraryVideoPlayerWithTools from './LibraryVideoPlayerWithTools';
 import type { ClipMarkersControl } from './LibraryVideoPlayer';
@@ -17,26 +17,35 @@ import type { LibraryVideoMetadata } from '../../types';
 // exercise LibraryVideoPlayerWithTools's own logic (the state it derives,
 // which IPC calls it makes) in isolation from Vidstack entirely.
 let fakeCurrentTime = 0;
+let seekToSpy: ReturnType<typeof vi.fn>;
+let playSpy: ReturnType<typeof vi.fn>;
 vi.mock('./LibraryVideoPlayer', () => ({
   __esModule: true,
   default: forwardRef(function FakeLibraryVideoPlayer(
-    { clipMarkers }: { clipMarkers?: ClipMarkersControl },
+    { clipMarkers, onPlaybackStateChange }: { clipMarkers?: ClipMarkersControl; onPlaybackStateChange?: (playing: boolean) => void },
     ref: React.ForwardedRef<unknown>,
   ) {
     useImperativeHandle(ref, () => ({
       getCurrentTime: () => fakeCurrentTime,
       getDuration: () => 100,
-      seekTo: () => {},
-      play: () => {},
+      seekTo: (seconds: number) => seekToSpy(seconds),
+      play: () => playSpy(),
       pause: () => {},
     }));
-    if (!clipMarkers) return null;
     return (
       <div>
-        <button onClick={clipMarkers.onSetStart}>Set clip start</button>
-        <button onClick={clipMarkers.onSetEnd}>Set clip end</button>
-        <button onClick={clipMarkers.onSave} disabled={clipMarkers.saveDisabled}>Save clip</button>
-        <button onClick={clipMarkers.onClear} disabled={clipMarkers.clearDisabled}>Clear clip selection</button>
+        {clipMarkers && (
+          <>
+            <button onClick={clipMarkers.onSetStart}>Set clip start</button>
+            <button onClick={clipMarkers.onSetEnd}>Set clip end</button>
+            <button onClick={clipMarkers.onSave} disabled={clipMarkers.saveDisabled}>Save clip</button>
+            <button onClick={clipMarkers.onClear} disabled={clipMarkers.clearDisabled}>Clear clip selection</button>
+          </>
+        )}
+        {/* Test-only triggers standing in for Vidstack's real onPlay/onPause -- see this
+            file's own comment above about not reverse-engineering Vidstack's reactive internals. */}
+        <button onClick={() => onPlaybackStateChange?.(true)}>Simulate play</button>
+        <button onClick={() => onPlaybackStateChange?.(false)}>Simulate pause</button>
       </div>
     );
   }),
@@ -76,6 +85,8 @@ async function openSaveClipDialog(user: ReturnType<typeof userEvent.setup>, star
 
 beforeEach(() => {
   fakeCurrentTime = 0;
+  seekToSpy = vi.fn();
+  playSpy = vi.fn();
   window.electronAPI = {
     ...window.electronAPI,
     createClip: vi.fn().mockResolvedValue({
@@ -85,6 +96,9 @@ beforeEach(() => {
     saveExportedFile: vi.fn().mockResolvedValue({ canceled: false, filePath: '/picked/My Clip.mp4' }),
     extractClipFromFile: vi.fn().mockResolvedValue({ success: true, outputPath: '/picked/My Clip.mp4' }),
     openFileInDirectory: vi.fn(),
+    getResumeTrackingMode: vi.fn().mockResolvedValue({ resumeTrackingMode: 'always' }),
+    getResumeMinDurationSeconds: vi.fn().mockResolvedValue({ resumeMinDurationSeconds: 1200 }),
+    savePlaybackPosition: vi.fn().mockResolvedValue({ success: true }),
   };
 });
 
@@ -220,5 +234,158 @@ describe('LibraryVideoPlayerWithTools', () => {
     fakeCurrentTime = 20;
     await user.click(screen.getByRole('button', { name: 'Set clip end' }));
     expect(screen.getByRole('button', { name: 'Save clip' })).toBeEnabled();
+  });
+});
+
+describe('LibraryVideoPlayerWithTools resume playback position', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('periodically saves the current position while playing', async () => {
+    render(
+      <LibraryVideoPlayerWithTools
+        metadata={baseMetadata()}
+        videoDir="/lib/c/v1"
+        epoch="1"
+        convertFormatOptions={['mp4']}
+      />,
+    );
+    await waitFor(() => expect(window.electronAPI.getResumeTrackingMode).toHaveBeenCalled());
+    // waitFor above only confirms the settings mocks were *invoked* --
+    // let their already-resolved promises actually flow into state before
+    // switching to fake timers, or shouldSavePosition would still read its
+    // initial false value once "Simulate play" fires.
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+    vi.useFakeTimers();
+    fakeCurrentTime = 30;
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate play' }));
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(window.electronAPI.savePlaybackPosition).toHaveBeenCalledWith({ videoDir: '/lib/c/v1', epoch: '1', positionSeconds: 30 });
+  });
+
+  it('saves an immediate position on pause, without waiting for the next periodic tick', async () => {
+    render(
+      <LibraryVideoPlayerWithTools
+        metadata={baseMetadata()}
+        videoDir="/lib/c/v1"
+        epoch="1"
+        convertFormatOptions={['mp4']}
+      />,
+    );
+    await waitFor(() => expect(window.electronAPI.getResumeTrackingMode).toHaveBeenCalled());
+
+    fakeCurrentTime = 45;
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate play' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate pause' }));
+
+    await waitFor(() => expect(window.electronAPI.savePlaybackPosition).toHaveBeenCalledWith({ videoDir: '/lib/c/v1', epoch: '1', positionSeconds: 45 }));
+  });
+
+  it('does not track position at all in standaloneClipping mode', async () => {
+    render(
+      <LibraryVideoPlayerWithTools
+        metadata={baseMetadata({ lastPlaybackPositionSeconds: 50, duration: 100 })}
+        convertFormatOptions={['mp4']}
+        standaloneClipping
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate play' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate pause' }));
+
+    expect(window.electronAPI.getResumeTrackingMode).not.toHaveBeenCalled();
+    expect(window.electronAPI.savePlaybackPosition).not.toHaveBeenCalled();
+    expect(screen.queryByText('Resume where you left off?')).not.toBeInTheDocument();
+  });
+
+  it('offers to resume when a meaningfully-saved position exists', async () => {
+    render(
+      <LibraryVideoPlayerWithTools
+        metadata={baseMetadata({ lastPlaybackPositionSeconds: 50, duration: 100 })}
+        videoDir="/lib/c/v1"
+        epoch="1"
+        convertFormatOptions={['mp4']}
+      />,
+    );
+
+    expect(await screen.findByText('Resume where you left off?')).toBeInTheDocument();
+  });
+
+  it('does not offer to resume a position at the very start', () => {
+    render(
+      <LibraryVideoPlayerWithTools
+        metadata={baseMetadata({ lastPlaybackPositionSeconds: 3, duration: 100 })}
+        videoDir="/lib/c/v1"
+        epoch="1"
+        convertFormatOptions={['mp4']}
+      />,
+    );
+
+    expect(screen.queryByText('Resume where you left off?')).not.toBeInTheDocument();
+  });
+
+  it('does not offer to resume a position right at the end (already finished)', () => {
+    render(
+      <LibraryVideoPlayerWithTools
+        metadata={baseMetadata({ lastPlaybackPositionSeconds: 98, duration: 100 })}
+        videoDir="/lib/c/v1"
+        epoch="1"
+        convertFormatOptions={['mp4']}
+      />,
+    );
+
+    expect(screen.queryByText('Resume where you left off?')).not.toBeInTheDocument();
+  });
+
+  it('does not offer to resume when nothing was ever saved', () => {
+    render(
+      <LibraryVideoPlayerWithTools
+        metadata={baseMetadata({ lastPlaybackPositionSeconds: null })}
+        videoDir="/lib/c/v1"
+        epoch="1"
+        convertFormatOptions={['mp4']}
+      />,
+    );
+
+    expect(screen.queryByText('Resume where you left off?')).not.toBeInTheDocument();
+  });
+
+  it('clicking "Resume" seeks to and plays from the saved position', async () => {
+    const user = userEvent.setup();
+    render(
+      <LibraryVideoPlayerWithTools
+        metadata={baseMetadata({ lastPlaybackPositionSeconds: 50, duration: 100 })}
+        videoDir="/lib/c/v1"
+        epoch="1"
+        convertFormatOptions={['mp4']}
+      />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Resume' }));
+
+    expect(seekToSpy).toHaveBeenCalledWith(50);
+    expect(playSpy).toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByText('Resume where you left off?')).not.toBeInTheDocument());
+  });
+
+  it('dismissing the toast just closes it -- the saved position is left untouched', async () => {
+    const user = userEvent.setup();
+    render(
+      <LibraryVideoPlayerWithTools
+        metadata={baseMetadata({ lastPlaybackPositionSeconds: 50, duration: 100 })}
+        videoDir="/lib/c/v1"
+        epoch="1"
+        convertFormatOptions={['mp4']}
+      />,
+    );
+    const alert = (await screen.findByText('Resume where you left off?')).closest('div[role="alert"]') as HTMLElement;
+
+    await user.click(within(alert).getByRole('button', { name: 'Close' }));
+
+    await waitFor(() => expect(screen.queryByText('Resume where you left off?')).not.toBeInTheDocument());
+    expect(window.electronAPI.savePlaybackPosition).not.toHaveBeenCalled();
   });
 });

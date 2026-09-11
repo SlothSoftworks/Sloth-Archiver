@@ -34,6 +34,7 @@ export type LibraryVideoMetadata = {
     downloadedResolution: string | null;
     downloadedFormat: string | null;
     downloadedAudioFilePath: string | null;
+    lastPlaybackPositionSeconds: number | null;
 }
 
 // Video-level (not epoch-level) -- a clip is derived from whichever version

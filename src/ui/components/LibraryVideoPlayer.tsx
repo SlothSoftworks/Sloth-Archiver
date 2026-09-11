@@ -93,7 +93,8 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // falls back to a YouTube embed, since a clip has no remote-video identity.
   overrideFilePath?: string;
   clipMarkers?: ClipMarkersControl;
-}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers }, ref) {
+  onPlaybackStateChange?: (playing: boolean) => void;
+}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange }, ref) {
   const { thumbnail, videoId } = metadata;
   const filePath = overrideFilePath ?? metadata.downloadedFilePath;
   const [state, setState] = useState<PlaybackState>(() => computeInitialState(filePath));
@@ -189,7 +190,8 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             src={{ src: buildAppVideoUrl(state.sourcePath, cacheBustKey), type: state.mimeType }}
             style={{ width: '100%', height: '100%', backgroundColor: 'black' }}
             onError={() => setState({ kind: 'runtimeFailed' })}
-            onPlay={() => setHasStartedPlayback(true)}
+            onPlay={() => { setHasStartedPlayback(true); onPlaybackStateChange?.(true); }}
+            onPause={() => onPlaybackStateChange?.(false)}
           >
             <MediaProvider />
             {/* Click-anywhere-on-the-video-to-toggle. Deliberately NOT

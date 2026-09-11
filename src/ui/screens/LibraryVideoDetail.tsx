@@ -50,7 +50,7 @@ type LibraryVideo = {
 // renderer never cross-import here). An entry whose stored schemaVersion is
 // older than this predates a metadata-shape change and won't have whatever
 // that change added -- "Refresh from YouTube" is what fixes it.
-const CURRENT_VIDEO_SCHEMA_VERSION = 3;
+const CURRENT_VIDEO_SCHEMA_VERSION = 4;
 
 export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, onDeleted, onVersionsChanged, videoTags, onVideoTagsChanged }: {
   video: LibraryVideo;
@@ -805,6 +805,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
             thumbnailPath={video.thumbnailPath}
             cacheBustKey={cacheBustKey}
             videoDir={video.videoDir}
+            epoch={selectedEpoch}
             existingClipTitles={clips.map((c) => c.title)}
             convertFormatOptions={convertFormatOptions}
             onClipCreated={(clip) => {

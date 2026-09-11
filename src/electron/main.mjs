@@ -10,8 +10,8 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
-import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampThemeName } from './settings.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
+import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
@@ -600,6 +600,30 @@ ipcMain.handle('settings:setThumbnailSize', async (e, value) => {
     return { success: true, thumbnailSize: settings.thumbnailSize };
 });
 
+ipcMain.handle('settings:getResumeTrackingMode', async () => {
+    const { resumeTrackingMode } = readSettings();
+    return { resumeTrackingMode: clampResumeTrackingMode(resumeTrackingMode ?? RESUME_TRACKING_MODE_DEFAULT) };
+});
+
+ipcMain.handle('settings:setResumeTrackingMode', async (e, value) => {
+    const settings = readSettings();
+    settings.resumeTrackingMode = clampResumeTrackingMode(value);
+    writeSettings(settings);
+    return { success: true, resumeTrackingMode: settings.resumeTrackingMode };
+});
+
+ipcMain.handle('settings:getResumeMinDurationSeconds', async () => {
+    const { resumeMinDurationSeconds } = readSettings();
+    return { resumeMinDurationSeconds: clampResumeMinDurationSeconds(resumeMinDurationSeconds ?? RESUME_MIN_DURATION_SECONDS_DEFAULT) };
+});
+
+ipcMain.handle('settings:setResumeMinDurationSeconds', async (e, value) => {
+    const settings = readSettings();
+    settings.resumeMinDurationSeconds = clampResumeMinDurationSeconds(value);
+    writeSettings(settings);
+    return { success: true, resumeMinDurationSeconds: settings.resumeMinDurationSeconds };
+});
+
 // User-added muxers for the Library view's "convert to" ffmpeg utility,
 // beyond the small hardcoded popular set (LibraryVideoDetail.tsx) -- a plain
 // string list, not validated against ffmpeg's own muxer list.
@@ -950,6 +974,11 @@ ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, 
     recordLibraryDownload({ videoDir, epoch, filePath, resolution, format, kind });
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     await refreshLibraryIndex(libraryDir, activeLibraryTag);
+    return { success: true };
+});
+
+ipcMain.handle('library:savePlaybackPosition', async (e, { videoDir, epoch, positionSeconds }) => {
+    savePlaybackPosition({ videoDir, epoch, positionSeconds });
     return { success: true };
 });
 

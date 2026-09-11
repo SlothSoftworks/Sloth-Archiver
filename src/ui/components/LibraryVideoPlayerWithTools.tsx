@@ -1,9 +1,13 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Link, Snackbar } from '@mui/material';
 import LibraryVideoPlayer, { type LibraryVideoPlayerHandle } from './LibraryVideoPlayer';
 import SaveClipDialog from './SaveClipDialog';
 import { formatSecondsAsClipTimestamp } from '../screens/FfmpegUtilitiesPanel';
 import type { LibraryVideoMetadata, LibraryClip } from '../../types';
+
+const PLAYBACK_POSITION_SAVE_INTERVAL_MS = 10_000;
+const RESUME_OFFER_MIN_SECONDS = 5;
+const RESUME_OFFER_END_BUFFER_SECONDS = 5;
 
 // Self-contained wrapper around LibraryVideoPlayer: owns the entire
 // clip-creation flow (start/end state, SaveClipDialog, the
@@ -20,6 +24,10 @@ export type LibraryVideoPlayerWithToolsProps = {
   // permanently into this video's own clips/ folder + clips.json manifest.
   // Required in that mode; unused when standaloneClipping is true.
   videoDir?: string;
+  // Which epoch's metadata.json to write playback position into -- required
+  // alongside videoDir for the resume-position feature (see below), unused
+  // in standaloneClipping mode (a clip has no epoch identity of its own).
+  epoch?: string | null;
   existingClipTitles?: string[];
   convertFormatOptions: string[];
   // Unused in standaloneClipping mode (there's no LibraryClip record).
@@ -40,7 +48,7 @@ function extensionForFormat(format: string, inputPath: string): string {
 }
 
 export default function LibraryVideoPlayerWithTools({
-  metadata, thumbnailPath, cacheBustKey, overrideFilePath, videoDir, existingClipTitles, convertFormatOptions, onClipCreated,
+  metadata, thumbnailPath, cacheBustKey, overrideFilePath, videoDir, epoch, existingClipTitles, convertFormatOptions, onClipCreated,
   standaloneClipping = false, onClipSavedToFile,
 }: LibraryVideoPlayerWithToolsProps) {
   const playerRef = useRef<LibraryVideoPlayerHandle>(null);
@@ -50,6 +58,76 @@ export default function LibraryVideoPlayerWithTools({
   const [savingClip, setSavingClip] = useState(false);
   const [saveClipError, setSaveClipError] = useState<string | null>(null);
   const [savedFilePath, setSavedFilePath] = useState<string | null>(null);
+
+  const canTrackPosition = !standaloneClipping && !!videoDir && !!epoch;
+  const [resumeToastOpen, setResumeToastOpen] = useState(false);
+  const [shouldSavePosition, setShouldSavePosition] = useState(false);
+  const saveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!canTrackPosition) return;
+    let cancelled = false;
+    Promise.all([
+      window.electronAPI.getResumeTrackingMode(),
+      window.electronAPI.getResumeMinDurationSeconds(),
+    ]).then(([{ resumeTrackingMode }, { resumeMinDurationSeconds }]) => {
+      if (cancelled) return;
+      const duration = metadata.duration;
+      const shouldTrack = resumeTrackingMode === 'always'
+        || (resumeTrackingMode === 'custom' && duration != null && duration >= resumeMinDurationSeconds);
+      setShouldSavePosition(shouldTrack);
+    });
+    const position = metadata.lastPlaybackPositionSeconds;
+    if (
+      typeof position === 'number' && position > RESUME_OFFER_MIN_SECONDS
+      && (metadata.duration == null || position < metadata.duration - RESUME_OFFER_END_BUFFER_SECONDS)
+    ) {
+      setResumeToastOpen(true);
+    }
+    return () => { cancelled = true; };
+    // Deliberately mount-only per epoch -- this component's caller remounts
+    // it on every epoch switch (see LibraryVideoDetail.tsx's key={selectedEpoch}),
+    // so re-running this on every metadata change would re-offer the toast
+    // after the position that triggered it has already moved on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canTrackPosition]);
+
+  const savePosition = (positionSeconds: number) => {
+    if (!canTrackPosition || !shouldSavePosition) return;
+    window.electronAPI.savePlaybackPosition({ videoDir: videoDir!, epoch: epoch!, positionSeconds: Math.floor(positionSeconds) });
+  };
+
+  const handlePlaybackStateChange = (playing: boolean) => {
+    if (!canTrackPosition) return;
+    if (playing) {
+      if (saveIntervalRef.current) clearInterval(saveIntervalRef.current);
+      saveIntervalRef.current = setInterval(() => {
+        const time = playerRef.current?.getCurrentTime();
+        if (time != null) savePosition(time);
+      }, PLAYBACK_POSITION_SAVE_INTERVAL_MS);
+    } else {
+      if (saveIntervalRef.current) {
+        clearInterval(saveIntervalRef.current);
+        saveIntervalRef.current = null;
+      }
+      const time = playerRef.current?.getCurrentTime();
+      if (time != null) savePosition(time);
+    }
+  };
+
+  // Covers navigating away while still playing -- the interval above would
+  // otherwise just get torn down with no final save.
+  useEffect(() => () => {
+    if (saveIntervalRef.current) clearInterval(saveIntervalRef.current);
+  }, []);
+
+  const handleResumePlayback = () => {
+    const position = metadata.lastPlaybackPositionSeconds;
+    setResumeToastOpen(false);
+    if (position == null) return;
+    playerRef.current?.seekTo(position);
+    playerRef.current?.play();
+  };
 
   const inputPath = overrideFilePath ?? metadata.downloadedFilePath;
   const clipRangeInvalid = clipStartSeconds != null && clipEndSeconds != null && clipEndSeconds < clipStartSeconds + 1;
@@ -139,6 +217,7 @@ export default function LibraryVideoPlayerWithTools({
         thumbnailPath={thumbnailPath}
         cacheBustKey={cacheBustKey}
         overrideFilePath={overrideFilePath}
+        onPlaybackStateChange={handlePlaybackStateChange}
         clipMarkers={{
           startSeconds: clipStartSeconds,
           endSeconds: clipEndSeconds,
@@ -191,6 +270,25 @@ export default function LibraryVideoPlayerWithTools({
             sx={{ ml: 1, fontWeight: 'bold', cursor: 'pointer' }}
           >
             View
+          </Link>
+        </Alert>
+      </Snackbar>
+      <Snackbar
+        open={resumeToastOpen}
+        autoHideDuration={8000}
+        onClose={() => setResumeToastOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setResumeToastOpen(false)} severity="info" variant="filled">
+          Resume where you left off?
+          <Link
+            component="button"
+            onClick={handleResumePlayback}
+            color="inherit"
+            underline="always"
+            sx={{ ml: 1, fontWeight: 'bold', cursor: 'pointer' }}
+          >
+            Resume
           </Link>
         </Alert>
       </Snackbar>

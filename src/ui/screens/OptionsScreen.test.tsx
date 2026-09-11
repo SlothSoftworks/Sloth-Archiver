@@ -35,6 +35,10 @@ beforeEach(() => {
     setThemeName: vi.fn().mockResolvedValue({ success: true, themeName: 'slothui' }),
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
     setMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ success: true, maxSimultaneousDownloads: 1 }),
+    getResumeTrackingMode: vi.fn().mockResolvedValue({ resumeTrackingMode: 'custom' }),
+    setResumeTrackingMode: vi.fn().mockResolvedValue({ success: true, resumeTrackingMode: 'custom' }),
+    getResumeMinDurationSeconds: vi.fn().mockResolvedValue({ resumeMinDurationSeconds: 1200 }),
+    setResumeMinDurationSeconds: vi.fn().mockResolvedValue({ success: true, resumeMinDurationSeconds: 1200 }),
     getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
   };
 });
