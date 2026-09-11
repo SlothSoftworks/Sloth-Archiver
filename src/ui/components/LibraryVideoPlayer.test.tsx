@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import LibraryVideoPlayer, { type ClipMarkersControl } from './LibraryVideoPlayer';
 import type { LibraryVideoMetadata } from '../../types';
@@ -64,6 +64,17 @@ function fireReadinessCascade(video: HTMLVideoElement) {
 function fireDecodeError(video: HTMLVideoElement) {
   Object.defineProperty(video, 'error', { value: { code: 4, message: 'fake decode error' }, configurable: true });
   fireEvent.error(video);
+}
+
+// The click-anywhere-to-toggle-play overlay (and now the right-click
+// context-menu surface too) is an unlabeled, childless sibling of
+// [data-media-provider] inside Vidstack's own root element -- :empty
+// reliably picks it out from the provider (has a <video> child) and the
+// controls bar (has many children).
+function findClickOverlay(container: HTMLElement): HTMLElement {
+  const overlay = container.querySelector('[data-media-player] > div:empty');
+  if (!overlay) throw new Error('click overlay not found');
+  return overlay as HTMLElement;
 }
 
 beforeEach(() => {
@@ -236,6 +247,174 @@ describe('LibraryVideoPlayer', () => {
       await findSourceEl(container);
       expect(screen.getByRole('button', { name: 'Save clip' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'Clear clip selection' })).toBeDisabled();
+    });
+  });
+
+  describe('context menu (Loop / Loop sequence)', () => {
+    function noopClipMarkers(overrides: Partial<ClipMarkersControl> = {}): ClipMarkersControl {
+      return {
+        startSeconds: null,
+        endSeconds: null,
+        onSetStart: vi.fn(),
+        onSetEnd: vi.fn(),
+        onStartSecondsChange: vi.fn(),
+        onEndSecondsChange: vi.fn(),
+        onSave: vi.fn(),
+        saveDisabled: true,
+        onClear: vi.fn(),
+        clearDisabled: true,
+        ...overrides,
+      };
+    }
+
+    it('right-clicking the video area suppresses the native menu and opens this app\'s own at the cursor', async () => {
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} />,
+      );
+      await findSourceEl(container);
+
+      const event = fireEvent.contextMenu(findClickOverlay(container), { clientX: 42, clientY: 24 });
+
+      expect(event).toBe(false); // fireEvent returns false when preventDefault() was called
+      expect(await screen.findByRole('menuitem', { name: 'Loop' })).toBeInTheDocument();
+    });
+
+    it('selecting Loop sets Vidstack\'s own loop state on the player', async () => {
+      const user = userEvent.setup();
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} />,
+      );
+      await findSourceEl(container);
+      // Vidstack reflects its own `loop` media state as a `data-loop`
+      // attribute on the player root, per its own documented convention --
+      // not necessarily the native <video>.loop DOM property, which it
+      // doesn't sync back to directly.
+      const playerRoot = container.querySelector('[data-media-player]') as HTMLElement;
+      expect(playerRoot).not.toHaveAttribute('data-loop');
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await user.click(await screen.findByRole('menuitem', { name: 'Loop' }));
+
+      await waitFor(() => expect(playerRoot).toHaveAttribute('data-loop'));
+    });
+
+    it('Loop sequence is disabled without both clip markers set, and enabled once they are', async () => {
+      const { container, rerender } = render(
+        <LibraryVideoPlayer
+          metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+          clipMarkers={noopClipMarkers()}
+        />,
+      );
+      await findSourceEl(container);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      expect(await screen.findByRole('menuitem', { name: 'Loop sequence' })).toHaveAttribute('aria-disabled', 'true');
+      await userEvent.setup().keyboard('{Escape}');
+
+      rerender(
+        <LibraryVideoPlayer
+          metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+          clipMarkers={noopClipMarkers({ startSeconds: 5, endSeconds: 10 })}
+        />,
+      );
+      fireEvent.contextMenu(findClickOverlay(container));
+      expect(await screen.findByRole('menuitem', { name: 'Loop sequence' })).not.toHaveAttribute('aria-disabled', 'true');
+    });
+
+    it('enabling Loop sequence seeks to the start marker immediately, without touching anything else about playback', async () => {
+      const user = userEvent.setup();
+      const { container } = render(
+        <LibraryVideoPlayer
+          metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+          clipMarkers={noopClipMarkers({ startSeconds: 5, endSeconds: 10 })}
+        />,
+      );
+      await findSourceEl(container);
+      const video = container.querySelector('video') as HTMLVideoElement;
+      fireReadinessCascade(video);
+      video.currentTime = 0;
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await user.click(await screen.findByRole('menuitem', { name: 'Loop sequence' }));
+
+      await waitFor(() => expect(video.currentTime).toBe(5));
+      // Regression guard for the actual bug: Vidstack's own clipStartTime/
+      // clipEndTime props shrink the *displayed* duration/seek range to the
+      // marked span, breaking the rest of the player -- this feature must
+      // never use them, only ever move currentTime.
+      const playerRoot = container.querySelector('[data-media-player]') as HTMLElement;
+      expect(playerRoot).not.toHaveAttribute('data-clip-start-time');
+      expect(playerRoot).not.toHaveAttribute('data-clip-end-time');
+    });
+
+    it('seeks back to the start marker once playback reaches the end marker', async () => {
+      const user = userEvent.setup();
+      const { container } = render(
+        <LibraryVideoPlayer
+          metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+          clipMarkers={noopClipMarkers({ startSeconds: 5, endSeconds: 10 })}
+        />,
+      );
+      await findSourceEl(container);
+      const video = container.querySelector('video') as HTMLVideoElement;
+      fireReadinessCascade(video);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await user.click(await screen.findByRole('menuitem', { name: 'Loop sequence' }));
+      await waitFor(() => expect(video.currentTime).toBe(5));
+
+      video.currentTime = 10;
+      fireEvent.timeUpdate(video);
+
+      await waitFor(() => expect(video.currentTime).toBe(5));
+    });
+
+    it('does not seek back once Loop sequence is turned off, even past the old end marker', async () => {
+      const user = userEvent.setup();
+      const { container } = render(
+        <LibraryVideoPlayer
+          metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+          clipMarkers={noopClipMarkers({ startSeconds: 5, endSeconds: 10 })}
+        />,
+      );
+      await findSourceEl(container);
+      const video = container.querySelector('video') as HTMLVideoElement;
+      fireReadinessCascade(video);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await user.click(await screen.findByRole('menuitem', { name: 'Loop sequence' }));
+      await waitFor(() => expect(video.currentTime).toBe(5));
+      fireEvent.contextMenu(findClickOverlay(container));
+      await user.click(screen.getByRole('menuitem', { name: 'Loop sequence' })); // toggle back off
+
+      video.currentTime = 15;
+      fireEvent.timeUpdate(video);
+
+      expect(video.currentTime).toBe(15);
+    });
+
+    it('selecting Loop sequence turns off an already-active Loop, and vice versa', async () => {
+      const user = userEvent.setup();
+      const { container } = render(
+        <LibraryVideoPlayer
+          metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+          clipMarkers={noopClipMarkers({ startSeconds: 5, endSeconds: 10 })}
+        />,
+      );
+      await findSourceEl(container);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await user.click(await screen.findByRole('menuitem', { name: 'Loop' }));
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      expect(await screen.findByTestId('CheckIcon')).toBeInTheDocument();
+      await user.click(screen.getByRole('menuitem', { name: 'Loop sequence' }));
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      const loopItem = await screen.findByRole('menuitem', { name: 'Loop' });
+      const loopSequenceItem = screen.getByRole('menuitem', { name: 'Loop sequence' });
+      expect(within(loopItem).queryByTestId('CheckIcon')).not.toBeInTheDocument();
+      expect(within(loopSequenceItem).getByTestId('CheckIcon')).toBeInTheDocument();
     });
   });
 });

@@ -7,6 +7,7 @@ import type { LibraryVideoMetadata } from '../../types';
 import YouTubeEmbed from './YouTubeEmbed';
 import ResizableMediaContainer from './ResizableMediaContainer';
 import LibraryVideoPlayerControls from './LibraryVideoPlayerControls';
+import PlayerContextMenu from './PlayerContextMenu';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
 import { buildAppVideoUrl } from '../../utils/utils.ts';
 
@@ -101,6 +102,9 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // One-time "you can start playback here" affordance -- gone for good once
   // playback has ever started (native controls take over from there).
   const [hasStartedPlayback, setHasStartedPlayback] = useState(false);
+  const [loopEnabled, setLoopEnabled] = useState(false);
+  const [loopSequenceEnabled, setLoopSequenceEnabled] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const playerRef = useRef<MediaPlayerInstance>(null);
 
   const ext = filePath ? getExtension(filePath) : '';
@@ -168,6 +172,37 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // hasn't landed yet.
   const posterSrc = thumbnailPath ? buildAppVideoUrl(thumbnailPath) : (thumbnail || undefined);
 
+  const handleToggleLoop = () => { setLoopEnabled((v) => !v); setLoopSequenceEnabled(false); };
+  // Turning loop sequence on seeks to the start marker immediately, per its
+  // own name -- "loop on them," not "wait until playback happens to reach
+  // them." Deliberately does NOT use Vidstack's own clipStartTime/clipEndTime
+  // props for the looping itself -- confirmed live those change the
+  // *displayed* duration/seek range to just the marked span (Vidstack's own
+  // "clipped" time concept, distinct from real playback time), breaking the
+  // rest of the player's UI. This only ever moves currentTime -- nothing
+  // else about playback scope changes.
+  const handleToggleLoopSequence = () => {
+    setLoopSequenceEnabled((v) => {
+      const next = !v;
+      if (next && clipMarkers?.startSeconds != null && playerRef.current) {
+        playerRef.current.currentTime = clipMarkers.startSeconds;
+      }
+      return next;
+    });
+    setLoopEnabled(false);
+  };
+  const hasValidLoopMarkers = !!clipMarkers && clipMarkers.startSeconds != null && clipMarkers.endSeconds != null;
+  const loopSequenceActive = loopSequenceEnabled && hasValidLoopMarkers;
+
+  const handleLoopSequenceTimeUpdate = () => {
+    if (!loopSequenceActive || !playerRef.current) return;
+    const { startSeconds, endSeconds } = clipMarkers!;
+    if (startSeconds == null || endSeconds == null) return;
+    if (playerRef.current.currentTime >= endSeconds) {
+      playerRef.current.currentTime = startSeconds;
+    }
+  };
+
   if (!filePath) {
     if (overrideFilePath !== undefined) {
       // Clip context: if there's genuinely nothing to play, there's nothing to show.
@@ -189,6 +224,8 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             title={metadata.fullTitle || metadata.title || undefined}
             src={{ src: buildAppVideoUrl(state.sourcePath, cacheBustKey), type: state.mimeType }}
             style={{ width: '100%', height: '100%', backgroundColor: 'black' }}
+            loop={loopEnabled}
+            onTimeUpdate={handleLoopSequenceTimeUpdate}
             onError={() => setState({ kind: 'runtimeFailed' })}
             onPlay={() => { setHasStartedPlayback(true); onPlaybackStateChange?.(true); }}
             onPause={() => onPlaybackStateChange?.(false)}
@@ -200,16 +237,32 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
                 gesture), overhead that buys nothing here since this player
                 has no double-tap gesture registered. A plain onClick has
                 zero such delay. Placed before the controls in DOM order so a
-                real control click still lands on the control, not this. */}
+                real control click still lands on the control, not this.
+                Also owns the right-click surface for the Loop/Loop sequence
+                context menu -- video area only, not the control bar. */}
             <Box
               onClick={() => {
                 if (playerRef.current?.paused) safePlay();
                 else safePause();
               }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setContextMenuPosition({ left: e.clientX, top: e.clientY });
+              }}
               sx={{ position: 'absolute', inset: 0, cursor: 'pointer' }}
             />
             <LibraryVideoPlayerControls clipMarkers={clipMarkers} />
           </MediaPlayer>
+          <PlayerContextMenu
+            open={!!contextMenuPosition}
+            anchorPosition={contextMenuPosition}
+            onClose={() => setContextMenuPosition(null)}
+            loopEnabled={loopEnabled}
+            onToggleLoop={handleToggleLoop}
+            loopSequenceEnabled={loopSequenceEnabled}
+            onToggleLoopSequence={handleToggleLoopSequence}
+            loopSequenceDisabled={!hasValidLoopMarkers}
+          />
           {/* Vidstack's own <Poster> component hard-rejects any src scheme
               outside http/https/data/blob -- our custom app-video:// scheme
               throws at render time, so it can never be used for a local

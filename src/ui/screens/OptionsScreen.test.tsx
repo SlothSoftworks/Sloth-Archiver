@@ -89,6 +89,41 @@ describe('OptionsScreen', () => {
     expect(window.electronAPI.setCookiesPersistAcrossSessions).toHaveBeenCalledWith(true);
   });
 
+  it('changing the resume-tracking mode persists it, showing the minutes field only in "custom" mode', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+
+    expect(await screen.findByLabelText('Minutes')).toBeInTheDocument();
+
+    await user.click(screen.getByText('Videos longer than...'));
+    await user.click(screen.getByRole('option', { name: 'Always' }));
+
+    expect(window.electronAPI.setResumeTrackingMode).toHaveBeenCalledWith('always');
+    expect(screen.queryByLabelText('Minutes')).not.toBeInTheDocument();
+  });
+
+  it('changing the resume minimum-duration field persists it in seconds', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    const minutesField = await screen.findByLabelText('Minutes');
+
+    await user.clear(minutesField);
+    await user.type(minutesField, '30');
+
+    await waitFor(() => expect(window.electronAPI.setResumeMinDurationSeconds).toHaveBeenLastCalledWith(1800));
+  });
+
+  it('defaults the "Embed metadata automatically" checkbox on, and persists it when unchecked', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    const checkbox = await screen.findByRole('checkbox', { name: 'Embed metadata into new downloads automatically' });
+    expect(checkbox).toBeChecked();
+
+    await user.click(checkbox);
+
+    expect(window.electronAPI.setEmbedMetadataByDefault).toHaveBeenCalledWith(false);
+  });
+
   it('choosing a download folder persists the picked path and updates the display', async () => {
     const user = userEvent.setup();
     (window.electronAPI.pickFolder as ReturnType<typeof vi.fn>).mockResolvedValue({ canceled: false, filePaths: ['/new-downloads'] });
