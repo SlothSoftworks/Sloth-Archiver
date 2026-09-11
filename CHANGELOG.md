@@ -5,28 +5,29 @@ do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
 ## [1.1.0] — 2026-09-11
-- **Resume where you left off.** Reopening a video you didn't finish now
-  offers to pick up right where you paused, via a dismissible toast. A new
-  Options setting controls when a position gets remembered at all — never,
-  always, or only past a minimum length you choose (20 minutes by default),
-  so a fresh install doesn't start tracking every short clip.
+- **Player improvements.**
+  - **Resume where you left off.** Reopening a video you didn't finish now
+    offers to pick up right where you paused, via a dismissible toast. A
+    new Options setting controls when a position gets remembered at all —
+    never, always, or only past a minimum length you choose (20 minutes by
+    default), so a fresh install doesn't start tracking every short clip.
+  - **Loop a video, or loop just a clipped sequence.** Right-click the
+    player for a new context menu (with room for more playback options
+    down the line) offering "Loop" for the whole video and "Loop
+    sequence" to loop only between your clip markers, once both are set.
+  - **Clip markers and extraction are now millisecond-precise**, not
+    rounded to the nearest whole second — dragging a clip marker or
+    setting one from the current playback position keeps the exact
+    fraction of a second you picked, instead of losing it to rounding.
+    Also fixed a bug that could cause an unnecessary, slower re-encode
+    when clipping an audio-only file.
+  - **Double-click the time display for a millisecond-precision readout**, useful alongside the new fine-grained clip markers.
+    Double-click again to go back to the normal display.
 - **Downloads embed their metadata by default now.** Title, channel, upload
   date, description, and cover art get written into the file automatically
   on every download — library and the plain Downloader tab alike. This was
   previously a manual "Embed metadata" button; it's now on by default and
   can be turned off in Options.
-- **Loop a video, or loop just a clipped sequence.** Right-click the player
-  for a new context menu (with room for more playback options down the
-  line) offering "Loop" for the whole video and "Loop sequence" to loop
-  only between your clip markers, once both are set.
-- **Clip markers and extraction are now millisecond-precise**, not rounded
-  to the nearest whole second — dragging a clip marker or setting one from
-  the current playback position keeps the exact fraction of a second you
-  picked, instead of losing it to rounding. Also fixed a bug that could
-  cause an unnecessary, slower re-encode when clipping an audio-only file.
-- **Double-click the player's time display for a millisecond-precision
-  readout**, useful alongside the new fine-grained clip markers. Double-click
-  again to go back to the normal display.
 - **Tag playlist entries, and filter playlists by tag** the same way the
   library already lets you — including bulk-tagging several entries at
   once, and new "Downloaded"/"Not Downloaded" filters available in both the
