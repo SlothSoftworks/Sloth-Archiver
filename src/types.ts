@@ -140,6 +140,12 @@ export type DownloadFailure =
     resolution: string;
     overwriteMode?: 'overwrite' | 'resume';
     additionalOptions?: object;
+    // Opt-in auto-embed for downloads outside the library (main.mjs's
+    // downloadVideoWithProgressUpdates only attempts an embed when a caller
+    // actually supplies these) -- library-flow downloads embed separately
+    // via library:recordDownload/swapDownload instead.
+    metadataTags?: Record<string, string | null | undefined>;
+    thumbnailPath?: string | null;
     // Generated fresh by useDownloadVideo.tsx's startDownload() on every
     // call, not caller-supplied -- optional here so callers building this
     // object don't need to invent one.

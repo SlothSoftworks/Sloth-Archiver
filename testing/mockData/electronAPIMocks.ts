@@ -20,6 +20,7 @@ const emptyLibraryVideoMetadata: LibraryVideoMetadata = {
   downloadedResolution: null,
   downloadedFormat: null,
   downloadedAudioFilePath: null,
+  lastPlaybackPositionSeconds: null,
 };
 
 // DownloaderScreen seeds its initial videoInfo state from this in dev-mock
@@ -80,6 +81,12 @@ export const electronAPIMock = {
     setMaxSimultaneousDownloads: async () => ({ success: true, maxSimultaneousDownloads: 1 }),
     getThumbnailSize: async () => ({ thumbnailSize: 0 }),
     setThumbnailSize: async () => ({ success: true, thumbnailSize: 0 }),
+    getResumeTrackingMode: async () => ({ resumeTrackingMode: 'custom' as const }),
+    setResumeTrackingMode: async () => ({ success: true, resumeTrackingMode: 'custom' as const }),
+    getResumeMinDurationSeconds: async () => ({ resumeMinDurationSeconds: 1200 }),
+    setResumeMinDurationSeconds: async () => ({ success: true, resumeMinDurationSeconds: 1200 }),
+    getEmbedMetadataByDefault: async () => ({ embedMetadataByDefault: true }),
+    setEmbedMetadataByDefault: async () => ({ success: true, embedMetadataByDefault: true }),
     getLibraryIndex: async () => ({ channels: [] }),
     refreshLibraryIndex: async () => ({ channels: [] }),
     refreshChannelIcon: async () => ({ channels: [] }),
@@ -96,6 +103,7 @@ export const electronAPIMock = {
     undoPlaylistRefresh: async () => ({ success: true }),
     deletePlaylist: async () => ({ success: true }),
     recordLibraryDownload: async () => ({ success: true }),
+    savePlaybackPosition: async () => ({ success: true }),
     swapLibraryDownload: async () => (emptyLibraryVideoMetadata),
     deleteLibraryEntry: async () => ({ success: true, videoDeleted: true }),
     deleteLibraryEntries: async () => ({ success: true, results: [] }),

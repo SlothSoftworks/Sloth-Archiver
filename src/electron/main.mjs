@@ -10,8 +10,8 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
-import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT } from './settings.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
+import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
@@ -624,6 +624,18 @@ ipcMain.handle('settings:setResumeMinDurationSeconds', async (e, value) => {
     return { success: true, resumeMinDurationSeconds: settings.resumeMinDurationSeconds };
 });
 
+ipcMain.handle('settings:getEmbedMetadataByDefault', async () => {
+    const { embedMetadataByDefault } = readSettings();
+    return { embedMetadataByDefault: clampEmbedMetadataByDefault(embedMetadataByDefault ?? EMBED_METADATA_BY_DEFAULT_DEFAULT) };
+});
+
+ipcMain.handle('settings:setEmbedMetadataByDefault', async (e, value) => {
+    const settings = readSettings();
+    settings.embedMetadataByDefault = clampEmbedMetadataByDefault(value);
+    writeSettings(settings);
+    return { success: true, embedMetadataByDefault: settings.embedMetadataByDefault };
+});
+
 // User-added muxers for the Library view's "convert to" ffmpeg utility,
 // beyond the small hardcoded popular set (LibraryVideoDetail.tsx) -- a plain
 // string list, not validated against ffmpeg's own muxer list.
@@ -971,9 +983,11 @@ ipcMain.handle('library:findVideo', async (e, videoId, libraryTag) => {
 });
 
 ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, resolution, format, kind }) => {
-    recordLibraryDownload({ videoDir, epoch, filePath, resolution, format, kind });
+    const metadata = recordLibraryDownload({ videoDir, epoch, filePath, resolution, format, kind });
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     await refreshLibraryIndex(libraryDir, activeLibraryTag);
+    const metadataTags = { title: metadata.title, artist: metadata.channel, date: metadata.uploadDate, description: metadata.description };
+    await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
     return { success: true };
 });
 
@@ -986,6 +1000,9 @@ ipcMain.handle('library:swapDownload', async (e, { videoDir, epoch, tempFilePath
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const metadata = swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format, kind });
     await refreshLibraryIndex(libraryDir, activeLibraryTag);
+    const filePath = kind === 'audio' ? metadata.downloadedAudioFilePath : metadata.downloadedFilePath;
+    const metadataTags = { title: metadata.title, artist: metadata.channel, date: metadata.uploadDate, description: metadata.description };
+    await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
     return metadata;
 });
 
@@ -1672,6 +1689,14 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                 const finalFile = findFinalFile(options.outputPath);
                 log(`[download] ${options.requestId} attempt ${attempt} done -> ${finalFile}`);
                 rememberAppPath(finalFile);
+                await maybeAutoEmbedMetadata({
+                    filePath: finalFile,
+                    kind: options.resolution && options.resolution.toLowerCase() === 'mp3' ? 'audio' : 'video',
+                    metadataTags: options.metadataTags,
+                    thumbnailPath: options.thumbnailPath,
+                    libraryDir: readSettings().libraryDir,
+                    logContext: options.requestId,
+                });
                 send({ type: 'done', payload: { filename: finalFile } });
                 return;
             }
@@ -1708,6 +1733,14 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                 finishDownload();
                 log(`[download] ${options.requestId} attempt ${attempt} postprocess complete -> ${postprocessOutputPath}`);
                 rememberAppPath(postprocessOutputPath);
+                await maybeAutoEmbedMetadata({
+                    filePath: postprocessOutputPath,
+                    kind: options.resolution && options.resolution.toLowerCase() === 'mp3' ? 'audio' : 'video',
+                    metadataTags: options.metadataTags,
+                    thumbnailPath: options.thumbnailPath,
+                    libraryDir: readSettings().libraryDir,
+                    logContext: options.requestId,
+                });
                 send({ type: 'done', payload: { filename: postprocessOutputPath } });
             } catch (err) {
                 // Our own direct ffmpeg pass, not yt-dlp -- still worth the
@@ -2077,12 +2110,14 @@ ipcMain.handle('library:convertClip', async (e, { videoDir, clipId, format, forc
 // this replaces it rather than stacking old covers. The cover stream is
 // always re-encoded to mjpeg since webp isn't a valid embedded-cover codec
 // for ID3/mov -- everything else stays -c copy, no quality loss.
-ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thumbnailPath, kind }) => {
+// Shared by the manual "Embed metadata" IPC handler below and the
+// auto-embed-on-download hook in library:recordDownload/library:swapDownload
+// -- one implementation, two callers.
+async function embedMetadataIntoFile({ inputPath, metadataTags, thumbnailPath, kind, libraryDir }) {
     // Broader than resolveInsideLibrary alone: this is also used from the
     // plain Downloader tab (OtherPlatformDownloadCard.tsx), where inputPath
     // is a file that was never added to the library -- just downloaded to
     // wherever dialog:saveVideoFile put it.
-    const { libraryDir } = readSettings();
     const resolvedInput = resolveAppOrLibraryPath(libraryDir, inputPath);
     if (!resolvedInput) {
         return { success: false, message: 'Refusing to modify a file outside the configured library folder.' };
@@ -2151,7 +2186,32 @@ ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thu
     } finally {
         if (downloadedThumbnailPath) fs.rmSync(downloadedThumbnailPath, { force: true });
     }
+}
+
+ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thumbnailPath, kind }) => {
+    const { libraryDir } = readSettings();
+    return embedMetadataIntoFile({ inputPath, metadataTags, thumbnailPath, kind, libraryDir });
 });
+
+// Best-effort, matching enrichPlaylistEntry's own precedent for a
+// background step riding along an already-succeeded action. Shared by the
+// library flow (library:recordDownload/swapDownload, which build
+// metadataTags/thumbnailPath from the just-written metadata.json) and the
+// plain Downloader tab (downloadVideoWithProgressUpdates, which only calls
+// this when a caller actually supplied metadataTags -- library-flow
+// downloads never do, so this is a no-op there and the library hook stays
+// the sole trigger for library downloads).
+async function maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath, libraryDir, logContext }) {
+    if (!metadataTags) return;
+    const { embedMetadataByDefault } = readSettings();
+    if (!clampEmbedMetadataByDefault(embedMetadataByDefault ?? EMBED_METADATA_BY_DEFAULT_DEFAULT)) return;
+    try {
+        const result = await embedMetadataIntoFile({ inputPath: filePath, metadataTags, thumbnailPath, kind, libraryDir });
+        if (!result.success) log(`[auto-embed] failed for ${logContext}: ${result.message}`);
+    } catch (err) {
+        log(`[auto-embed] failed for ${logContext}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+}
 
 ipcMain.handle('ytdlp:checkForUpdate', async () => {
     const current = await getCurrentYtdlpVersion(ytdlpPath);

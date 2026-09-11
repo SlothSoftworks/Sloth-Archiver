@@ -132,6 +132,7 @@ export default function OptionsScreen() {
   const [maxSimultaneousDownloads, setMaxSimultaneousDownloadsState] = useState(1);
   const [resumeTrackingMode, setResumeTrackingModeState] = useState<'never' | 'always' | 'custom'>('custom');
   const [resumeMinDurationSeconds, setResumeMinDurationSecondsState] = useState(1200);
+  const [embedMetadataByDefault, setEmbedMetadataByDefaultState] = useState(true);
   const [appVersion, setAppVersion] = useState('');
 
   const refreshStatus = async () => {
@@ -191,6 +192,11 @@ export default function OptionsScreen() {
     setResumeMinDurationSecondsState(resumeMinDurationSeconds);
   };
 
+  const refreshEmbedMetadataByDefault = async () => {
+    const { embedMetadataByDefault } = await window.electronAPI.getEmbedMetadataByDefault();
+    setEmbedMetadataByDefaultState(embedMetadataByDefault);
+  };
+
   useEffect(() => {
     refreshStatus();
     refreshCookiesConfig();
@@ -201,6 +207,7 @@ export default function OptionsScreen() {
     refreshMaxSimultaneousDownloads();
     refreshResumeTrackingMode();
     refreshResumeMinDurationSeconds();
+    refreshEmbedMetadataByDefault();
     window.electronAPI.getAppVersion().then(setAppVersion);
   }, []);
 
@@ -239,6 +246,12 @@ export default function OptionsScreen() {
   const handleResumeMinDurationSecondsChange = async (value: number) => {
     setResumeMinDurationSecondsState(value);
     await window.electronAPI.setResumeMinDurationSeconds(value);
+  };
+
+  const handleEmbedMetadataByDefaultChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const checked = e.target.checked;
+    setEmbedMetadataByDefaultState(checked);
+    await window.electronAPI.setEmbedMetadataByDefault(checked);
   };
 
   const handleChooseDownloadDir = async () => {
@@ -483,6 +496,19 @@ export default function OptionsScreen() {
                 onChange={(e) => handleResumeMinDurationSecondsChange(Math.max(0, Number(e.target.value)) * 60)}
                 sx={{ minWidth: 120 }}
               />}
+          </Grid>
+
+          <Grid size={{ xs: 12, sm: 6 }} sx={dividerTopAndLeftOnSm}>
+            <Typography variant="h6" gutterBottom>Embed Metadata Automatically</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Writes title/channel/date/description and cover art into every downloaded
+              file as soon as the download finishes, instead of requiring the manual
+              "Embed metadata" action.
+            </Typography>
+            <FormControlLabel
+              control={<Checkbox checked={embedMetadataByDefault} onChange={handleEmbedMetadataByDefaultChange} />}
+              label="Embed metadata into new downloads automatically"
+            />
           </Grid>
         </Grid>
       </OptionsGroup>

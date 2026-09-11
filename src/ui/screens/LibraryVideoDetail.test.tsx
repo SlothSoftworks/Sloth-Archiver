@@ -52,6 +52,7 @@ function baseMetadata(overrides: Record<string, unknown> = {}) {
     downloadedResolution: null,
     downloadedFormat: null,
     downloadedAudioFilePath: null,
+    lastPlaybackPositionSeconds: null,
     ...overrides,
   };
 }

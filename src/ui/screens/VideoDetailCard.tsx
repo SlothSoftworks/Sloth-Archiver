@@ -56,6 +56,7 @@ interface VideoDataProps {
         duration?: number | null;
         durationString: string;
         uploadDate: string;
+        uploader: string | null;
     }
   }
 
@@ -75,7 +76,16 @@ const VideoDetailCard: React.FC<VideoDataProps> = ({ videoMetaData }) => {
 
   const beginDownload = (outputPath: string, resolution: string, overwriteMode?: DownloadVideoParams['overwriteMode']) => {
     setSelectedResolution(resolution);
-    startDownload({ videoUrl: videoMetaData.originalUrl, outputPath, format: selectedFormat, resolution, overwriteMode });
+    startDownload({
+      videoUrl: videoMetaData.originalUrl, outputPath, format: selectedFormat, resolution, overwriteMode,
+      metadataTags: {
+        title: videoMetaData.fullTitle,
+        artist: videoMetaData.uploader,
+        date: videoMetaData.uploadDate,
+        description: videoMetaData.description,
+      },
+      thumbnailPath: videoMetaData.thumbnail,
+    });
   }
 
   const handleDownloadOperationFromResolution = async (resolution: string) => {

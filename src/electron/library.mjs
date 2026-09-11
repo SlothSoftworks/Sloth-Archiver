@@ -943,6 +943,17 @@ export function checkAndRepairEpochFiles({ libraryDir, videoDir, epoch }) {
     };
 }
 
+// Video-level, not per-epoch -- ensureVideoThumbnail (main.mjs) saves
+// exactly one video-thumbnail.* file directly in videoDir, a sibling of the
+// epoch folders, same pattern as channel-icon.* one level up. Accepts
+// already-fetched directory entries (scanLibrary already has them from its
+// own walk) to avoid a redundant readdir; fetches its own otherwise.
+export function findVideoThumbnailPath(videoDir, entries = null) {
+    const dirEntries = entries || fs.readdirSync(videoDir, { withFileTypes: true });
+    const thumbnailEntry = dirEntries.find((e) => e.isFile() && e.name.startsWith('video-thumbnail.'));
+    return thumbnailEntry ? path.join(videoDir, thumbnailEntry.name) : null;
+}
+
 // Bounded 3-level walk (channel/video/epoch), tolerant of partial or corrupt
 // folders -- a missing or unparseable metadata.json is skipped rather than
 // failing the whole scan, since an interrupted write is always conceivable.
@@ -1026,11 +1037,6 @@ export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_N
 
             if (!metadata) continue;
 
-            // Video-level, not per-epoch -- ensureVideoThumbnail (main.mjs)
-            // saves exactly one video-thumbnail.* file directly in videoPath,
-            // a sibling of the epoch folders, same pattern as channel-icon.*
-            // one level up.
-            const thumbnailEntry = epochEntries.find((e) => e.isFile() && e.name.startsWith('video-thumbnail.'));
             // Cheap (one JSON parse) -- only the count rides along in the main
             // index; the full per-clip list is fetched lazily via
             // library:getClips when the Clip Collection view actually opens.
@@ -1042,7 +1048,7 @@ export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_N
                 latestEpoch,
                 metadata,
                 epochs,
-                thumbnailPath: thumbnailEntry ? path.join(videoPath, thumbnailEntry.name) : null,
+                thumbnailPath: findVideoThumbnailPath(videoPath, epochEntries),
                 clipCount,
             });
         }

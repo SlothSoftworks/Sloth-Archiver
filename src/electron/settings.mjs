@@ -77,3 +77,9 @@ export function clampResumeMinDurationSeconds(value) {
     if (!Number.isFinite(n) || n < 0) return RESUME_MIN_DURATION_SECONDS_DEFAULT;
     return Math.floor(n);
 }
+
+export const EMBED_METADATA_BY_DEFAULT_DEFAULT = true;
+
+export function clampEmbedMetadataByDefault(value) {
+    return typeof value === 'boolean' ? value : EMBED_METADATA_BY_DEFAULT_DEFAULT;
+}

@@ -86,7 +86,16 @@ export default function OtherPlatformDownloadCard({ videoMetaData }: OtherPlatfo
     setSelectedResolution(resolution);
     setIsDownloading(true);
     setEmbedError(null);
-    startDownload({ videoUrl: videoMetaData.originalUrl, outputPath, format: 'dflt', resolution, overwriteMode });
+    startDownload({
+      videoUrl: videoMetaData.originalUrl, outputPath, format: 'dflt', resolution, overwriteMode,
+      metadataTags: {
+        title: videoMetaData.fullTitle || videoMetaData.title,
+        artist: videoMetaData.uploader,
+        date: videoMetaData.uploadDate,
+        description: videoMetaData.description,
+      },
+      thumbnailPath: videoMetaData.thumbnail,
+    });
   };
 
   // Reuses the same generic embedFileMetadata IPC LibraryVideoDetail.tsx's

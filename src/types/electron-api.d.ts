@@ -110,6 +110,8 @@ declare global {
             setResumeTrackingMode: (value: 'never' | 'always' | 'custom') => Promise<{ success: boolean; resumeTrackingMode: 'never' | 'always' | 'custom' }>
             getResumeMinDurationSeconds: () => Promise<{ resumeMinDurationSeconds: number }>
             setResumeMinDurationSeconds: (value: number) => Promise<{ success: boolean; resumeMinDurationSeconds: number }>
+            getEmbedMetadataByDefault: () => Promise<{ embedMetadataByDefault: boolean }>
+            setEmbedMetadataByDefault: (value: boolean) => Promise<{ success: boolean; embedMetadataByDefault: boolean }>
             getLibraryIndex: () => Promise<LibraryIndex>
             refreshLibraryIndex: () => Promise<LibraryIndex>
             refreshChannelIcon: (payload: { channelFolderName: string; channelId: string | null }) => Promise<LibraryIndex>

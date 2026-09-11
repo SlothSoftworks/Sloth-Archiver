@@ -23,6 +23,7 @@ function baseMetadata(overrides: Partial<LibraryVideoMetadata> = {}): LibraryVid
     downloadedResolution: null,
     downloadedFormat: null,
     downloadedAudioFilePath: null,
+    lastPlaybackPositionSeconds: null,
     ...overrides,
   };
 }

@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setResumeTrackingMode: (value) => ipcRenderer.invoke('settings:setResumeTrackingMode', value),
     getResumeMinDurationSeconds: () => ipcRenderer.invoke('settings:getResumeMinDurationSeconds'),
     setResumeMinDurationSeconds: (value) => ipcRenderer.invoke('settings:setResumeMinDurationSeconds', value),
+    getEmbedMetadataByDefault: () => ipcRenderer.invoke('settings:getEmbedMetadataByDefault'),
+    setEmbedMetadataByDefault: (value) => ipcRenderer.invoke('settings:setEmbedMetadataByDefault', value),
     getLibraryIndex: () => ipcRenderer.invoke('library:getIndex'),
     refreshLibraryIndex: () => ipcRenderer.invoke('library:refreshIndex'),
     refreshChannelIcon: (payload) => ipcRenderer.invoke('library:refreshChannelIcon', payload),

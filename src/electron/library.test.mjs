@@ -12,6 +12,7 @@ import {
   refreshLibraryEntryMetadata,
   recordLibraryDownload,
   savePlaybackPosition,
+  findVideoThumbnailPath,
   swapLibraryDownload,
   deleteLibraryEntry,
   deleteLocalFiles,
@@ -201,6 +202,29 @@ describe('addLibraryVersion', () => {
     expect(second.epochDir).not.toBe(first.epochDir);
     expect(fs.readdirSync(first.videoDir)).toHaveLength(2);
     expect(second.metadata.title).toBe('New Title');
+  });
+});
+
+describe('findVideoThumbnailPath', () => {
+  it('finds a video-thumbnail.* file directly in videoDir', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    fs.writeFileSync(path.join(videoDir, 'video-thumbnail.jpg'), 'fake image bytes');
+
+    expect(findVideoThumbnailPath(videoDir)).toBe(path.join(videoDir, 'video-thumbnail.jpg'));
+  });
+
+  it('returns null when no thumbnail file exists', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+
+    expect(findVideoThumbnailPath(videoDir)).toBeNull();
+  });
+
+  it('accepts already-fetched directory entries instead of re-reading the directory', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    fs.writeFileSync(path.join(videoDir, 'video-thumbnail.png'), 'fake image bytes');
+    const entries = fs.readdirSync(videoDir, { withFileTypes: true });
+
+    expect(findVideoThumbnailPath(videoDir, entries)).toBe(path.join(videoDir, 'video-thumbnail.png'));
   });
 });
 

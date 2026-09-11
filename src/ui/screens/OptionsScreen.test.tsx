@@ -39,6 +39,8 @@ beforeEach(() => {
     setResumeTrackingMode: vi.fn().mockResolvedValue({ success: true, resumeTrackingMode: 'custom' }),
     getResumeMinDurationSeconds: vi.fn().mockResolvedValue({ resumeMinDurationSeconds: 1200 }),
     setResumeMinDurationSeconds: vi.fn().mockResolvedValue({ success: true, resumeMinDurationSeconds: 1200 }),
+    getEmbedMetadataByDefault: vi.fn().mockResolvedValue({ embedMetadataByDefault: true }),
+    setEmbedMetadataByDefault: vi.fn().mockResolvedValue({ success: true, embedMetadataByDefault: true }),
     getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
   };
 });

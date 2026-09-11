@@ -17,8 +17,8 @@ import type { LibraryVideoMetadata } from '../../types';
 // exercise LibraryVideoPlayerWithTools's own logic (the state it derives,
 // which IPC calls it makes) in isolation from Vidstack entirely.
 let fakeCurrentTime = 0;
-let seekToSpy: ReturnType<typeof vi.fn>;
-let playSpy: ReturnType<typeof vi.fn>;
+let seekToSpy: ReturnType<typeof vi.fn<(seconds: number) => void>>;
+let playSpy: ReturnType<typeof vi.fn<() => void>>;
 vi.mock('./LibraryVideoPlayer', () => ({
   __esModule: true,
   default: forwardRef(function FakeLibraryVideoPlayer(
@@ -69,6 +69,7 @@ function baseMetadata(overrides: Partial<LibraryVideoMetadata> = {}): LibraryVid
     downloadedResolution: '720',
     downloadedFormat: 'dflt',
     downloadedAudioFilePath: null,
+    lastPlaybackPositionSeconds: null,
     ...overrides,
   };
 }
