@@ -640,7 +640,7 @@ describe('LibraryScreen', () => {
       await user.click(screen.getByRole('checkbox', { name: 'games' }));
       expect(screen.queryByText('Alpha Video')).not.toBeInTheDocument();
       expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
-      expect(screen.getByText('No videos match the selected tag filter.')).toBeInTheDocument();
+      expect(screen.getByText('No videos match the selected filter.')).toBeInTheDocument();
     });
 
     it('the tag filter composes with search, narrowing within the already-filtered set', async () => {
@@ -675,6 +675,167 @@ describe('LibraryScreen', () => {
 
       await user.click(screen.getByRole('button', { name: 'Clear filter' }));
       expect(await screen.findByText('Beta Video')).toBeInTheDocument();
+    });
+  });
+
+  describe('system filter (downloaded / not downloaded)', () => {
+    function makeChannelsWithOneDownloaded() {
+      const channels = makeChannels();
+      channels[0].videos[0].epochs = [{
+        epoch: '1',
+        metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080' },
+      }];
+      return channels;
+    }
+
+    it('shows Downloaded and Not Downloaded checkboxes in the filter popover', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+
+      expect(screen.getByRole('checkbox', { name: 'Downloaded' })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: 'Not Downloaded' })).toBeInTheDocument();
+    });
+
+    it('"Downloaded" narrows to only videos with a downloaded file', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: makeChannelsWithOneDownloaded() });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Downloaded' }));
+
+      expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+      expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
+    });
+
+    it('"Not Downloaded" narrows to only videos without a downloaded file', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: makeChannelsWithOneDownloaded() });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Not Downloaded' }));
+
+      expect(screen.queryByText('Alpha Video')).not.toBeInTheDocument();
+      expect(screen.getByText('Beta Video')).toBeInTheDocument();
+    });
+
+    it('composes with a tag filter (AND semantics)', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: makeChannelsWithOneDownloaded() });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA', 'vidB'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+      // Both carry the tag -- narrowing further by "Not Downloaded" should
+      // drop Alpha (downloaded), leaving only Beta.
+      await user.click(screen.getByRole('checkbox', { name: 'Not Downloaded' }));
+
+      expect(screen.queryByText('Alpha Video')).not.toBeInTheDocument();
+      expect(screen.getByText('Beta Video')).toBeInTheDocument();
+    });
+  });
+
+  describe('select all (flat video list)', () => {
+    it('starts unchecked, and checking it selects every currently visible video', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+      expect(selectAll).not.toBeChecked();
+
+      await user.click(selectAll);
+
+      expect(screen.getByRole('checkbox', { name: 'Select Alpha Video' })).toBeChecked();
+      expect(screen.getByRole('checkbox', { name: 'Select Beta Video' })).toBeChecked();
+      expect(screen.getByText('2 items selected')).toBeInTheDocument();
+      expect(selectAll).toBeChecked();
+    });
+
+    it('shows indeterminate once some but not all visible videos are selected individually, then checked once all are', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+
+      // MUI's Checkbox never sets the native `input.indeterminate` IDL
+      // property -- it only reflects the indeterminate prop via
+      // `aria-checked="mixed"` (plus a `data-indeterminate` attribute used
+      // purely for styling). Assert on the a11y state, not the DOM property.
+      expect(selectAll).toHaveAttribute('aria-checked', 'mixed');
+      expect(selectAll).not.toBeChecked();
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Beta Video' }));
+
+      expect(selectAll).not.toHaveAttribute('aria-checked', 'mixed');
+      expect(selectAll).toBeChecked();
+    });
+
+    it('unchecking "Select all" clears the whole selection', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+      await user.click(selectAll);
+      expect(screen.getByText('2 items selected')).toBeInTheDocument();
+
+      await user.click(selectAll);
+
+      expect(screen.queryByText(/item.*selected/)).not.toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: 'Select Alpha Video' })).not.toBeChecked();
+    });
+
+    it('selects only the currently tag-filtered set, not the whole library', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({ tags: { TVshows: ['vidA'] } });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+      await user.keyboard('{Escape}');
+      expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select all' }));
+
+      expect(screen.getByText('1 item selected')).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: 'Select Alpha Video' })).toBeChecked();
+    });
+  });
+
+  describe('select all (channel video grid)', () => {
+    it('selects every video within the currently open channel only', async () => {
+      const user = userEvent.setup();
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('Channel A'));
+      await screen.findByText('Alpha Video');
+
+      const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+      expect(selectAll).not.toBeChecked();
+
+      await user.click(selectAll);
+
+      expect(screen.getByRole('checkbox', { name: 'Select Alpha Video' })).toBeChecked();
+      expect(screen.getByText('1 item selected')).toBeInTheDocument();
     });
   });
 

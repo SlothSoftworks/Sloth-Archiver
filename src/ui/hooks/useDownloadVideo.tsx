@@ -35,7 +35,7 @@ function useDownloadVideo() {
 
 
     const startDownload = (props: DownloadVideoParams) => {
-        const { videoUrl, outputPath, format, resolution, overwriteMode, additionalOptions } = props;
+        const { videoUrl, outputPath, format, resolution, overwriteMode, additionalOptions, metadataTags, thumbnailPath } = props;
         const requestId = crypto.randomUUID();
         requestIdRef.current = requestId;
 
@@ -51,7 +51,7 @@ function useDownloadVideo() {
         setIsRetrying(false);
         setRetryInfo(null);
 
-        window.electronAPIPythonDownload.startDownloadPython({ videoUrl, outputPath, format, resolution, overwriteMode, additionalOptions, requestId })
+        window.electronAPIPythonDownload.startDownloadPython({ videoUrl, outputPath, format, resolution, overwriteMode, additionalOptions, metadataTags, thumbnailPath, requestId })
     }
 
     // Only meaningful while this hook's own download is in flight -- the main

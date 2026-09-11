@@ -10,8 +10,8 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
-import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampThemeName } from './settings.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
+import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
@@ -59,6 +59,14 @@ const ffprobeBinaryName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprob
 const ffmpegBinaryPath = path.join(ffmpegDir, ffmpegBinaryName);
 const ffprobeBinaryPath = path.join(ffmpegDir, ffprobeBinaryName);
 
+// Bundled the same way as ffmpeg/ffprobe above (read directly from
+// extraResources, no userData relocation -- there's no Deno self-updater
+// the way yt-dlp has one, so nothing ever needs to overwrite this at
+// runtime). See jsRuntimeArgs below for why this is bundled at all.
+const denoDir = isDev ? path.resolve(__dirname, '../deno') : path.join(process.resourcesPath, 'deno');
+const denoBinaryName = process.platform === 'win32' ? 'deno.exe' : 'deno';
+const denoBinaryPath = path.join(denoDir, denoBinaryName);
+
 // extraResources (Contents/Resources on mac, the resources dir on Windows)
 // isn't reliably writable without elevation, so the updater could never swap
 // a fresh binary in there. Relocate to userData (always per-user-writable)
@@ -88,22 +96,30 @@ const VIDEO_INFO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // yt-dlp needs a real JS runtime to solve YouTube's nsig signature challenge;
 // without one, every real video/audio format silently disappears once a
-// request is authenticated, leaving only storyboard formats. Rather than
-// bundling a standalone JS runtime binary, this points yt-dlp's "node"
-// provider at the Electron binary itself -- Electron already embeds a full
-// Node.js runtime, and running it with ELECTRON_RUN_AS_NODE=1 (see
-// ytdlpSpawnEnv below) makes it behave as a plain `node` executable for
-// yt-dlp's purposes, at zero extra bundled bytes.
+// request is authenticated, leaving only storyboard formats. Points yt-dlp's
+// "deno" provider at the bundled Deno binary rather than running Electron
+// itself as Node: Deno sandboxes by default (no fs/net/env/subprocess access
+// unless explicitly granted, and yt-dlp's own deno.py adds zero --allow-*
+// flags), closing a gap the Electron-as-node approach couldn't -- Node's own
+// --permission model has no equivalent of network denial at all. Verified
+// directly against a real nsig solve before switching (see
+// 0tempFiles/deno-vs-electron-node-sandboxing-comparison.md).
 export function jsRuntimeArgs() {
-    return ['--js-runtimes', `node:${process.execPath}`];
+    return ['--js-runtimes', `deno:${denoBinaryPath}`];
 }
 
-// Every yt-dlp child process needs this env so that the Electron-binary-as-
-// node trick above actually works -- yt-dlp spawns process.execPath itself
-// as a nested child, which inherits whatever env yt-dlp was spawned with.
-// Harmless for yt-dlp's own (Python) process, which never checks this var.
+// Curated, not a full process.env copy -- Deno's own sandbox already denies
+// env access by default, but this still matters for --cookies-from-browser
+// (cookies.mjs), which needs HOME/USERPROFILE/APPDATA/LOCALAPPDATA to locate
+// a browser's profile directory regardless of which JS runtime is in use.
+const YTDLP_ENV_ALLOWLIST = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PATH', 'TEMP', 'TMP', 'TMPDIR'];
+
 export function ytdlpSpawnEnv() {
-    return { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+    const env = {};
+    for (const key of YTDLP_ENV_ALLOWLIST) {
+        if (process.env[key] !== undefined) env[key] = process.env[key];
+    }
+    return env;
 }
 
 // Defense-in-depth for every IPC handler that hands a caller-supplied URL to
@@ -584,6 +600,42 @@ ipcMain.handle('settings:setThumbnailSize', async (e, value) => {
     return { success: true, thumbnailSize: settings.thumbnailSize };
 });
 
+ipcMain.handle('settings:getResumeTrackingMode', async () => {
+    const { resumeTrackingMode } = readSettings();
+    return { resumeTrackingMode: clampResumeTrackingMode(resumeTrackingMode ?? RESUME_TRACKING_MODE_DEFAULT) };
+});
+
+ipcMain.handle('settings:setResumeTrackingMode', async (e, value) => {
+    const settings = readSettings();
+    settings.resumeTrackingMode = clampResumeTrackingMode(value);
+    writeSettings(settings);
+    return { success: true, resumeTrackingMode: settings.resumeTrackingMode };
+});
+
+ipcMain.handle('settings:getResumeMinDurationSeconds', async () => {
+    const { resumeMinDurationSeconds } = readSettings();
+    return { resumeMinDurationSeconds: clampResumeMinDurationSeconds(resumeMinDurationSeconds ?? RESUME_MIN_DURATION_SECONDS_DEFAULT) };
+});
+
+ipcMain.handle('settings:setResumeMinDurationSeconds', async (e, value) => {
+    const settings = readSettings();
+    settings.resumeMinDurationSeconds = clampResumeMinDurationSeconds(value);
+    writeSettings(settings);
+    return { success: true, resumeMinDurationSeconds: settings.resumeMinDurationSeconds };
+});
+
+ipcMain.handle('settings:getEmbedMetadataByDefault', async () => {
+    const { embedMetadataByDefault } = readSettings();
+    return { embedMetadataByDefault: clampEmbedMetadataByDefault(embedMetadataByDefault ?? EMBED_METADATA_BY_DEFAULT_DEFAULT) };
+});
+
+ipcMain.handle('settings:setEmbedMetadataByDefault', async (e, value) => {
+    const settings = readSettings();
+    settings.embedMetadataByDefault = clampEmbedMetadataByDefault(value);
+    writeSettings(settings);
+    return { success: true, embedMetadataByDefault: settings.embedMetadataByDefault };
+});
+
 // User-added muxers for the Library view's "convert to" ffmpeg utility,
 // beyond the small hardcoded popular set (LibraryVideoDetail.tsx) -- a plain
 // string list, not validated against ffmpeg's own muxer list.
@@ -931,9 +983,16 @@ ipcMain.handle('library:findVideo', async (e, videoId, libraryTag) => {
 });
 
 ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, resolution, format, kind }) => {
-    recordLibraryDownload({ videoDir, epoch, filePath, resolution, format, kind });
+    const metadata = recordLibraryDownload({ videoDir, epoch, filePath, resolution, format, kind });
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     await refreshLibraryIndex(libraryDir, activeLibraryTag);
+    const metadataTags = { title: metadata.title, artist: metadata.channel, date: metadata.uploadDate, description: metadata.description };
+    await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
+    return { success: true };
+});
+
+ipcMain.handle('library:savePlaybackPosition', async (e, { videoDir, epoch, positionSeconds }) => {
+    savePlaybackPosition({ videoDir, epoch, positionSeconds });
     return { success: true };
 });
 
@@ -941,6 +1000,9 @@ ipcMain.handle('library:swapDownload', async (e, { videoDir, epoch, tempFilePath
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const metadata = swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format, kind });
     await refreshLibraryIndex(libraryDir, activeLibraryTag);
+    const filePath = kind === 'audio' ? metadata.downloadedAudioFilePath : metadata.downloadedFilePath;
+    const metadataTags = { title: metadata.title, artist: metadata.channel, date: metadata.uploadDate, description: metadata.description };
+    await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
     return metadata;
 });
 
@@ -1627,6 +1689,14 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                 const finalFile = findFinalFile(options.outputPath);
                 log(`[download] ${options.requestId} attempt ${attempt} done -> ${finalFile}`);
                 rememberAppPath(finalFile);
+                await maybeAutoEmbedMetadata({
+                    filePath: finalFile,
+                    kind: options.resolution && options.resolution.toLowerCase() === 'mp3' ? 'audio' : 'video',
+                    metadataTags: options.metadataTags,
+                    thumbnailPath: options.thumbnailPath,
+                    libraryDir: readSettings().libraryDir,
+                    logContext: options.requestId,
+                });
                 send({ type: 'done', payload: { filename: finalFile } });
                 return;
             }
@@ -1663,6 +1733,14 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
                 finishDownload();
                 log(`[download] ${options.requestId} attempt ${attempt} postprocess complete -> ${postprocessOutputPath}`);
                 rememberAppPath(postprocessOutputPath);
+                await maybeAutoEmbedMetadata({
+                    filePath: postprocessOutputPath,
+                    kind: options.resolution && options.resolution.toLowerCase() === 'mp3' ? 'audio' : 'video',
+                    metadataTags: options.metadataTags,
+                    thumbnailPath: options.thumbnailPath,
+                    libraryDir: readSettings().libraryDir,
+                    logContext: options.requestId,
+                });
                 send({ type: 'done', payload: { filename: postprocessOutputPath } });
             } catch (err) {
                 // Our own direct ffmpeg pass, not yt-dlp -- still worth the
@@ -1724,11 +1802,13 @@ export function resolveAppOrLibraryPath(libraryDir, candidatePath) {
 // Matches every shape FfmpegUtilitiesPanel.tsx's own timestamp helpers can
 // produce: formatClipTimestampInput (typed input, anywhere from a bare
 // seconds value up to HH:MM:SS) and formatSecondsAsClipTimestamp (the
-// "set from current playback position" default fill, always HH:MM:SS with
-// unbounded hours for a very long video). Rejects anything else -- start/end
-// are spliced directly into ffmpeg's -ss/-to argv slots, so this is what
-// stands between a crafted string and an injected ffmpeg option.
-const CLIP_TIMESTAMP_PATTERN = /^\d{1,6}(:\d{2}){0,2}$/;
+// "set from current playback position" default fill, always HH:MM:SS,
+// optionally with a .mmm millisecond suffix on the seconds group for a
+// drag-derived sub-second clip boundary, and unbounded hours for a very
+// long video). Rejects anything else -- start/end are spliced directly into
+// ffmpeg's -ss/-to argv slots, so this is what stands between a crafted
+// string and an injected ffmpeg option.
+const CLIP_TIMESTAMP_PATTERN = /^\d{1,6}(:\d{2}){0,2}(\.\d{1,3})?$/;
 export function isValidClipTimestamp(value) {
     return typeof value === 'string' && CLIP_TIMESTAMP_PATTERN.test(value);
 }
@@ -1831,16 +1911,19 @@ ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, forma
     }
 });
 
-// start/end are passed straight through to ffmpeg's own -ss/-to, which
-// already accepts the flexible time formats the UI's fields take -- so they
-// pass through unparsed, but isValidClipTimestamp below still gates them
-// against the shape this app's own UI can ever actually produce, since
-// they're spliced directly into ffmpeg's argv. Both as output options
-// (after -i), so they're unambiguous timestamps in the source's timeline --
-// slower to seek than input-side -ss, but -c copy never decodes video either
-// way, so it's only an I/O cost. -c copy snaps to the nearest keyframe
-// rather than an exact frame, a documented tradeoff; frame-accurate
-// re-encoded cuts are a deliberately separate, not-yet-offered option.
+// start is passed straight through to ffmpeg's own input-side -ss (before
+// -i), which already accepts the flexible time formats the UI's fields take
+// -- so it passes through unparsed, but isValidClipTimestamp below still
+// gates it against the shape this app's own UI can ever actually produce,
+// since it's spliced directly into ffmpeg's argv. Input-side rather than
+// output-side: an output-side -ss under -c copy can't re-cut the already-
+// copied video track, so it only starts at the next keyframe after the seek
+// point while audio starts exactly on time, producing a frozen last frame.
+// Input-side -ss makes the demuxer jump to the keyframe at or before the
+// point instead, keeping video/audio in sync at the cost of the clip
+// possibly starting up to one GOP length earlier than requested on the
+// -c copy fast path; clipAndConvert auto-upgrades to a re-encode when that
+// rounding risk is large relative to the clip length.
 // Arbitrary-output-path clip export: unlike library:createClip below, this
 // never touches clips.json and writes wherever the caller (a save dialog)
 // picked, for player instances with no "library video entry" to attach a
@@ -2032,12 +2115,14 @@ ipcMain.handle('library:convertClip', async (e, { videoDir, clipId, format, forc
 // this replaces it rather than stacking old covers. The cover stream is
 // always re-encoded to mjpeg since webp isn't a valid embedded-cover codec
 // for ID3/mov -- everything else stays -c copy, no quality loss.
-ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thumbnailPath, kind }) => {
+// Shared by the manual "Embed metadata" IPC handler below and the
+// auto-embed-on-download hook in library:recordDownload/library:swapDownload
+// -- one implementation, two callers.
+async function embedMetadataIntoFile({ inputPath, metadataTags, thumbnailPath, kind, libraryDir }) {
     // Broader than resolveInsideLibrary alone: this is also used from the
     // plain Downloader tab (OtherPlatformDownloadCard.tsx), where inputPath
     // is a file that was never added to the library -- just downloaded to
     // wherever dialog:saveVideoFile put it.
-    const { libraryDir } = readSettings();
     const resolvedInput = resolveAppOrLibraryPath(libraryDir, inputPath);
     if (!resolvedInput) {
         return { success: false, message: 'Refusing to modify a file outside the configured library folder.' };
@@ -2106,7 +2191,32 @@ ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thu
     } finally {
         if (downloadedThumbnailPath) fs.rmSync(downloadedThumbnailPath, { force: true });
     }
+}
+
+ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thumbnailPath, kind }) => {
+    const { libraryDir } = readSettings();
+    return embedMetadataIntoFile({ inputPath, metadataTags, thumbnailPath, kind, libraryDir });
 });
+
+// Best-effort, matching enrichPlaylistEntry's own precedent for a
+// background step riding along an already-succeeded action. Shared by the
+// library flow (library:recordDownload/swapDownload, which build
+// metadataTags/thumbnailPath from the just-written metadata.json) and the
+// plain Downloader tab (downloadVideoWithProgressUpdates, which only calls
+// this when a caller actually supplied metadataTags -- library-flow
+// downloads never do, so this is a no-op there and the library hook stays
+// the sole trigger for library downloads).
+async function maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath, libraryDir, logContext }) {
+    if (!metadataTags) return;
+    const { embedMetadataByDefault } = readSettings();
+    if (!clampEmbedMetadataByDefault(embedMetadataByDefault ?? EMBED_METADATA_BY_DEFAULT_DEFAULT)) return;
+    try {
+        const result = await embedMetadataIntoFile({ inputPath: filePath, metadataTags, thumbnailPath, kind, libraryDir });
+        if (!result.success) log(`[auto-embed] failed for ${logContext}: ${result.message}`);
+    } catch (err) {
+        log(`[auto-embed] failed for ${logContext}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+}
 
 ipcMain.handle('ytdlp:checkForUpdate', async () => {
     const current = await getCurrentYtdlpVersion(ytdlpPath);

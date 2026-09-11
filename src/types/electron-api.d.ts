@@ -106,6 +106,12 @@ declare global {
             setMaxSimultaneousDownloads: (value: number) => Promise<{ success: boolean; maxSimultaneousDownloads: number }>
             getThumbnailSize: () => Promise<{ thumbnailSize: number }>
             setThumbnailSize: (value: number) => Promise<{ success: boolean; thumbnailSize: number }>
+            getResumeTrackingMode: () => Promise<{ resumeTrackingMode: 'never' | 'always' | 'custom' }>
+            setResumeTrackingMode: (value: 'never' | 'always' | 'custom') => Promise<{ success: boolean; resumeTrackingMode: 'never' | 'always' | 'custom' }>
+            getResumeMinDurationSeconds: () => Promise<{ resumeMinDurationSeconds: number }>
+            setResumeMinDurationSeconds: (value: number) => Promise<{ success: boolean; resumeMinDurationSeconds: number }>
+            getEmbedMetadataByDefault: () => Promise<{ embedMetadataByDefault: boolean }>
+            setEmbedMetadataByDefault: (value: boolean) => Promise<{ success: boolean; embedMetadataByDefault: boolean }>
             getLibraryIndex: () => Promise<LibraryIndex>
             refreshLibraryIndex: () => Promise<LibraryIndex>
             refreshChannelIcon: (payload: { channelFolderName: string; channelId: string | null }) => Promise<LibraryIndex>
@@ -123,6 +129,7 @@ declare global {
             undoPlaylistRefresh: (playlistId: string) => Promise<{ success: boolean; metadata?: PlaylistSnapshot; message?: string }>
             deletePlaylist: (playlistId: string) => Promise<{ success: boolean; message?: string }>
             recordLibraryDownload: (payload: { videoDir: string; epoch: string; filePath: string; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<{ success: boolean }>
+            savePlaybackPosition: (payload: { videoDir: string; epoch: string; positionSeconds: number }) => Promise<{ success: boolean }>
             swapLibraryDownload: (payload: { videoDir: string; epoch: string; tempFilePath: string; oldFilePath: string | null; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<LibraryVideoMetadata>
             deleteLibraryEntry: (videoDir: string, epoch?: string) => Promise<{ success: boolean; videoDeleted: boolean }>
             deleteLibraryEntries: (videoDirs: string[]) => Promise<{ success: boolean; results: { videoDir: string; success: boolean; error?: string }[] }>

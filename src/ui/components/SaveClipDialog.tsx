@@ -71,7 +71,7 @@ export default function SaveClipDialog({
 
   const trimmedName = clipName.trim();
   const isDuplicate = trimmedName.length > 0 && existingClipTitles.some((t) => t.toLowerCase() === trimmedName.toLowerCase());
-  const rangeInvalid = !!start.trim() && !!end.trim() && parseClipTimestampSeconds(end) < parseClipTimestampSeconds(start) + 1;
+  const rangeInvalid = !!start.trim() && !!end.trim() && parseClipTimestampSeconds(end) < parseClipTimestampSeconds(start) + 0.1;
   const resolvedFormat = format === OTHER_FORMAT_VALUE ? otherFormatInput.trim().toLowerCase() : format;
   const canSubmit = !!trimmedName && !isDuplicate && !rangeInvalid && !!start.trim() && !!end.trim()
     && (format !== OTHER_FORMAT_VALUE || !!otherFormatInput.trim()) && !submitting;

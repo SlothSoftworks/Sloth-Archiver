@@ -271,7 +271,7 @@ export function transferVideoTags(libraryDir, sourceTag, targetTag, videoIds) {
 // today" and surface a "this entry predates newer features, refresh it"
 // notice -- see LibraryVideoDetail.tsx/PlaylistsSection.tsx's own duplicated
 // copy of these two numbers.
-export const CURRENT_VIDEO_SCHEMA_VERSION = 3;
+export const CURRENT_VIDEO_SCHEMA_VERSION = 4;
 export const CURRENT_PLAYLIST_SCHEMA_VERSION = 1;
 
 // One cross-platform sanitizer using Windows' illegal-character set as the
@@ -474,6 +474,7 @@ function buildEpochMetadata(videoMetaData, addedEpoch) {
         // MP3 is a separate, coexisting artifact -- its own slot (audio.mp3,
         // alongside video.<ext>), independent of the video fields above.
         downloadedAudioFilePath: null,
+        lastPlaybackPositionSeconds: null,
     };
 }
 
@@ -541,6 +542,7 @@ export function refreshLibraryEntryMetadata({ libraryDir, videoDir, epoch, video
         downloadedResolution: existing.downloadedResolution ?? null,
         downloadedFormat: existing.downloadedFormat ?? null,
         downloadedAudioFilePath: existing.downloadedAudioFilePath ?? null,
+        lastPlaybackPositionSeconds: existing.lastPlaybackPositionSeconds ?? null,
     };
     fs.writeFileSync(metadataPath, JSON.stringify(merged, null, 2), 'utf-8');
     return merged;
@@ -561,6 +563,17 @@ export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, f
         metadata.downloadedResolution = resolution || null;
         metadata.downloadedFormat = format || null;
     }
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    return metadata;
+}
+
+// Deliberately doesn't refresh the in-memory library index the way
+// recordLibraryDownload does -- this write is frequent and cheap, and
+// nothing in the library grid reflects it.
+export function savePlaybackPosition({ videoDir, epoch, positionSeconds }) {
+    const metadataPath = path.join(videoDir, epoch, 'metadata.json');
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    metadata.lastPlaybackPositionSeconds = positionSeconds;
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
     return metadata;
 }
@@ -930,6 +943,17 @@ export function checkAndRepairEpochFiles({ libraryDir, videoDir, epoch }) {
     };
 }
 
+// Video-level, not per-epoch -- ensureVideoThumbnail (main.mjs) saves
+// exactly one video-thumbnail.* file directly in videoDir, a sibling of the
+// epoch folders, same pattern as channel-icon.* one level up. Accepts
+// already-fetched directory entries (scanLibrary already has them from its
+// own walk) to avoid a redundant readdir; fetches its own otherwise.
+export function findVideoThumbnailPath(videoDir, entries = null) {
+    const dirEntries = entries || fs.readdirSync(videoDir, { withFileTypes: true });
+    const thumbnailEntry = dirEntries.find((e) => e.isFile() && e.name.startsWith('video-thumbnail.'));
+    return thumbnailEntry ? path.join(videoDir, thumbnailEntry.name) : null;
+}
+
 // Bounded 3-level walk (channel/video/epoch), tolerant of partial or corrupt
 // folders -- a missing or unparseable metadata.json is skipped rather than
 // failing the whole scan, since an interrupted write is always conceivable.
@@ -1013,11 +1037,6 @@ export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_N
 
             if (!metadata) continue;
 
-            // Video-level, not per-epoch -- ensureVideoThumbnail (main.mjs)
-            // saves exactly one video-thumbnail.* file directly in videoPath,
-            // a sibling of the epoch folders, same pattern as channel-icon.*
-            // one level up.
-            const thumbnailEntry = epochEntries.find((e) => e.isFile() && e.name.startsWith('video-thumbnail.'));
             // Cheap (one JSON parse) -- only the count rides along in the main
             // index; the full per-clip list is fetched lazily via
             // library:getClips when the Clip Collection view actually opens.
@@ -1029,7 +1048,7 @@ export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_N
                 latestEpoch,
                 metadata,
                 epochs,
-                thumbnailPath: thumbnailEntry ? path.join(videoPath, thumbnailEntry.name) : null,
+                thumbnailPath: findVideoThumbnailPath(videoPath, epochEntries),
                 clipCount,
             });
         }

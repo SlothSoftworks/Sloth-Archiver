@@ -9,7 +9,10 @@ import {
   videoFolderName,
   writeLibraryEntry,
   addLibraryVersion,
+  refreshLibraryEntryMetadata,
   recordLibraryDownload,
+  savePlaybackPosition,
+  findVideoThumbnailPath,
   swapLibraryDownload,
   deleteLibraryEntry,
   deleteLocalFiles,
@@ -146,12 +149,13 @@ describe('writeLibraryEntry', () => {
     expect(channelDir).toBe(path.join(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Some Channel'));
     expect(videoDir).toBe(path.join(channelDir, 'abc123'));
 
-    expect(metadata.schemaVersion).toBe(3);
+    expect(metadata.schemaVersion).toBe(4);
     expect(metadata.videoId).toBe('abc123');
     expect(metadata.channel).toBe('Some Channel');
     expect(metadata.resolutions).toEqual([{ resolution: '720', filesizeMb: '10' }]);
     expect(metadata.downloadedFilePath).toBeNull();
     expect(metadata.downloadedAudioFilePath).toBeNull();
+    expect(metadata.lastPlaybackPositionSeconds).toBeNull();
 
     expect(readMetadata(epochDir)).toEqual(metadata);
   });
@@ -201,6 +205,29 @@ describe('addLibraryVersion', () => {
   });
 });
 
+describe('findVideoThumbnailPath', () => {
+  it('finds a video-thumbnail.* file directly in videoDir', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    fs.writeFileSync(path.join(videoDir, 'video-thumbnail.jpg'), 'fake image bytes');
+
+    expect(findVideoThumbnailPath(videoDir)).toBe(path.join(videoDir, 'video-thumbnail.jpg'));
+  });
+
+  it('returns null when no thumbnail file exists', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+
+    expect(findVideoThumbnailPath(videoDir)).toBeNull();
+  });
+
+  it('accepts already-fetched directory entries instead of re-reading the directory', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    fs.writeFileSync(path.join(videoDir, 'video-thumbnail.png'), 'fake image bytes');
+    const entries = fs.readdirSync(videoDir, { withFileTypes: true });
+
+    expect(findVideoThumbnailPath(videoDir, entries)).toBe(path.join(videoDir, 'video-thumbnail.png'));
+  });
+});
+
 describe('recordLibraryDownload', () => {
   it('sets video fields for kind "video" without touching audio fields', () => {
     const { videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
@@ -222,6 +249,46 @@ describe('recordLibraryDownload', () => {
 
     expect(updated.downloadedAudioFilePath).toBe('/x/audio.mp3');
     expect(updated.downloadedFilePath).toBeNull();
+  });
+});
+
+describe('savePlaybackPosition', () => {
+  it('writes just lastPlaybackPositionSeconds, leaving every other field untouched', () => {
+    const { videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    recordLibraryDownload({ videoDir, epoch, filePath: '/x/video.mp4', resolution: '720', format: 'mp4' });
+
+    const updated = savePlaybackPosition({ videoDir, epoch, positionSeconds: 42 });
+
+    expect(updated.lastPlaybackPositionSeconds).toBe(42);
+    expect(updated.downloadedFilePath).toBe('/x/video.mp4');
+    expect(updated.downloadedResolution).toBe('720');
+    expect(readMetadata(videoDir, epoch)).toEqual(updated);
+  });
+
+  it('overwrites a previously-saved position with the latest one', () => {
+    const { videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    savePlaybackPosition({ videoDir, epoch, positionSeconds: 10 });
+
+    const updated = savePlaybackPosition({ videoDir, epoch, positionSeconds: 55 });
+
+    expect(updated.lastPlaybackPositionSeconds).toBe(55);
+  });
+});
+
+describe('refreshLibraryEntryMetadata', () => {
+  it('preserves a saved playback position across a metadata refresh', () => {
+    const { videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const epoch = String(metadata.addedEpoch);
+    savePlaybackPosition({ videoDir, epoch, positionSeconds: 77 });
+
+    const refreshed = refreshLibraryEntryMetadata({
+      libraryDir, videoDir, epoch, videoMetaData: baseVideoMetaData({ title: 'Updated Title' }),
+    });
+
+    expect(refreshed.title).toBe('Updated Title');
+    expect(refreshed.lastPlaybackPositionSeconds).toBe(77);
   });
 });
 

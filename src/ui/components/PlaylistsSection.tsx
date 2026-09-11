@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
 import {
   Alert,
   Avatar,
+  Badge,
   Box,
   Button,
   Card,
@@ -33,10 +34,14 @@ import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import FilterListIcon from '@mui/icons-material/FilterList';
+import { pink } from '@mui/material/colors';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl, formatEpochLabel, getBestDownloadedQuality } from '../../utils/utils.ts';
 import LibrarySearchBar from './LibrarySearchBar';
 import BulkDownloadQualityDialog from './BulkDownloadQualityDialog';
 import BulkDeleteConfirmDialog from './BulkDeleteConfirmDialog';
+import TagFilterPopover, { type SystemFilterKey } from './TagFilterPopover';
+import TagSelectedDialog from './TagSelectedDialog';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
 import type { PlaylistSummary, PlaylistSnapshot, LibraryVideoMetadata } from '../../types';
@@ -48,6 +53,8 @@ export type PlaylistBulkBar = {
   canDeleteLocalFiles: boolean;
   onDeleteLocalFiles: () => void;
   onDeleteFromLibrary: () => void;
+  canTag: boolean;
+  onTagSelected: () => void;
 };
 
 // Mirrors library.mjs's own CURRENT_PLAYLIST_SCHEMA_VERSION (main process
@@ -96,6 +103,13 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
   const [bulkDeleteLocalFilesDialogOpen, setBulkDeleteLocalFilesDialogOpen] = useState(false);
   const [bulkDeletingLocalFiles, setBulkDeletingLocalFiles] = useState(false);
   const [bulkDeleteLocalFilesError, setBulkDeleteLocalFilesError] = useState<string | null>(null);
+  const [videoTags, setVideoTags] = useState<Record<string, string[]>>({});
+  const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(null);
+  const [selectedTagFilters, setSelectedTagFilters] = useState<Set<string>>(new Set());
+  const [selectedSystemFilters, setSelectedSystemFilters] = useState<Set<SystemFilterKey>>(new Set());
+  const [tagDialogOpen, setTagDialogOpen] = useState(false);
+  const [tagging, setTagging] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
   const { start } = useBulkAddQueue();
   const { query, setQuery, isSearching, filtered: filteredPlaylists, clear } = useLibrarySearch(
     playlists,
@@ -114,11 +128,23 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
     });
   };
   const clearSelection = () => setSelectedVideoIds(new Set());
+  const toggleTagFilter = (tag: string, checked: boolean) => {
+    setSelectedTagFilters((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(tag);
+      else next.delete(tag);
+      return next;
+    });
+  };
+  const toggleSystemFilter = (key: SystemFilterKey, checked: boolean) => {
+    setSelectedSystemFilters((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  };
 
-  // Selectable entries are every entry not confirmed unavailable -- both
-  // already-in-library and not-yet-added ones.
-  const selectableEntries = (selectedPlaylist?.entries || []).filter((e) => !e.unavailable);
-  const selectedEntries = selectableEntries.filter((e) => selectedVideoIds.has(e.videoId));
   // An in-library entry's downloaded quality comes from its own epochs; a
   // not-yet-added entry (no videoDir) has nothing downloaded by definition.
   // Backs both the bulk-download gating below and each row's quality chip.
@@ -128,9 +154,43 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
     return video ? getBestDownloadedQuality(video.epochs) : null;
   };
   const isEntryDownloaded = (videoId: string) => getEntryQuality(videoId) !== null;
+
+  // Entries currently on screen, after the tag/downloaded filters below --
+  // used only for rendering and for what "select all" targets. Manual
+  // per-item selections are tracked separately (against the unfiltered set,
+  // see allSelectableEntries) so narrowing the filter never silently drops
+  // an already-selected video out of a pending bulk action.
+  const filteredEntries = useMemo(() => {
+    const entries = selectedPlaylist?.entries || [];
+    return entries.filter((e) => {
+      if (selectedSystemFilters.has('downloaded') && !isEntryDownloaded(e.videoId)) return false;
+      if (selectedSystemFilters.has('notDownloaded') && isEntryDownloaded(e.videoId)) return false;
+      if (selectedTagFilters.size > 0 && ![...selectedTagFilters].every((tag) => videoTags[tag]?.includes(e.videoId))) return false;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPlaylist, selectedSystemFilters, selectedTagFilters, videoTags, videoByDir]);
+
+  // Selectable entries are every entry not confirmed unavailable -- both
+  // already-in-library and not-yet-added ones. Unfiltered: what a bulk
+  // action actually operates on regardless of the current filter.
+  const allSelectableEntries = (selectedPlaylist?.entries || []).filter((e) => !e.unavailable);
+  const selectedEntries = allSelectableEntries.filter((e) => selectedVideoIds.has(e.videoId));
+  // Filtered: exactly what's visible right now, what "select all" targets.
+  const visibleSelectableEntries = filteredEntries.filter((e) => !e.unavailable);
+  const allVisibleSelected = visibleSelectableEntries.length > 0 && visibleSelectableEntries.every((e) => selectedVideoIds.has(e.videoId));
+  const someVisibleSelected = visibleSelectableEntries.some((e) => selectedVideoIds.has(e.videoId));
+
   const canBulkDownload = selectedEntries.length > 0 && selectedEntries.every((e) => !isEntryDownloaded(e.videoId));
   // Mirror image of canBulkDownload -- all-or-nothing, same gating style.
   const canDeleteLocalFiles = selectedEntries.length > 0 && selectedEntries.every((e) => isEntryDownloaded(e.videoId));
+  // Only entries actually in the library have a taggable videoId -- a
+  // not-yet-added entry has nothing to attach the tag to yet, same
+  // reasoning as deletableSelectedVideoDirs below.
+  const taggableSelectedVideoIds = selectedEntries
+    .filter((e) => !!selectedPlaylist?.localFiles[e.videoId])
+    .map((e) => e.videoId);
+  const canTag = taggableSelectedVideoIds.length > 0;
 
   const handleConfirmBulkDownload = (targetResolution: string) => {
     const isMp3 = targetResolution.toLowerCase() === 'mp3';
@@ -179,7 +239,7 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
         setBulkDeleteError(`${failedDirs.size} of ${deletableSelectedVideoDirs.length} video(s) couldn't be deleted. Try again, or delete them individually.`);
         setSelectedVideoIds((prev) => {
           const next = new Set<string>();
-          for (const entry of selectableEntries) {
+          for (const entry of allSelectableEntries) {
             const dir = selectedPlaylist?.localFiles[entry.videoId];
             if (prev.has(entry.videoId) && dir && failedDirs.has(dir)) next.add(entry.videoId);
           }
@@ -205,7 +265,7 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
         setBulkDeleteLocalFilesError(`${failedDirs.size} of ${deletableSelectedVideoDirs.length} video(s) couldn't be updated. Try again, or delete them individually.`);
         setSelectedVideoIds((prev) => {
           const next = new Set<string>();
-          for (const entry of selectableEntries) {
+          for (const entry of allSelectableEntries) {
             const dir = selectedPlaylist?.localFiles[entry.videoId];
             if (prev.has(entry.videoId) && dir && failedDirs.has(dir)) next.add(entry.videoId);
           }
@@ -233,9 +293,11 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
       canDeleteLocalFiles,
       onDeleteLocalFiles: () => setBulkDeleteLocalFilesDialogOpen(true),
       onDeleteFromLibrary: () => setBulkDeleteDialogOpen(true),
+      canTag,
+      onTagSelected: () => setTagDialogOpen(true),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPlaylistId, detailLoading, selectedVideoIds, canBulkDownload, canDeleteLocalFiles]);
+  }, [selectedPlaylistId, detailLoading, selectedVideoIds, canBulkDownload, canDeleteLocalFiles, canTag]);
 
   // Reported bar has to be torn down on unmount too -- otherwise LibraryScreen
   // keeps rendering a bottom bar for a PlaylistsSection that's no longer there
@@ -253,11 +315,17 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
     loadList();
   }, []);
 
+  const refreshVideoTags = async () => {
+    const { tags } = await window.electronAPI.listVideoTags();
+    setVideoTags(tags);
+  };
+
   const loadDetail = async (playlistId: string) => {
     setDetailLoading(true);
     const [{ playlist }, index] = await Promise.all([
       window.electronAPI.getPlaylist(playlistId),
       window.electronAPI.getLibraryIndex(),
+      refreshVideoTags(),
     ]);
     setSelectedPlaylist(playlist);
     const map = new Map<string, IndexedVideo>();
@@ -268,6 +336,19 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
     }
     setVideoByDir(map);
     setDetailLoading(false);
+  };
+
+  const handleConfirmTag = async (tagName: string) => {
+    setTagging(true);
+    setTagError(null);
+    try {
+      await window.electronAPI.tagVideos(taggableSelectedVideoIds, tagName);
+      await refreshVideoTags();
+      setTagDialogOpen(false);
+      clearSelection();
+    } finally {
+      setTagging(false);
+    }
   };
 
   const handleSelectPlaylist = (playlistId: string) => {
@@ -423,28 +504,79 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
             <CircularProgress size={28} />
           </Box>
         ) : (
+          <>
+            {selectedPlaylist && selectedPlaylist.entries.length > 0 &&
+              <Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={0.5}>
+                {visibleSelectableEntries.length > 0 &&
+                  <>
+                    <Typography variant="body2" color="text.secondary">Select all</Typography>
+                    {/* Bare Checkbox in the same fixed-size Box used per-row below
+                        (not FormControlLabel, whose built-in margins would throw
+                        off the alignment) so this checkbox sits in the exact same
+                        column as the per-row ones. */}
+                    <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Checkbox
+                        size="small"
+                        checked={allVisibleSelected}
+                        indeterminate={someVisibleSelected && !allVisibleSelected}
+                        onChange={() => setSelectedVideoIds(allVisibleSelected ? new Set() : new Set(visibleSelectableEntries.map((e) => e.videoId)))}
+                        inputProps={{ 'aria-label': 'Select all' }}
+                      />
+                    </Box>
+                  </>}
+                {/* Filter button lives in the same slot each row's "go to
+                    library" button uses below, so it stays in that column
+                    rather than floating loose -- and stays reachable even
+                    once a filter hides every entry (gated on the total
+                    entry count above, not the filtered one). */}
+                <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Tooltip title="Filter by tag">
+                    <IconButton
+                      size="small"
+                      onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+                      aria-label="Filter by tag"
+                      color={(selectedTagFilters.size > 0 || selectedSystemFilters.size > 0) ? 'primary' : 'default'}
+                    >
+                      <Badge badgeContent={selectedTagFilters.size + selectedSystemFilters.size} color="primary">
+                        <FilterListIcon fontSize="small" />
+                      </Badge>
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              </Stack>}
+          {selectedPlaylist && selectedPlaylist.entries.length > 0 && filteredEntries.length === 0 &&
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>No videos match the selected filter.</Typography>}
           <List dense>
-            {selectedPlaylist?.entries.map((entry) => {
-              const videoDir = selectedPlaylist.localFiles[entry.videoId];
+            {filteredEntries.map((entry) => {
+              const videoDir = selectedPlaylist?.localFiles[entry.videoId];
               const entryQuality = getEntryQuality(entry.videoId);
+              const entryAppliedTags = Object.keys(videoTags).filter((name) => videoTags[name].includes(entry.videoId));
               return (
                 <ListItem
                   key={entry.videoId}
                   secondaryAction={
                     <Stack direction="row" alignItems="center" spacing={0.5}>
-                      {!entry.unavailable &&
-                        <Checkbox
-                          size="small"
-                          checked={selectedVideoIds.has(entry.videoId)}
-                          onChange={() => toggleVideoSelected(entry.videoId)}
-                          inputProps={{ 'aria-label': `Select ${entry.title || entry.videoId}` }}
-                        />}
-                      {videoDir &&
-                        <Tooltip title="Go to library">
-                          <IconButton size="small" component={RouterLink} to={`/library/video/${entry.videoId}`} aria-label="Go to library">
-                            <OpenInNewIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>}
+                      {/* Both slots are always rendered (blank when not
+                          applicable) so the checkbox column stays aligned
+                          across rows regardless of whether an entry is
+                          unavailable or lacks a library link. */}
+                      <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {!entry.unavailable &&
+                          <Checkbox
+                            size="small"
+                            checked={selectedVideoIds.has(entry.videoId)}
+                            onChange={() => toggleVideoSelected(entry.videoId)}
+                            inputProps={{ 'aria-label': `Select ${entry.title || entry.videoId}` }}
+                          />}
+                      </Box>
+                      <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {videoDir &&
+                          <Tooltip title="Go to library">
+                            <IconButton size="small" component={RouterLink} to={`/library/video/${entry.videoId}`} aria-label="Go to library">
+                              <OpenInNewIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>}
+                      </Box>
                     </Stack>
                   }
                 >
@@ -453,23 +585,31 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
                   </ListItemAvatar>
                   <ListItemText
                     primary={
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Typography component="span" noWrap>
-                          {entry.title || <em>Unknown title</em>}
-                        </Typography>
-                        {entryQuality ? (
-                          <Chip
-                            size="small"
-                            color="success"
-                            label={entryQuality.resolution === 'MP3' ? 'MP3' : `${entryQuality.resolution}p`}
-                            sx={{ flexShrink: 0 }}
-                          />
-                        ) : (
-                          <Chip size="small" variant="outlined" label="Not downloaded" sx={{ flexShrink: 0 }} />
-                        )}
-                        {entry.unavailable &&
-                          <Chip size="small" color="warning" variant="outlined" label="Not on YouTube" sx={{ flexShrink: 0 }} />}
-                      </Stack>
+                      <>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <Typography component="span" noWrap>
+                            {entry.title || <em>Unknown title</em>}
+                          </Typography>
+                          {entryQuality ? (
+                            <Chip
+                              size="small"
+                              color="success"
+                              label={entryQuality.resolution === 'MP3' ? 'MP3' : `${entryQuality.resolution}p`}
+                              sx={{ flexShrink: 0 }}
+                            />
+                          ) : (
+                            <Chip size="small" variant="outlined" label="Not downloaded" sx={{ flexShrink: 0 }} />
+                          )}
+                          {entry.unavailable &&
+                            <Chip size="small" color="warning" variant="outlined" label="Not on YouTube" sx={{ flexShrink: 0 }} />}
+                        </Stack>
+                        {entryAppliedTags.length > 0 &&
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>
+                            {entryAppliedTags.map((tag) => (
+                              <Chip key={tag} size="small" label={tag} sx={{ bgcolor: pink[700], color: '#fff' }} />
+                            ))}
+                          </Stack>}
+                      </>
                     }
                     secondary={entry.uploadDate ? convertYYYYMMDDStringToDate(entry.uploadDate) || entry.uploadDate : null}
                   />
@@ -477,6 +617,7 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
               );
             })}
           </List>
+          </>
         )}
 
         <Snackbar
@@ -549,6 +690,26 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
           error={bulkDeleteLocalFilesError}
           onCancel={() => { setBulkDeleteLocalFilesDialogOpen(false); setBulkDeleteLocalFilesError(null); }}
           onConfirm={handleConfirmBulkDeleteLocalFiles}
+        />
+        <TagFilterPopover
+          open={!!filterAnchorEl}
+          anchorEl={filterAnchorEl}
+          onClose={() => setFilterAnchorEl(null)}
+          allTags={Object.keys(videoTags)}
+          selectedTags={selectedTagFilters}
+          onToggle={toggleTagFilter}
+          selectedSystemFilters={selectedSystemFilters}
+          onToggleSystemFilter={toggleSystemFilter}
+          onClear={() => { setSelectedTagFilters(new Set()); setSelectedSystemFilters(new Set()); }}
+        />
+        <TagSelectedDialog
+          open={tagDialogOpen}
+          onClose={() => setTagDialogOpen(false)}
+          count={taggableSelectedVideoIds.length}
+          options={Object.keys(videoTags)}
+          tagging={tagging}
+          error={tagError}
+          onConfirm={handleConfirmTag}
         />
       </Box>
     );

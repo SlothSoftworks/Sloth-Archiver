@@ -35,6 +35,12 @@ beforeEach(() => {
     setThemeName: vi.fn().mockResolvedValue({ success: true, themeName: 'slothui' }),
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
     setMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ success: true, maxSimultaneousDownloads: 1 }),
+    getResumeTrackingMode: vi.fn().mockResolvedValue({ resumeTrackingMode: 'custom' }),
+    setResumeTrackingMode: vi.fn().mockResolvedValue({ success: true, resumeTrackingMode: 'custom' }),
+    getResumeMinDurationSeconds: vi.fn().mockResolvedValue({ resumeMinDurationSeconds: 1200 }),
+    setResumeMinDurationSeconds: vi.fn().mockResolvedValue({ success: true, resumeMinDurationSeconds: 1200 }),
+    getEmbedMetadataByDefault: vi.fn().mockResolvedValue({ embedMetadataByDefault: true }),
+    setEmbedMetadataByDefault: vi.fn().mockResolvedValue({ success: true, embedMetadataByDefault: true }),
     getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
   };
 });
@@ -81,6 +87,41 @@ describe('OptionsScreen', () => {
     await user.click(checkbox);
 
     expect(window.electronAPI.setCookiesPersistAcrossSessions).toHaveBeenCalledWith(true);
+  });
+
+  it('changing the resume-tracking mode persists it, showing the minutes field only in "custom" mode', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+
+    expect(await screen.findByLabelText('Minutes')).toBeInTheDocument();
+
+    await user.click(screen.getByText('Videos longer than...'));
+    await user.click(screen.getByRole('option', { name: 'Always' }));
+
+    expect(window.electronAPI.setResumeTrackingMode).toHaveBeenCalledWith('always');
+    expect(screen.queryByLabelText('Minutes')).not.toBeInTheDocument();
+  });
+
+  it('changing the resume minimum-duration field persists it in seconds', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    const minutesField = await screen.findByLabelText('Minutes');
+
+    await user.clear(minutesField);
+    await user.type(minutesField, '30');
+
+    await waitFor(() => expect(window.electronAPI.setResumeMinDurationSeconds).toHaveBeenLastCalledWith(1800));
+  });
+
+  it('defaults the "Embed metadata automatically" checkbox on, and persists it when unchecked', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    const checkbox = await screen.findByRole('checkbox', { name: 'Embed metadata into new downloads automatically' });
+    expect(checkbox).toBeChecked();
+
+    await user.click(checkbox);
+
+    expect(window.electronAPI.setEmbedMetadataByDefault).toHaveBeenCalledWith(false);
   });
 
   it('choosing a download folder persists the picked path and updates the display', async () => {

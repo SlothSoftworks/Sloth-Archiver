@@ -130,6 +130,9 @@ export default function OptionsScreen() {
   const [errorLogExists, setErrorLogExists] = useState(false);
   const [customConvertFormats, setCustomConvertFormatsState] = useState<string[]>([]);
   const [maxSimultaneousDownloads, setMaxSimultaneousDownloadsState] = useState(1);
+  const [resumeTrackingMode, setResumeTrackingModeState] = useState<'never' | 'always' | 'custom'>('custom');
+  const [resumeMinDurationSeconds, setResumeMinDurationSecondsState] = useState(1200);
+  const [embedMetadataByDefault, setEmbedMetadataByDefaultState] = useState(true);
   const [appVersion, setAppVersion] = useState('');
 
   const refreshStatus = async () => {
@@ -179,6 +182,21 @@ export default function OptionsScreen() {
     setMaxSimultaneousDownloadsState(maxSimultaneousDownloads);
   };
 
+  const refreshResumeTrackingMode = async () => {
+    const { resumeTrackingMode } = await window.electronAPI.getResumeTrackingMode();
+    setResumeTrackingModeState(resumeTrackingMode);
+  };
+
+  const refreshResumeMinDurationSeconds = async () => {
+    const { resumeMinDurationSeconds } = await window.electronAPI.getResumeMinDurationSeconds();
+    setResumeMinDurationSecondsState(resumeMinDurationSeconds);
+  };
+
+  const refreshEmbedMetadataByDefault = async () => {
+    const { embedMetadataByDefault } = await window.electronAPI.getEmbedMetadataByDefault();
+    setEmbedMetadataByDefaultState(embedMetadataByDefault);
+  };
+
   useEffect(() => {
     refreshStatus();
     refreshCookiesConfig();
@@ -187,6 +205,9 @@ export default function OptionsScreen() {
     refreshErrorLogInfo();
     refreshCustomConvertFormats();
     refreshMaxSimultaneousDownloads();
+    refreshResumeTrackingMode();
+    refreshResumeMinDurationSeconds();
+    refreshEmbedMetadataByDefault();
     window.electronAPI.getAppVersion().then(setAppVersion);
   }, []);
 
@@ -215,6 +236,22 @@ export default function OptionsScreen() {
   const handleMaxSimultaneousDownloadsChange = async (value: number) => {
     setMaxSimultaneousDownloadsState(value);
     await window.electronAPI.setMaxSimultaneousDownloads(value);
+  };
+
+  const handleResumeTrackingModeChange = async (value: 'never' | 'always' | 'custom') => {
+    setResumeTrackingModeState(value);
+    await window.electronAPI.setResumeTrackingMode(value);
+  };
+
+  const handleResumeMinDurationSecondsChange = async (value: number) => {
+    setResumeMinDurationSecondsState(value);
+    await window.electronAPI.setResumeMinDurationSeconds(value);
+  };
+
+  const handleEmbedMetadataByDefaultChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const checked = e.target.checked;
+    setEmbedMetadataByDefaultState(checked);
+    await window.electronAPI.setEmbedMetadataByDefault(checked);
   };
 
   const handleChooseDownloadDir = async () => {
@@ -432,6 +469,46 @@ export default function OptionsScreen() {
               Downloading too many videos at once increases the risk of YouTube flagging
               your connection as a bot. Keep this low if you run into that.
             </Alert>
+          </Grid>
+
+          <Grid size={{ xs: 12, sm: 6 }} sx={dividerTop}>
+            <Typography variant="h6" gutterBottom>Save Playback Position</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Remembers where you stopped a video so you can pick it back up later.
+            </Typography>
+            <TextField
+              select
+              size="small"
+              value={resumeTrackingMode}
+              onChange={(e) => handleResumeTrackingModeChange(e.target.value as 'never' | 'always' | 'custom')}
+              sx={{ minWidth: 160, mb: 2, display: 'block' }}
+            >
+              <MenuItem value="never">Never</MenuItem>
+              <MenuItem value="always">Always</MenuItem>
+              <MenuItem value="custom">Videos longer than...</MenuItem>
+            </TextField>
+            {resumeTrackingMode === 'custom' &&
+              <TextField
+                type="number"
+                size="small"
+                label="Minutes"
+                value={Math.round(resumeMinDurationSeconds / 60)}
+                onChange={(e) => handleResumeMinDurationSecondsChange(Math.max(0, Number(e.target.value)) * 60)}
+                sx={{ minWidth: 120 }}
+              />}
+          </Grid>
+
+          <Grid size={{ xs: 12, sm: 6 }} sx={dividerTopAndLeftOnSm}>
+            <Typography variant="h6" gutterBottom>Embed Metadata Automatically</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Writes title/channel/date/description and cover art into every downloaded
+              file as soon as the download finishes, instead of requiring the manual
+              "Embed metadata" action.
+            </Typography>
+            <FormControlLabel
+              control={<Checkbox checked={embedMetadataByDefault} onChange={handleEmbedMetadataByDefaultChange} />}
+              label="Embed metadata into new downloads automatically"
+            />
           </Grid>
         </Grid>
       </OptionsGroup>

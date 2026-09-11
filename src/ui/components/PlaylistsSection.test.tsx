@@ -49,6 +49,8 @@ beforeEach(() => {
     deleteLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
     deleteLocalFiles: vi.fn().mockResolvedValue({ success: true, results: [] }),
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
+    listVideoTags: vi.fn().mockResolvedValue({ tags: {} }),
+    tagVideos: vi.fn().mockResolvedValue({ success: true, tags: {} }),
   };
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),
@@ -221,5 +223,275 @@ describe('PlaylistsSection bulk select', () => {
 
     await user.click(screen.getByRole('button', { name: 'Back to playlists' }));
     expect(onBulkBarUpdate).toHaveBeenLastCalledWith(null);
+  });
+});
+
+describe('PlaylistsSection select all', () => {
+  it('starts unchecked, and checking it selects every selectable entry', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
+      }),
+    });
+    const onBulkBarUpdate = vi.fn();
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={onBulkBarUpdate} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByRole('checkbox', { name: 'Select Alpha Video' });
+
+    const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+    expect(selectAll).not.toBeChecked();
+
+    await user.click(selectAll);
+
+    expect(screen.getByRole('checkbox', { name: 'Select Alpha Video' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Select Gamma Video' })).toBeChecked();
+    expect(selectAll).toBeChecked();
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ selectedCount: 2 }),
+    ));
+  });
+
+  it('shows indeterminate once some but not all selectable entries are selected individually, then checked once all are', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
+      }),
+    });
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByRole('checkbox', { name: 'Select Alpha Video' });
+
+    const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+    await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+
+    // MUI's Checkbox never sets the native `input.indeterminate` IDL
+    // property -- it only reflects the indeterminate prop via
+    // `aria-checked="mixed"` (plus a `data-indeterminate` attribute used
+    // purely for styling). Assert on the a11y state, not the DOM property.
+    expect(selectAll).toHaveAttribute('aria-checked', 'mixed');
+    expect(selectAll).not.toBeChecked();
+
+    await user.click(screen.getByRole('checkbox', { name: 'Select Gamma Video' }));
+
+    expect(selectAll).not.toHaveAttribute('aria-checked', 'mixed');
+    expect(selectAll).toBeChecked();
+  });
+
+  it('unchecking "Select all" clears the whole selection', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
+      }),
+    });
+    const onBulkBarUpdate = vi.fn();
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={onBulkBarUpdate} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByRole('checkbox', { name: 'Select Alpha Video' });
+
+    const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+    await user.click(selectAll);
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ selectedCount: 2 }),
+    ));
+
+    await user.click(selectAll);
+
+    expect(screen.getByRole('checkbox', { name: 'Select Alpha Video' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Select Gamma Video' })).not.toBeChecked();
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ selectedCount: 0 }),
+    ));
+  });
+
+  it('excludes unavailable entries from "select all"', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidB', title: 'Beta Video', unavailable: true })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidB: null },
+      }),
+    });
+    const onBulkBarUpdate = vi.fn();
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={onBulkBarUpdate} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByRole('checkbox', { name: 'Select Alpha Video' });
+
+    const selectAll = screen.getByRole('checkbox', { name: 'Select all' });
+    await user.click(selectAll);
+
+    expect(screen.getByRole('checkbox', { name: 'Select Alpha Video' })).toBeChecked();
+    expect(screen.queryByRole('checkbox', { name: 'Select Beta Video' })).not.toBeInTheDocument();
+    // Only the one selectable entry counted -- an unavailable entry never
+    // enters the selection even though it's nominally "visible".
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ selectedCount: 1 }),
+    ));
+  });
+});
+
+describe('PlaylistsSection tag/system filter', () => {
+  it('shows each entry\'s applied tags as chips', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
+      }),
+    });
+    (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+      tags: { TVshows: ['vidA'] },
+    });
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await userEvent.setup().click(await screen.findByText('My Playlist'));
+    await screen.findByText('Alpha Video');
+
+    expect(screen.getByText('TVshows')).toBeInTheDocument();
+    // Gamma carries no tags -- no stray chip rendered for it.
+    expect(await screen.findByText('Gamma Video')).toBeInTheDocument();
+  });
+
+  it('stays reachable even with zero visible entries, and narrows the list by tag (AND semantics)', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
+      }),
+    });
+    (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+      tags: { TVshows: ['vidA'], games: ['vidC'] },
+    });
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByText('Alpha Video');
+
+    await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+    await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+
+    expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+    expect(screen.queryByText('Gamma Video')).not.toBeInTheDocument();
+
+    // AND semantics -- neither entry carries both tags, so this narrows to
+    // nothing rather than widening.
+    await user.click(screen.getByRole('checkbox', { name: 'games' }));
+    expect(screen.queryByText('Alpha Video')).not.toBeInTheDocument();
+    expect(screen.queryByText('Gamma Video')).not.toBeInTheDocument();
+    expect(screen.getByText('No videos match the selected filter.')).toBeInTheDocument();
+
+    // Filter button/popover stay reachable with the list empty, so the
+    // filter can still be cleared.
+    await user.click(screen.getByRole('button', { name: 'Clear filter' }));
+    expect(await screen.findByText('Gamma Video')).toBeInTheDocument();
+  });
+
+  it('Downloaded / Not Downloaded narrow the list and compose with a tag filter', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: '/lib/Channel A/vidC' },
+      }),
+    });
+    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+      channels: [{
+        channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+        videos: [
+          makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080' } }] }),
+          makeLibraryVideo({ videoFolderName: 'vidC', videoDir: '/lib/Channel A/vidC', metadata: { videoId: 'vidC', channelId: 'UC1', channel: 'Channel A', title: 'Gamma Video' } }),
+        ],
+      }],
+    });
+    (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+      tags: { TVshows: ['vidA', 'vidC'] },
+    });
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByText('Alpha Video');
+
+    await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Downloaded' }));
+
+    expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+    expect(screen.queryByText('Gamma Video')).not.toBeInTheDocument();
+
+    // Both carry TVshows -- combining with "Downloaded" should stay
+    // narrowed to just Alpha (AND semantics).
+    await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+    expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+    expect(screen.queryByText('Gamma Video')).not.toBeInTheDocument();
+  });
+
+  it('a manually-selected entry that gets filtered out stays selected', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
+      }),
+    });
+    (window.electronAPI.listVideoTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+      tags: { TVshows: ['vidA'] },
+    });
+    const onBulkBarUpdate = vi.fn();
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={onBulkBarUpdate} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByText('Gamma Video');
+
+    await user.click(screen.getByRole('checkbox', { name: 'Select Gamma Video' }));
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ selectedCount: 1 }),
+    ));
+
+    // Filtering Gamma out of view doesn't drop it from the selection --
+    // bulk actions still target it.
+    await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+    await user.click(screen.getByRole('checkbox', { name: 'TVshows' }));
+    expect(screen.queryByText('Gamma Video')).not.toBeInTheDocument();
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ selectedCount: 1 }),
+    ));
+  });
+});
+
+describe('PlaylistsSection bulk tag', () => {
+  it('"Tag selected" is enabled only once an in-library entry is selected, and calls tagVideos with just that entry', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null }, // vidC never added to the library
+      }),
+    });
+    const onBulkBarUpdate = vi.fn();
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={onBulkBarUpdate} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByRole('checkbox', { name: 'Select Alpha Video' });
+
+    // Selecting only the not-yet-added entry -- nothing taggable yet.
+    await user.click(screen.getByRole('checkbox', { name: 'Select Gamma Video' }));
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canTag: false }),
+    ));
+
+    // Adding the in-library entry makes it taggable.
+    await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+    await waitFor(() => expect(onBulkBarUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canTag: true }),
+    ));
+
+    const lastBar = onBulkBarUpdate.mock.calls[onBulkBarUpdate.mock.calls.length - 1][0];
+    lastBar.onTagSelected();
+    expect(await screen.findByText('Tag 1 selected video with an existing tag, or create a new one.')).toBeInTheDocument();
+
+    await user.type(screen.getByRole('combobox'), 'TVshows');
+    await user.click(screen.getByRole('button', { name: 'Tag' }));
+
+    // Only the in-library entry (vidA) is passed -- vidC has nothing to tag yet.
+    await waitFor(() => expect(window.electronAPI.tagVideos).toHaveBeenCalledWith(['vidA'], 'TVshows'));
   });
 });

@@ -45,10 +45,12 @@ export function formatClipTimestampInput(raw: string): string {
   return `${digits.slice(0, len - 4)}:${digits.slice(len - 4, len - 2)}:${digits.slice(len - 2)}`;
 }
 
-// Exported so SaveClipDialog.tsx can reuse the exact same "end >= start + 1s"
-// validation rule, rather than re-implementing it.
+// Exported so SaveClipDialog.tsx can reuse the exact same "end >= start + 0.1s"
+// validation rule, rather than re-implementing it. parseFloat (not parseInt)
+// so a fractional seconds group -- as produced by formatSecondsAsClipTimestamp
+// for a drag-derived boundary -- round-trips back to its exact value.
 export function parseClipTimestampSeconds(value: string): number {
-  const parts = value.split(':').map((p) => parseInt(p, 10) || 0);
+  const parts = value.split(':').map((p) => parseFloat(p) || 0);
   while (parts.length < 3) parts.unshift(0);
   const [h, m, s] = parts.slice(-3);
   return h * 3600 + m * 60 + s;
@@ -56,10 +58,19 @@ export function parseClipTimestampSeconds(value: string): number {
 
 export function formatSecondsAsClipTimestamp(totalSeconds: number): string {
   const clamped = Math.max(0, totalSeconds);
-  const h = Math.floor(clamped / 3600);
-  const m = Math.floor((clamped % 3600) / 60);
-  const s = clamped % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  // Round to whole milliseconds first, then derive h/m/s from that integer
+  // total -- rounding the fractional part in isolation (e.g. 59.9996s ->
+  // 60.000ms of fraction) can carry into the seconds place, which in turn
+  // can carry into minutes/hours, so the carry has to happen before the
+  // value is split into place groups, not after.
+  const totalMs = Math.round(clamped * 1000);
+  const wholeSeconds = Math.floor(totalMs / 1000);
+  const ms = totalMs % 1000;
+  const h = Math.floor(wholeSeconds / 3600);
+  const m = Math.floor((wholeSeconds % 3600) / 60);
+  const s = wholeSeconds % 60;
+  const secStr = ms > 0 ? `${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}` : String(s).padStart(2, '0');
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${secStr}`;
 }
 
 // Every control here operates on the video *file*, gated on isVideoDownloaded

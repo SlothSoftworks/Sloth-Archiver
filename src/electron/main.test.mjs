@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -66,6 +66,8 @@ import {
   makeCookiesArgs,
   reapStaleCookieCopies,
   getCookiesPersistAcrossSessions,
+  jsRuntimeArgs,
+  ytdlpSpawnEnv,
 } from './main.mjs';
 
 fs.mkdirSync(electronMocks.mockUserDataDir, { recursive: true });
@@ -338,6 +340,62 @@ describe('assertValidHttpUrl', () => {
   });
 });
 
+describe('jsRuntimeArgs', () => {
+  it('points yt-dlp at the bundled Deno binary via the deno provider', () => {
+    const [flag, value] = jsRuntimeArgs();
+    expect(flag).toBe('--js-runtimes');
+    expect(value.startsWith('deno:')).toBe(true);
+    expect(value.endsWith(process.platform === 'win32' ? 'deno.exe' : 'deno')).toBe(true);
+  });
+});
+
+describe('ytdlpSpawnEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('does not set ELECTRON_RUN_AS_NODE -- that was only ever needed for the Electron-as-node runtime, not Deno', () => {
+    expect(ytdlpSpawnEnv().ELECTRON_RUN_AS_NODE).toBeUndefined();
+  });
+
+  it('does not leak arbitrary secrets from process.env through to the spawned env', () => {
+    vi.stubEnv('SOME_API_TOKEN', 'super-secret-value');
+    expect(ytdlpSpawnEnv().SOME_API_TOKEN).toBeUndefined();
+  });
+
+  it('passes through HOME -- cookies-from-browser resolves a browser profile dir via it', () => {
+    vi.stubEnv('HOME', '/Users/someone');
+    expect(ytdlpSpawnEnv().HOME).toBe('/Users/someone');
+  });
+
+  it('passes through the Windows profile-dir variables cookies-from-browser also relies on', () => {
+    vi.stubEnv('USERPROFILE', 'C:\\Users\\someone');
+    vi.stubEnv('APPDATA', 'C:\\Users\\someone\\AppData\\Roaming');
+    vi.stubEnv('LOCALAPPDATA', 'C:\\Users\\someone\\AppData\\Local');
+    const env = ytdlpSpawnEnv();
+    expect(env.USERPROFILE).toBe('C:\\Users\\someone');
+    expect(env.APPDATA).toBe('C:\\Users\\someone\\AppData\\Roaming');
+    expect(env.LOCALAPPDATA).toBe('C:\\Users\\someone\\AppData\\Local');
+  });
+
+  it('passes through PATH and the temp-dir variables', () => {
+    vi.stubEnv('PATH', '/usr/bin:/bin');
+    vi.stubEnv('TEMP', '/tmp/a');
+    vi.stubEnv('TMP', '/tmp/b');
+    vi.stubEnv('TMPDIR', '/tmp/c');
+    const env = ytdlpSpawnEnv();
+    expect(env.PATH).toBe('/usr/bin:/bin');
+    expect(env.TEMP).toBe('/tmp/a');
+    expect(env.TMP).toBe('/tmp/b');
+    expect(env.TMPDIR).toBe('/tmp/c');
+  });
+
+  it('omits an allowlisted key entirely when unset, rather than passing through an undefined value', () => {
+    vi.stubEnv('HOME', undefined);
+    expect('HOME' in ytdlpSpawnEnv()).toBe(false);
+  });
+});
+
 describe('isValidClipTimestamp', () => {
   it('accepts every shape the renderer\'s own timestamp formatters can produce', () => {
     expect(isValidClipTimestamp('5')).toBe(true);
@@ -346,6 +404,8 @@ describe('isValidClipTimestamp', () => {
     expect(isValidClipTimestamp('12:34')).toBe(true);
     expect(isValidClipTimestamp('12:34:56')).toBe(true);
     expect(isValidClipTimestamp('100000:00:00')).toBe(true); // very long video, unbounded hours
+    expect(isValidClipTimestamp('12.5')).toBe(true); // drag-derived sub-second boundary
+    expect(isValidClipTimestamp('12:34:56.789')).toBe(true);
   });
 
   it('rejects malformed groups and non-string/empty input', () => {
@@ -355,6 +415,8 @@ describe('isValidClipTimestamp', () => {
     expect(isValidClipTimestamp('1:2:3:4')).toBe(false); // too many groups
     expect(isValidClipTimestamp(null)).toBe(false);
     expect(isValidClipTimestamp(undefined)).toBe(false);
+    expect(isValidClipTimestamp('12.5678')).toBe(false); // more than 3 fractional digits
+    expect(isValidClipTimestamp('12.5:34')).toBe(false); // '.' only allowed on the trailing (seconds) group
   });
 
   it('rejects a value shaped to reach ffmpeg as an injected option', () => {

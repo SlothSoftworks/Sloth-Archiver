@@ -21,10 +21,6 @@ export function createSettingsStore(settingsPath) {
     return { readSettings, writeSettings };
 }
 
-// Caps how many bulk-add items the renderer's queue (useBulkAddQueue.tsx)
-// will download at once -- clamped here too, not just in the Options UI,
-// since this value round-trips through a plain JSON settings file a user
-// could hand-edit.
 export const MAX_SIMULTANEOUS_DOWNLOADS_CEILING = 5;
 
 export function clampMaxSimultaneousDownloads(value) {
@@ -51,20 +47,12 @@ export function clampLibrarySortDirection(value) {
 // mode -- 'default' is this app's original plain-MUI look, 'slothui' is the
 // palette pulled from SlothArchiver-info's landing page (see theme.ts).
 export const THEME_NAMES = ['default', 'slothui'];
-// SlothUI is the default for a fresh install -- 'default' (plain MUI) is
-// still fully supported and one toggle away, just no longer what a new user
-// sees before ever touching Options.
 export const THEME_NAME_DEFAULT = 'slothui';
 
 export function clampThemeName(value) {
     return THEME_NAMES.includes(value) ? value : THEME_NAME_DEFAULT;
 }
 
-// Bounds for the Library tab's thumbnail-size slider (LibraryBottomBar.tsx).
-// 160px floor keeps a video card's title/quality-chip row from wrapping
-// awkwardly; 360px ceiling still fits 2+ columns at typical content widths.
-// 220px default approximates the old fixed sm:6/md:4 breakpoint sizing, so
-// existing users see an unsurprising layout until they touch the slider.
 export const THUMBNAIL_SIZE_MIN = 160;
 export const THUMBNAIL_SIZE_MAX = 360;
 export const THUMBNAIL_SIZE_DEFAULT = 220;
@@ -73,4 +61,25 @@ export function clampThumbnailSize(value) {
     const n = Number(value);
     if (!Number.isFinite(n)) return THUMBNAIL_SIZE_DEFAULT;
     return Math.min(Math.max(n, THUMBNAIL_SIZE_MIN), THUMBNAIL_SIZE_MAX);
+}
+
+export const RESUME_TRACKING_MODES = ['never', 'always', 'custom'];
+export const RESUME_TRACKING_MODE_DEFAULT = 'custom';
+
+export function clampResumeTrackingMode(value) {
+    return RESUME_TRACKING_MODES.includes(value) ? value : RESUME_TRACKING_MODE_DEFAULT;
+}
+
+export const RESUME_MIN_DURATION_SECONDS_DEFAULT = 1200;
+
+export function clampResumeMinDurationSeconds(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return RESUME_MIN_DURATION_SECONDS_DEFAULT;
+    return Math.floor(n);
+}
+
+export const EMBED_METADATA_BY_DEFAULT_DEFAULT = true;
+
+export function clampEmbedMetadataByDefault(value) {
+    return typeof value === 'boolean' ? value : EMBED_METADATA_BY_DEFAULT_DEFAULT;
 }

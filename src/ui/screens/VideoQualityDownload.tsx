@@ -161,6 +161,7 @@ export default function VideoQualityDownload({
   onDownload,
   onSwapDownload,
   isAudioActionActive,
+  isAudioError,
   onOpenFileLocation,
   onOpenExternally,
   cacheBustKey,
@@ -186,6 +187,11 @@ export default function VideoQualityDownload({
   selectedFormat: string;
   onFormatChange: (format: string) => void;
   selectedResolution: string;
+  // Pre-scoped by the caller to the video/swap flow specifically (not the
+  // raw, shared useDownloadVideo() isError) -- see isAudioError below for
+  // why: video and audio downloads share one hook instance, so an
+  // unscoped isError would show on both ResolutionPickers at once whenever
+  // either flow failed.
   isError: boolean;
   downloadErrorKind: string | null;
   downloadStatus: string;
@@ -199,6 +205,10 @@ export default function VideoQualityDownload({
   onDownload: (resolution: string) => void;
   onSwapDownload: (resolution: string) => void;
   isAudioActionActive: boolean;
+  // True once an audio-flow download error is the *current* isError --
+  // distinct from a video/swap download error, which shares the same
+  // isError/downloadErrorKind but is handled by ResolutionPicker above.
+  isAudioError: boolean;
   onOpenFileLocation: () => void;
   onOpenExternally: () => void;
   cacheBustKey: number;
@@ -402,30 +412,37 @@ export default function VideoQualityDownload({
                 <LinearProgressWithLabel value={ffmpegProgress} valueBuffer={ffmpegProgress} />
               </Stack>
             ) : (
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Button
-                  size="small"
-                  color="secondary"
-                  variant="contained"
-                  startIcon={<CloudDownloadIcon />}
-                  onClick={onAudioDownload}
-                  disabled={isVideoActionActive}
-                >
-                  Download MP3 ({mp3Resolution.filesizeMb}Mb)
-                </Button>
-                {isVideoDownloaded &&
-                  <Tooltip title="Extract MP3 from the already-downloaded video (no re-download)">
-                    <span>
-                      <IconButton
-                        size="small"
-                        onClick={onExtractAudioToLibrary}
-                        disabled={isVideoActionActive || ffmpegAction !== null}
-                        aria-label="Extract MP3 from downloaded video"
-                      >
-                        <AudiotrackIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>}
+              <Stack spacing={1}>
+                {isAudioError && downloadErrorKind === 'cancelled' ? (
+                  <Typography color="warning.main" variant="body2" fontWeight="bold">Cancelled.</Typography>
+                ) : isAudioError && (
+                  <Typography color="error" variant="body2">Download failed -- try again.</Typography>
+                )}
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Button
+                    size="small"
+                    color="secondary"
+                    variant="contained"
+                    startIcon={<CloudDownloadIcon />}
+                    onClick={onAudioDownload}
+                    disabled={isVideoActionActive}
+                  >
+                    Download MP3 ({mp3Resolution.filesizeMb}Mb)
+                  </Button>
+                  {isVideoDownloaded &&
+                    <Tooltip title="Extract MP3 from the already-downloaded video (no re-download)">
+                      <span>
+                        <IconButton
+                          size="small"
+                          onClick={onExtractAudioToLibrary}
+                          disabled={isVideoActionActive || ffmpegAction !== null}
+                          aria-label="Extract MP3 from downloaded video"
+                        >
+                          <AudiotrackIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>}
+                </Stack>
               </Stack>
             )}
           </Stack>

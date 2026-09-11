@@ -19,6 +19,7 @@ const videoMetaData = {
   originalUrl: 'https://youtube.com/watch?v=vid1',
   durationString: '2:00',
   uploadDate: '20260115',
+  uploader: 'Some Channel',
 };
 
 beforeEach(() => {
@@ -84,6 +85,27 @@ describe('VideoDetailCard', () => {
       expect.objectContaining({ videoUrl: videoMetaData.originalUrl, outputPath: '/x/video.mp4', resolution: '720', overwriteMode: undefined }),
     );
     expect(screen.getByText(/Downloading \(720p\)/)).toBeInTheDocument();
+  });
+
+  it('passes metadataTags/thumbnailPath through so the download can be auto-embedded', async () => {
+    const user = userEvent.setup();
+    (window.electronAPI.saveVideoFile as ReturnType<typeof vi.fn>).mockResolvedValue({ canceled: false, filePath: '/x/video.mp4' });
+    (window.electronAPI.checkFileExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    render(<VideoDetailCard videoMetaData={videoMetaData} />);
+
+    await user.click(screen.getByRole('button', { name: /720p/ }));
+
+    expect(window.electronAPIPythonDownload.startDownloadPython).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadataTags: {
+          title: videoMetaData.fullTitle,
+          artist: videoMetaData.uploader,
+          date: videoMetaData.uploadDate,
+          description: videoMetaData.description,
+        },
+        thumbnailPath: videoMetaData.thumbnail,
+      }),
+    );
   });
 
   it('does not start a download when the save dialog is cancelled', async () => {

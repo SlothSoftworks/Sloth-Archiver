@@ -182,4 +182,28 @@ describe('clipAndConvert', () => {
     // path, exactly as it should once the probe itself is fast and correct.
     expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c', 'copy']));
   });
+
+  // The keyframe-risk check is video-only (findLastKeyframeAtOrBefore
+  // selects only the video stream) -- on an audio-only source it would find
+  // no packets and fall back to the probe window's own start, reading as a
+  // large, near-guaranteed-risky offset and spuriously forcing a re-encode
+  // that was never needed. clipAndConvert must skip the risk check entirely
+  // (and never even issue the -read_intervals keyframe probe) once
+  // probeMediaStreams reports no video stream, regardless of how large an
+  // offset that fallback would otherwise compute.
+  it('skips the keyframe-risk probe entirely and stays on the fast copy path for an audio-only clip', async () => {
+    stubSpawn({ streams: [{ codecType: 'audio', codecName: 'mp3' }] });
+    const { clipAndConvert } = createFfmpegRunner({ ffmpegBinaryPath: FFMPEG_BIN, ffprobeBinaryPath: FFPROBE_BIN });
+
+    // A short clip deep into the file -- exactly the shape that would trip
+    // both risk thresholds for a video file, per the fallback-to-window-start
+    // behavior findLastKeyframeAtOrBefore has when it finds no packets.
+    await clipAndConvert({
+      inputPath: '/in.mp3', outputPath: '/out.mp3', start: '00:10:00', startSeconds: 600,
+      format: 'source', totalDurationSeconds: 12,
+    });
+
+    expect(spawnMock.mock.calls.some(([bin, args]) => bin === FFPROBE_BIN && args.includes('-read_intervals'))).toBe(false);
+    expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c', 'copy']));
+  });
 });
