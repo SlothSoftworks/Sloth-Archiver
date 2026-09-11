@@ -4,6 +4,15 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [1.1.1] — 2026-09-11
+- **Fixed the Windows build failing to fetch its bundled Deno runtime.**
+  Deno's own release pipeline generates the checksum file for its Windows
+  binary in a completely different format than macOS/Linux, which the
+  verification step didn't account for, so it correctly refused to install
+  an unverified binary rather than silently skip the check, but that meant
+  every Windows build failed outright. Windows now has its own real,
+  independently-tested verification path.
+
 ## [1.1.0] — 2026-09-11
 - **Player improvements.**
   - **Resume where you left off.** Reopening a video you didn't finish now
