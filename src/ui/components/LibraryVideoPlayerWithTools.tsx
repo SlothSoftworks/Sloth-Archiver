@@ -130,19 +130,19 @@ export default function LibraryVideoPlayerWithTools({
   };
 
   const inputPath = overrideFilePath ?? metadata.downloadedFilePath;
-  const clipRangeInvalid = clipStartSeconds != null && clipEndSeconds != null && clipEndSeconds < clipStartSeconds + 1;
+  const clipRangeInvalid = clipStartSeconds != null && clipEndSeconds != null && clipEndSeconds < clipStartSeconds + 0.1;
   const saveDisabled = !inputPath || clipStartSeconds == null || clipEndSeconds == null || clipRangeInvalid;
 
   const handleSetStart = () => {
     const time = playerRef.current?.getCurrentTime();
     if (time == null) return;
-    setClipStartSeconds(Math.floor(time));
+    setClipStartSeconds(time);
   };
 
   const handleSetEnd = () => {
     const time = playerRef.current?.getCurrentTime();
     if (time == null) return;
-    setClipEndSeconds(Math.floor(time));
+    setClipEndSeconds(time);
   };
 
   const handleClear = () => {
@@ -223,8 +223,8 @@ export default function LibraryVideoPlayerWithTools({
           endSeconds: clipEndSeconds,
           onSetStart: handleSetStart,
           onSetEnd: handleSetEnd,
-          onStartSecondsChange: (seconds) => setClipStartSeconds(Math.floor(seconds)),
-          onEndSecondsChange: (seconds) => setClipEndSeconds(Math.floor(seconds)),
+          onStartSecondsChange: (seconds) => setClipStartSeconds(seconds),
+          onEndSecondsChange: (seconds) => setClipEndSeconds(seconds),
           onSave: handleOpenSave,
           saveDisabled,
           onClear: handleClear,

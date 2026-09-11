@@ -404,6 +404,8 @@ describe('isValidClipTimestamp', () => {
     expect(isValidClipTimestamp('12:34')).toBe(true);
     expect(isValidClipTimestamp('12:34:56')).toBe(true);
     expect(isValidClipTimestamp('100000:00:00')).toBe(true); // very long video, unbounded hours
+    expect(isValidClipTimestamp('12.5')).toBe(true); // drag-derived sub-second boundary
+    expect(isValidClipTimestamp('12:34:56.789')).toBe(true);
   });
 
   it('rejects malformed groups and non-string/empty input', () => {
@@ -413,6 +415,8 @@ describe('isValidClipTimestamp', () => {
     expect(isValidClipTimestamp('1:2:3:4')).toBe(false); // too many groups
     expect(isValidClipTimestamp(null)).toBe(false);
     expect(isValidClipTimestamp(undefined)).toBe(false);
+    expect(isValidClipTimestamp('12.5678')).toBe(false); // more than 3 fractional digits
+    expect(isValidClipTimestamp('12.5:34')).toBe(false); // '.' only allowed on the trailing (seconds) group
   });
 
   it('rejects a value shaped to reach ffmpeg as an injected option', () => {

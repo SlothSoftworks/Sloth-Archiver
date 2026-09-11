@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Box, IconButton, Tooltip } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -10,7 +10,7 @@ import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import StartIcon from '@mui/icons-material/Start';
 import ContentCutIcon from '@mui/icons-material/ContentCut';
 import ClearIcon from '@mui/icons-material/Clear';
-import { PlayButton, MuteButton, FullscreenButton, Time, TimeSlider, VolumeSlider, useMediaState, useMediaRemote } from '@vidstack/react';
+import { PlayButton, MuteButton, FullscreenButton, Time, TimeSlider, VolumeSlider, useMediaState, useMediaRemote, formatTime } from '@vidstack/react';
 import type { ClipMarkersControl } from './LibraryVideoPlayer';
 
 // Every control below is one of Vidstack's headless primitives (real,
@@ -41,7 +41,23 @@ const timeTextSx = {
   textAlign: 'center',
   fontVariantNumeric: 'tabular-nums',
   userSelect: 'none',
+  cursor: 'pointer',
 };
+
+// Wider than timeTextSx's default minWidth -- ".mmm" needs the extra room a
+// plain "1:23" never did.
+const detailedTimeTextSx = { ...timeTextSx, minWidth: 84 };
+
+// Millisecond-precision stand-in for Vidstack's own <Time>, which has no
+// showMs option (confirmed against its props: type/showHours/padHours/
+// padMinutes/remainder/toggle/hidden, none of them fraction-related) --
+// reuses Vidstack's own formatTime util instead of hand-rolling formatting.
+function DetailedTime({ type }: { type: 'current' | 'duration' }) {
+  const currentTime = useMediaState('currentTime');
+  const duration = useMediaState('duration');
+  const seconds = type === 'current' ? currentTime : duration;
+  return <>{Number.isFinite(seconds) ? formatTime(seconds, { showMs: true }) : ''}</>;
+}
 
 // --slider-fill is a Vidstack-managed CSS custom property (a percentage
 // string) reflecting current position/volume, kept in sync during drag
@@ -188,6 +204,8 @@ export default function LibraryVideoPlayerControls({ clipMarkers }: { clipMarker
   const canFullscreen = useMediaState('canFullscreen');
   const duration = useMediaState('duration');
   const trackRef = useRef<HTMLElement | null>(null);
+  const [detailedTime, setDetailedTime] = useState(false);
+  const toggleDetailedTime = () => setDetailedTime((v) => !v);
 
   const startPct = clipMarkers ? clipMarkerPercent(clipMarkers.startSeconds, duration) : null;
   const endPct = clipMarkers ? clipMarkerPercent(clipMarkers.endSeconds, duration) : null;
@@ -206,7 +224,9 @@ export default function LibraryVideoPlayerControls({ clipMarkers }: { clipMarker
         {paused ? <PlayArrowIcon fontSize="small" /> : <PauseIcon fontSize="small" />}
       </Box>
 
-      <Box component={Time} type="current" sx={timeTextSx} />
+      {detailedTime
+        ? <Box data-testid="time-current" onDoubleClick={toggleDetailedTime} sx={detailedTimeTextSx}><DetailedTime type="current" /></Box>
+        : <Box component={Time} type="current" data-testid="time-current" onDoubleClick={toggleDetailedTime} sx={timeTextSx} />}
 
       <Box component={TimeSlider.Root} aria-label="Seek" sx={{ ...sliderRootSx, flex: 1 }}>
         <Box ref={trackRef} component={TimeSlider.Track} sx={sliderTrackSx}>
@@ -240,7 +260,9 @@ export default function LibraryVideoPlayerControls({ clipMarkers }: { clipMarker
           />}
       </Box>
 
-      <Box component={Time} type="duration" sx={timeTextSx} />
+      {detailedTime
+        ? <Box data-testid="time-duration" onDoubleClick={toggleDetailedTime} sx={detailedTimeTextSx}><DetailedTime type="duration" /></Box>
+        : <Box component={Time} type="duration" data-testid="time-duration" onDoubleClick={toggleDetailedTime} sx={timeTextSx} />}
 
       <Box component={MuteButton} aria-label={muted ? 'Unmute' : 'Mute'} sx={resetButtonSx}>
         {muted ? <VolumeOffIcon fontSize="small" /> : <VolumeUpIcon fontSize="small" />}

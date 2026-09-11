@@ -351,7 +351,18 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog,
         const preInputArgs = ['-ss', start];
         const durationArgs = ['-t', String(totalDurationSeconds)];
         const isSourceFormat = !format || format === 'source';
-        const risky = !forceReencode && startSeconds != null
+        // Keyframe rounding is a video-only concern (GOP/keyframe boundaries
+        // don't exist for audio the same way) -- findLastKeyframeAtOrBefore
+        // selects only the video stream (-select_streams v:0), so on an
+        // audio-only source it finds no packets and falls back to the probe
+        // window's own start, which reads as a large, near-guaranteed-risky
+        // offset for any startSeconds past the window size. That spuriously
+        // forces a re-encode on audio clips that never had a keyframe problem
+        // to begin with, so skip the check entirely once there's no video
+        // stream to be at risk.
+        const hasVideoStream = (await probeMediaStreams(inputPath).catch(() => []))
+            .some((s) => s.codecType === 'video');
+        const risky = hasVideoStream && !forceReencode && startSeconds != null
             // Fails open toward re-encoding (slower, but always correct)
             // rather than silently trusting the fast path if the probe
             // itself errors out for some reason.

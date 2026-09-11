@@ -430,4 +430,34 @@ describe('LibraryVideoPlayer', () => {
       expect(within(loopSequenceItem).getByTestId('CheckIcon')).toBeInTheDocument();
     });
   });
+
+  describe('time display (double-click for millisecond precision)', () => {
+    it('double-clicking a time display switches both it and its counterpart to millisecond precision, and double-click again reverts both', async () => {
+      const user = userEvent.setup();
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} />,
+      );
+      await findSourceEl(container);
+      const video = container.querySelector('video') as HTMLVideoElement;
+      fireReadinessCascade(video);
+      video.currentTime = 5.25;
+      fireEvent.timeUpdate(video);
+
+      // A fractional currentTime with no ms shown yet -- confirms the plain
+      // Vidstack <Time> display (which sets its own data-type attribute) is
+      // the default, not the detailed one.
+      expect(screen.getByTestId('time-current').textContent).not.toContain('.');
+      expect(screen.getByTestId('time-duration')).toHaveAttribute('data-type', 'duration');
+
+      await user.dblClick(screen.getByTestId('time-current'));
+      await waitFor(() => expect(screen.getByTestId('time-current').textContent).toContain('.'));
+      // Both displays share one toggle -- duration switches to the custom
+      // (non-Vidstack-<Time>, so no data-type attribute) display too.
+      expect(screen.getByTestId('time-duration')).not.toHaveAttribute('data-type');
+
+      await user.dblClick(screen.getByTestId('time-current'));
+      await waitFor(() => expect(screen.getByTestId('time-current').textContent).not.toContain('.'));
+      expect(screen.getByTestId('time-duration')).toHaveAttribute('data-type', 'duration');
+    });
+  });
 });

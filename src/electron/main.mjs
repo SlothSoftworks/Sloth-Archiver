@@ -1802,11 +1802,13 @@ export function resolveAppOrLibraryPath(libraryDir, candidatePath) {
 // Matches every shape FfmpegUtilitiesPanel.tsx's own timestamp helpers can
 // produce: formatClipTimestampInput (typed input, anywhere from a bare
 // seconds value up to HH:MM:SS) and formatSecondsAsClipTimestamp (the
-// "set from current playback position" default fill, always HH:MM:SS with
-// unbounded hours for a very long video). Rejects anything else -- start/end
-// are spliced directly into ffmpeg's -ss/-to argv slots, so this is what
-// stands between a crafted string and an injected ffmpeg option.
-const CLIP_TIMESTAMP_PATTERN = /^\d{1,6}(:\d{2}){0,2}$/;
+// "set from current playback position" default fill, always HH:MM:SS,
+// optionally with a .mmm millisecond suffix on the seconds group for a
+// drag-derived sub-second clip boundary, and unbounded hours for a very
+// long video). Rejects anything else -- start/end are spliced directly into
+// ffmpeg's -ss/-to argv slots, so this is what stands between a crafted
+// string and an injected ffmpeg option.
+const CLIP_TIMESTAMP_PATTERN = /^\d{1,6}(:\d{2}){0,2}(\.\d{1,3})?$/;
 export function isValidClipTimestamp(value) {
     return typeof value === 'string' && CLIP_TIMESTAMP_PATTERN.test(value);
 }
@@ -1909,16 +1911,19 @@ ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, forma
     }
 });
 
-// start/end are passed straight through to ffmpeg's own -ss/-to, which
-// already accepts the flexible time formats the UI's fields take -- so they
-// pass through unparsed, but isValidClipTimestamp below still gates them
-// against the shape this app's own UI can ever actually produce, since
-// they're spliced directly into ffmpeg's argv. Both as output options
-// (after -i), so they're unambiguous timestamps in the source's timeline --
-// slower to seek than input-side -ss, but -c copy never decodes video either
-// way, so it's only an I/O cost. -c copy snaps to the nearest keyframe
-// rather than an exact frame, a documented tradeoff; frame-accurate
-// re-encoded cuts are a deliberately separate, not-yet-offered option.
+// start is passed straight through to ffmpeg's own input-side -ss (before
+// -i), which already accepts the flexible time formats the UI's fields take
+// -- so it passes through unparsed, but isValidClipTimestamp below still
+// gates it against the shape this app's own UI can ever actually produce,
+// since it's spliced directly into ffmpeg's argv. Input-side rather than
+// output-side: an output-side -ss under -c copy can't re-cut the already-
+// copied video track, so it only starts at the next keyframe after the seek
+// point while audio starts exactly on time, producing a frozen last frame.
+// Input-side -ss makes the demuxer jump to the keyframe at or before the
+// point instead, keeping video/audio in sync at the cost of the clip
+// possibly starting up to one GOP length earlier than requested on the
+// -c copy fast path; clipAndConvert auto-upgrades to a re-encode when that
+// rounding risk is large relative to the clip length.
 // Arbitrary-output-path clip export: unlike library:createClip below, this
 // never touches clips.json and writes wherever the caller (a save dialog)
 // picked, for player instances with no "library video entry" to attach a
