@@ -144,12 +144,31 @@ function assetDownloadUrl(tag, assetName) {
     return `https://github.com/denoland/deno/releases/download/${tag}/${assetName}`;
 }
 
+// Deno's release pipeline generates each asset's `.sha256sum` companion
+// differently depending on which OS built it. Unix builds (macOS, Linux)
+// run plain `sha256sum`, producing the same "<hex digest>  <filename>"
+// line yt-dlp's combined SHA2-256SUMS uses -- findChecksumForAsset already
+// handles that. The Windows build step instead uses PowerShell's
+// `Get-FileHash | Format-List`, which produces a completely different,
+// CRLF-terminated, labeled-field block with an uppercase hash:
+//
+//   Algorithm : SHA256
+//   Hash      : 171EFAB55AC6B9881FD53EE4C20F8BF3BB1340FFC618483746909014DB12216A
+//   Path      : C:\a\deno\deno\target\release\deno-x86_64-pc-windows-msvc.zip
+//
+// Confirmed directly against the real v2.9.5 assets for both Windows
+// architectures. findChecksumForAsset's line format never matches this, so
+// this needs its own parser rather than reusing that one for every OS.
+function parseWindowsSha256Sum(sumsText) {
+    const match = /^\s*Hash\s*:\s*([0-9a-fA-F]{64})\s*$/m.exec(sumsText);
+    return match ? match[1].toLowerCase() : null;
+}
+
 // The orchestration entry point -- downloads assetName plus its own
-// `<assetName>.sha256sum` companion file (confirmed directly: a single line,
-// same "<hex digest>  <filename>" format yt-dlp's combined SHA2-256SUMS
-// uses, just scoped to one asset instead of every asset in the release),
-// verifies the asset's SHA-256 against it, and only on success unzips the
-// asset into a fresh subdirectory of workDir.
+// `<assetName>.sha256sum` companion file, verifies the asset's SHA-256
+// against it (see parseWindowsSha256Sum above for why Windows needs its own
+// parsing path), and only on success unzips the asset into a fresh
+// subdirectory of workDir.
 //
 // Deliberately weaker than ytdlpRelease.mjs's fetchAndVerifyRelease in one
 // specific way: Deno's own releases ship no GPG/detached signature at all,
@@ -160,7 +179,11 @@ function assetDownloadUrl(tag, assetName) {
 // category of risk, just extended to a third bundled binary. Still fails
 // closed: any missing checksum file, missing entry, or mismatch throws and
 // nothing gets extracted.
-export async function fetchAndVerifyDenoRelease({ release, assetName, workDir, onProgress, onLog }) {
+// platform defaults to process.platform (only ever overridden by tests,
+// same injectable-with-a-real-default shape as mapPlatformToAssetName
+// above) so the Windows-vs-Unix checksum format branch is deterministic
+// under test regardless of which OS actually runs the test suite.
+export async function fetchAndVerifyDenoRelease({ release, assetName, workDir, onProgress, onLog, platform = process.platform }) {
     fs.mkdirSync(workDir, { recursive: true });
     const assetPath = path.join(workDir, assetName);
 
@@ -172,7 +195,9 @@ export async function fetchAndVerifyDenoRelease({ release, assetName, workDir, o
     const sumsText = await downloadText(assetDownloadUrl(release.tag, `${assetName}.sha256sum`));
 
     onProgress?.('verifying');
-    const expectedChecksum = findChecksumForAsset(sumsText, assetName);
+    const expectedChecksum = platform === 'win32'
+        ? parseWindowsSha256Sum(sumsText)
+        : findChecksumForAsset(sumsText, assetName);
     if (!expectedChecksum) {
         throw verificationError(`${assetName}.sha256sum has no entry for ${assetName} -- refusing to install an unverified binary`);
     }
@@ -197,7 +222,7 @@ export async function fetchAndVerifyDenoRelease({ release, assetName, workDir, o
     // Explicit chmod regardless of the ZIP's own Unix-permission bits,
     // matching copy-ffmpeg.mjs's same defensive chmod after copying a
     // third-party binary into place.
-    if (process.platform !== 'win32') {
+    if (platform !== 'win32') {
         fs.chmodSync(path.join(extractDir, 'deno'), 0o755);
     }
 

@@ -193,7 +193,7 @@ describe('fetchAndVerifyDenoRelease', () => {
     const { fetchAndVerifyDenoRelease: freshFetch } = await import('./denoRelease.mjs');
 
     const workDir = path.join(tmpDir, 'work');
-    const extractDir = await freshFetch({ release: { tag: 'v2.9.5' }, assetName, workDir });
+    const extractDir = await freshFetch({ release: { tag: 'v2.9.5' }, assetName, workDir, platform: 'darwin' });
 
     expect(fs.readFileSync(path.join(extractDir, 'deno'), 'utf-8')).toBe('fake deno binary');
 
@@ -236,7 +236,7 @@ describe('fetchAndVerifyDenoRelease', () => {
     const { fetchAndVerifyDenoRelease: freshFetch } = await import('./denoRelease.mjs');
 
     const workDir = path.join(tmpDir, 'work');
-    await expect(freshFetch({ release: { tag: 'v2.9.5' }, assetName, workDir }))
+    await expect(freshFetch({ release: { tag: 'v2.9.5' }, assetName, workDir, platform: 'darwin' }))
       .rejects.toMatchObject({ code: DENO_VERIFICATION_ERROR_CODE, message: expect.stringContaining('Checksum mismatch') });
     expect(fs.existsSync(path.join(workDir, 'extracted'))).toBe(false);
 
@@ -278,8 +278,61 @@ describe('fetchAndVerifyDenoRelease', () => {
     const { fetchAndVerifyDenoRelease: freshFetch } = await import('./denoRelease.mjs');
 
     const workDir = path.join(tmpDir, 'work');
-    await expect(freshFetch({ release: { tag: 'v2.9.5' }, assetName, workDir }))
+    await expect(freshFetch({ release: { tag: 'v2.9.5' }, assetName, workDir, platform: 'darwin' }))
       .rejects.toMatchObject({ code: DENO_VERIFICATION_ERROR_CODE, message: expect.stringContaining('no entry for') });
+
+    vi.doUnmock('https');
+    vi.resetModules();
+  }));
+
+  // Deno's Windows build step generates its .sha256sum companion with
+  // PowerShell's `Get-FileHash | Format-List` instead of plain `sha256sum`
+  // -- an entirely different, CRLF-terminated, labeled-field format with an
+  // uppercase hash. Confirmed directly against the real v2.9.5
+  // deno-x86_64-pc-windows-msvc.zip.sha256sum asset; this is the exact shape
+  // that broke the real Windows CI build before parseWindowsSha256Sum
+  // existed (findChecksumForAsset's line format never matches it).
+  it('parses the Windows-shaped .sha256sum (PowerShell Get-FileHash | Format-List) correctly', async () => withTmpDir(async (tmpDir) => {
+    const zipBuf = buildDenoZip('fake deno binary');
+    const assetName = 'deno-x86_64-pc-windows-msvc.zip';
+    const checksum = crypto.createHash('sha256').update(zipBuf).digest('hex');
+    const windowsSumsText = '\r\nAlgorithm : SHA256\r\n'
+      + `Hash      : ${checksum.toUpperCase()}\r\n`
+      + `Path      : C:\\a\\deno\\deno\\target\\release\\${assetName}\r\n\r\n`;
+
+    vi.doMock('https', () => ({
+      default: {
+        get: (url, options, callback) => {
+          const res = new EventEmitter();
+          res.statusCode = 200;
+          res.headers = {};
+          res.resume = vi.fn();
+          if (url.endsWith('.sha256sum')) {
+            callback(res);
+            queueMicrotask(() => {
+              res.emit('data', windowsSumsText);
+              res.emit('end');
+            });
+          } else {
+            res.pipe = (dest) => {
+              dest.write(zipBuf);
+              dest.end();
+            };
+            callback(res);
+          }
+          const req = new EventEmitter();
+          req.setTimeout = vi.fn();
+          return req;
+        },
+      },
+    }));
+    vi.resetModules();
+    const { fetchAndVerifyDenoRelease: freshFetch } = await import('./denoRelease.mjs');
+
+    const workDir = path.join(tmpDir, 'work');
+    const extractDir = await freshFetch({ release: { tag: 'v2.9.5' }, assetName, workDir, platform: 'win32' });
+
+    expect(fs.readFileSync(path.join(extractDir, 'deno'), 'utf-8')).toBe('fake deno binary');
 
     vi.doUnmock('https');
     vi.resetModules();
