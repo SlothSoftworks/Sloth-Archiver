@@ -321,6 +321,19 @@ describe('LibraryVideoPlayer', () => {
       expect(await screen.findByRole('menuitem', { name: 'Loop sequence' })).not.toHaveAttribute('aria-disabled', 'true');
     });
 
+    it('Loop sequence stays disabled when the end marker is not after the start marker', async () => {
+      const { container } = render(
+        <LibraryVideoPlayer
+          metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+          clipMarkers={noopClipMarkers({ startSeconds: 10, endSeconds: 5 })}
+        />,
+      );
+      await findSourceEl(container);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      expect(await screen.findByRole('menuitem', { name: 'Loop sequence' })).toHaveAttribute('aria-disabled', 'true');
+    });
+
     it('enabling Loop sequence seeks to the start marker immediately, without touching anything else about playback', async () => {
       const user = userEvent.setup();
       const { container } = render(

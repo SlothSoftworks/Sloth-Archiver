@@ -191,7 +191,8 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     });
     setLoopEnabled(false);
   };
-  const hasValidLoopMarkers = !!clipMarkers && clipMarkers.startSeconds != null && clipMarkers.endSeconds != null;
+  const hasValidLoopMarkers = !!clipMarkers && clipMarkers.startSeconds != null && clipMarkers.endSeconds != null
+    && clipMarkers.endSeconds > clipMarkers.startSeconds;
   const loopSequenceActive = loopSequenceEnabled && hasValidLoopMarkers;
 
   const handleLoopSequenceTimeUpdate = () => {
