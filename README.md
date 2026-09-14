@@ -4,6 +4,7 @@
 [![CI](https://github.com/SlothSoftworks/Sloth-Archiver/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/SlothSoftworks/Sloth-Archiver/actions/workflows/ci.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational)](#download)
+[![Total Downloads](https://img.shields.io/github/downloads/SlothSoftworks/Sloth-Archiver/total)](https://github.com/SlothSoftworks/Sloth-Archiver/releases)
 
 **Your own personal, offline video archive, for people who like to keep their video archiving sweet and simple and not fight with
 Docker, servers, or a complicated setup to get one.**
