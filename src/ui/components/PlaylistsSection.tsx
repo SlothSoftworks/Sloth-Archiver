@@ -35,6 +35,8 @@ import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FilterListIcon from '@mui/icons-material/FilterList';
+import ImageIcon from '@mui/icons-material/Image';
+import ImageOutlinedIcon from '@mui/icons-material/ImageOutlined';
 import { pink } from '@mui/material/colors';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl, formatEpochLabel, getBestDownloadedQuality } from '../../utils/utils.ts';
 import LibrarySearchBar from './LibrarySearchBar';
@@ -59,7 +61,7 @@ export type PlaylistBulkBar = {
 
 // Mirrors library.mjs's own CURRENT_PLAYLIST_SCHEMA_VERSION (main process
 // and renderer never cross-import in this codebase).
-const CURRENT_PLAYLIST_SCHEMA_VERSION = 1;
+const CURRENT_PLAYLIST_SCHEMA_VERSION = 2;
 
 // Prefers the live first-entry thumbnail over the locally-cached fallback
 // (ensurePlaylistThumbnail, main.mjs), which only matters once there's no
@@ -115,6 +117,15 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
     playlists,
     (playlist) => playlist.title || playlist.playlistId,
   );
+  // Same hook, scoped to the currently-open playlist's own entries instead
+  // of the top-level playlist list -- the detail view had no search at all
+  // before this.
+  const {
+    query: entryQuery, setQuery: setEntryQuery, filtered: searchFilteredEntries, clear: clearEntryQuery,
+  } = useLibrarySearch(
+    selectedPlaylist?.entries ?? [],
+    (entry) => entry.title ?? '',
+  );
 
   const toggleVideoSelected = (videoId: string) => {
     setSelectedVideoIds((prev) => {
@@ -155,21 +166,21 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
   };
   const isEntryDownloaded = (videoId: string) => getEntryQuality(videoId) !== null;
 
-  // Entries currently on screen, after the tag/downloaded filters below --
-  // used only for rendering and for what "select all" targets. Manual
-  // per-item selections are tracked separately (against the unfiltered set,
-  // see allSelectableEntries) so narrowing the filter never silently drops
-  // an already-selected video out of a pending bulk action.
+  // Entries currently on screen, after search narrows first and the tag/
+  // downloaded filters below narrow further -- used only for rendering and
+  // for what "select all" targets. Manual per-item selections are tracked
+  // separately (against the unfiltered set, see allSelectableEntries) so
+  // narrowing the filter never silently drops an already-selected video out
+  // of a pending bulk action.
   const filteredEntries = useMemo(() => {
-    const entries = selectedPlaylist?.entries || [];
-    return entries.filter((e) => {
+    return searchFilteredEntries.filter((e) => {
       if (selectedSystemFilters.has('downloaded') && !isEntryDownloaded(e.videoId)) return false;
       if (selectedSystemFilters.has('notDownloaded') && isEntryDownloaded(e.videoId)) return false;
       if (selectedTagFilters.size > 0 && ![...selectedTagFilters].every((tag) => videoTags[tag]?.includes(e.videoId))) return false;
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPlaylist, selectedSystemFilters, selectedTagFilters, videoTags, videoByDir]);
+  }, [searchFilteredEntries, selectedSystemFilters, selectedTagFilters, videoTags, videoByDir]);
 
   // Selectable entries are every entry not confirmed unavailable -- both
   // already-in-library and not-yet-added ones. Unfiltered: what a bulk
@@ -381,11 +392,43 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
     const result = await window.electronAPI.refreshPlaylist(selectedPlaylistId);
     if (result.success) {
       setRefreshSummary({ added: result.added || 0, removed: result.removed || 0, updated: result.updated || 0 });
+      // Every live entry with no library match yet -- not just ones new to
+      // this refresh (an entry can have sat in the playlist unaddded for a
+      // while, e.g. a skipped/failed earlier bulk-add) -- only ever carries
+      // the thin flat-playlist shape (title/url/thumbnail)
+      // reconcilePlaylistSnapshot itself can see. Feeding it through the
+      // same fetch/dedup/write/enrich pipeline bulk-add already uses
+      // (metadata-only, download: false) is what actually pulls its full
+      // data into the library, rather than leaving it a bare placeholder
+      // until someone adds it by hand.
+      if (result.missingFromLibraryEntries && result.missingFromLibraryEntries.length > 0) {
+        const entries: BulkAddEntry[] = result.missingFromLibraryEntries.map((entry) => ({
+          id: entry.videoId, title: entry.title, url: entry.url, videoId: entry.videoId, playlistId: selectedPlaylistId,
+        }));
+        start(entries, { download: false, targetResolution: '' });
+      }
       await loadDetail(selectedPlaylistId);
     } else {
       setActionError(result.message || 'Failed to refresh this playlist.');
     }
     setRefreshing(false);
+  };
+
+  // "Set as playlist thumbnail" (videoId) / "Reset to automatic" (null) --
+  // see setPlaylistManualThumbnail (library.mjs) for the persistence rule.
+  const handleSetPlaylistThumbnail = async (videoId: string | null) => {
+    if (!selectedPlaylistId) return;
+    const result = await window.electronAPI.setPlaylistManualThumbnail(selectedPlaylistId, videoId);
+    if (result.success) {
+      setSelectedPlaylist((prev) => (prev ? {
+        ...prev,
+        manualThumbnailVideoId: result.manualThumbnailVideoId ?? null,
+        thumbnailUrl: result.thumbnailUrl ?? null,
+        thumbnailPath: result.thumbnailPath ?? null,
+      } : prev));
+    } else {
+      setActionError(result.message || 'Failed to update the playlist thumbnail.');
+    }
   };
 
   // Only ever deletes the playlist's own saved snapshot -- the videos it
@@ -437,7 +480,7 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
           </IconButton>
           <Avatar
             variant="rounded"
-            src={playlistThumbnailSrc(selectedPlaylist?.entries[0]?.thumbnailUrl, selectedPlaylist?.thumbnailPath)}
+            src={playlistThumbnailSrc(selectedPlaylist?.thumbnailUrl, selectedPlaylist?.thumbnailPath)}
             sx={{ width: 48, height: 27, flexShrink: 0 }}
           >
             <PlaylistPlayIcon fontSize="small" />
@@ -506,6 +549,15 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
         ) : (
           <>
             {selectedPlaylist && selectedPlaylist.entries.length > 0 &&
+              <Box sx={{ mb: 1 }}>
+                <LibrarySearchBar
+                  value={entryQuery}
+                  onChange={setEntryQuery}
+                  onClear={clearEntryQuery}
+                  placeholder="Search this playlist..."
+                />
+              </Box>}
+            {selectedPlaylist && selectedPlaylist.entries.length > 0 &&
               <Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={0.5}>
                 {visibleSelectableEntries.length > 0 &&
                   <>
@@ -545,15 +597,22 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
                 </Box>
               </Stack>}
           {selectedPlaylist && selectedPlaylist.entries.length > 0 && filteredEntries.length === 0 &&
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>No videos match the selected filter.</Typography>}
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>No videos match your search or the selected filter.</Typography>}
           <List dense>
             {filteredEntries.map((entry) => {
               const videoDir = selectedPlaylist?.localFiles[entry.videoId];
               const entryQuality = getEntryQuality(entry.videoId);
               const entryAppliedTags = Object.keys(videoTags).filter((name) => videoTags[name].includes(entry.videoId));
+              const isManualThumbnail = !!selectedPlaylist?.manualThumbnailVideoId && selectedPlaylist.manualThumbnailVideoId === entry.videoId;
               return (
                 <ListItem
                   key={entry.videoId}
+                  // Reveals the "set as playlist thumbnail" button on hover --
+                  // a new pattern for this codebase, no existing hover-reveal
+                  // precedent elsewhere to match; scoped to this one class
+                  // rather than a broader row-hover style since nothing else
+                  // in the row needs it.
+                  sx={{ '&:hover .set-playlist-thumbnail-btn': { opacity: 1 } }}
                   secondaryAction={
                     <Stack direction="row" alignItems="center" spacing={0.5}>
                       {/* Both slots are always rendered (blank when not
@@ -581,7 +640,33 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
                   }
                 >
                   <ListItemAvatar>
-                    <Avatar variant="rounded" src={entry.thumbnailUrl || undefined} sx={{ width: 64, height: 36, mr: 1 }} />
+                    <Box sx={{ position: 'relative', width: 64, height: 36, mr: 1 }}>
+                      <Avatar variant="rounded" src={entry.thumbnailUrl || undefined} sx={{ width: 64, height: 36 }} />
+                      {!entry.unavailable &&
+                        <Tooltip title={isManualThumbnail ? 'Reset to automatic thumbnail' : 'Set as playlist thumbnail'}>
+                          <IconButton
+                            className="set-playlist-thumbnail-btn"
+                            size="small"
+                            onClick={() => handleSetPlaylistThumbnail(isManualThumbnail ? null : entry.videoId)}
+                            aria-label={isManualThumbnail ? 'Reset to automatic thumbnail' : 'Set as playlist thumbnail'}
+                            sx={{
+                              position: 'absolute', top: -6, right: -6, width: 20, height: 20,
+                              backgroundColor: 'background.paper',
+                              '&:hover': { backgroundColor: 'background.paper' },
+                              // Always visible once active, so it's clear at a
+                              // glance which entry the thumbnail follows even
+                              // without hovering -- hover-only otherwise, to
+                              // keep every other row's chrome out of the way.
+                              opacity: isManualThumbnail ? 1 : 0,
+                              transition: 'opacity 0.15s',
+                            }}
+                          >
+                            {isManualThumbnail
+                              ? <ImageIcon sx={{ fontSize: 14 }} color="primary" />
+                              : <ImageOutlinedIcon sx={{ fontSize: 14 }} />}
+                          </IconButton>
+                        </Tooltip>}
+                    </Box>
                   </ListItemAvatar>
                   <ListItemText
                     primary={

@@ -24,6 +24,13 @@ import {
   findVideoInIndex,
   writePlaylistSnapshot,
   enrichPlaylistEntry,
+  listPlaylistSnapshots,
+  getPlaylistSnapshot,
+  reconcilePlaylistSnapshot,
+  setPlaylistManualThumbnail,
+  firstAvailablePlaylistThumbnail,
+  resolvePlaylistThumbnailUrl,
+  CURRENT_PLAYLIST_SCHEMA_VERSION,
   PLAYLISTS_DIR_NAME,
   CLIPS_DIR_NAME,
   DEFAULT_LIBRARY_DIR_NAME,
@@ -1126,6 +1133,182 @@ describe('writePlaylistSnapshot / enrichPlaylistEntry', () => {
     // A later "enrich" with another dead title (title === videoId) must not clobber the real one just set.
     const reEnriched = enrichPlaylistEntry({ libraryDir, playlistId: 'PL123', videoId: 'v2', title: 'v2' });
     expect(reEnriched.entries.find((e) => e.videoId === 'v2').title).toBe('Real Title');
+  });
+});
+
+describe('firstAvailablePlaylistThumbnail / resolvePlaylistThumbnailUrl', () => {
+  const entries = [
+    { videoId: 'v1', title: null, url: 'u1', thumbnailUrl: 't1', unavailable: true }, // dead, but has a thumbnail
+    { videoId: 'v2', title: 'Two', url: 'u2', thumbnailUrl: null, unavailable: false }, // live, no thumbnail
+    { videoId: 'v3', title: 'Three', url: 'u3', thumbnailUrl: 't3', unavailable: false }, // live, has one -- automatic's own pick
+    { videoId: 'v4', title: 'Four', url: 'u4', thumbnailUrl: 't4', unavailable: false }, // live, has one too
+  ];
+
+  it('skips a dead first entry and a live-but-thumbnail-less one, picking the first qualifying entry', () => {
+    expect(firstAvailablePlaylistThumbnail(entries)).toBe('t3');
+  });
+
+  it('falls back to entries[0]\'s own thumbnailUrl when nothing qualifies', () => {
+    const allDead = [{ videoId: 'v1', thumbnailUrl: 't1', unavailable: true }, { videoId: 'v2', thumbnailUrl: null, unavailable: true }];
+    expect(firstAvailablePlaylistThumbnail(allDead)).toBe('t1');
+    expect(firstAvailablePlaylistThumbnail([])).toBeNull();
+  });
+
+  it('a manual override pointing at a live entry with a real thumbnail wins over the automatic pick', () => {
+    // Automatic (firstAvailablePlaylistThumbnail) would pick v3 -- the
+    // override explicitly points at v4 instead, and must win.
+    expect(resolvePlaylistThumbnailUrl({ entries, manualThumbnailVideoId: 'v4' })).toBe('t4');
+  });
+
+  it('falls back to automatic when the manual override entry is dead or missing entirely', () => {
+    expect(resolvePlaylistThumbnailUrl({ entries, manualThumbnailVideoId: 'v1' })).toBe('t3'); // v1 is dead -- ignored
+    expect(resolvePlaylistThumbnailUrl({ entries, manualThumbnailVideoId: 'gone' })).toBe('t3'); // not even in entries
+    expect(resolvePlaylistThumbnailUrl({ entries, manualThumbnailVideoId: null })).toBe('t3'); // no override at all
+  });
+});
+
+describe('listPlaylistSnapshots / getPlaylistSnapshot (thumbnail resolution)', () => {
+  const deadFirstEntries = () => [
+    { videoId: 'v1', title: 'v1', url: 'u1', thumbnailUrl: 'dead-thumb' }, // dead title (== videoId)
+    { videoId: 'v2', title: 'Live One', url: 'u2', thumbnailUrl: 'live-thumb' },
+  ];
+
+  it('listPlaylistSnapshots skips a dead first entry\'s thumbnail in favor of the first live one', () => {
+    writePlaylistSnapshot({ libraryDir, playlistId: 'PL1', entries: deadFirstEntries(), index: { channels: [] } });
+    const [summary] = listPlaylistSnapshots({ libraryDir });
+    expect(summary.thumbnailUrl).toBe('live-thumb');
+  });
+
+  it('getPlaylistSnapshot exposes the same resolved thumbnailUrl and a manualThumbnailVideoId field', async () => {
+    writePlaylistSnapshot({ libraryDir, playlistId: 'PL1', entries: deadFirstEntries(), index: { channels: [] } });
+    const snapshot = await getPlaylistSnapshot({ libraryDir, playlistId: 'PL1', index: { channels: [] } });
+    expect(snapshot.thumbnailUrl).toBe('live-thumb');
+    expect(snapshot.manualThumbnailVideoId).toBeNull();
+  });
+});
+
+describe('reconcilePlaylistSnapshot', () => {
+  const initialEntries = () => [{ videoId: 'v1', title: 'Video One', url: 'u1', thumbnailUrl: 't1', uploadDate: '20260101' }];
+
+  it('reports every live entry with no library match -- new ones, but not a brand-new dead placeholder', () => {
+    writePlaylistSnapshot({ libraryDir, playlistId: 'PL1', entries: initialEntries(), index: { channels: [] } });
+
+    const fresh = [
+      { videoId: 'v1', title: 'Video One', url: 'u1', thumbnailUrl: 't1', uploadDate: '20260101' }, // unchanged, but no library match
+      { videoId: 'v2', title: 'Video Two', url: 'u2', thumbnailUrl: 't2', uploadDate: '20260102' }, // new, live
+      { videoId: 'v3', title: 'v3', url: 'u3' }, // new, but dead title (== videoId)
+    ];
+    const result = reconcilePlaylistSnapshot({ libraryDir, playlistId: 'PL1', freshEntries: fresh, index: { channels: [] } });
+
+    expect(result.added).toBe(2); // v2 and v3 count as "added" for the summary toast...
+    // ...but missingFromLibraryEntries is scoped differently: every live
+    // entry without a library match, v1 included even though it's not new
+    // to this refresh, v3 excluded because it's dead (nothing worth fetching).
+    const missingIds = result.missingFromLibraryEntries.map((e) => e.videoId).sort();
+    expect(missingIds).toEqual(['v1', 'v2']);
+  });
+
+  it('flags a pre-existing playlist entry that still has no library match, even though it\'s not new to this refresh', () => {
+    // The bug this covers: an entry that has sat in the playlist for a
+    // while (e.g. a skipped/failed earlier bulk-add, or one that predates
+    // this feature) never gets picked up on refresh just because it isn't
+    // "new" -- missingFromLibraryEntries is keyed on library presence, not
+    // on refresh novelty.
+    writePlaylistSnapshot({ libraryDir, playlistId: 'PL1', entries: initialEntries(), index: { channels: [] } });
+    const indexWithV1 = { channels: [{ videos: [{ metadata: { videoId: 'v1' }, videoDir: '/lib/Channel A/v1' }] }] };
+
+    const stillMissing = reconcilePlaylistSnapshot({
+      libraryDir, playlistId: 'PL1',
+      freshEntries: [{ videoId: 'v1', title: 'Video One', url: 'u1', thumbnailUrl: 't1', uploadDate: '20260101' }],
+      index: { channels: [] }, // v1 still not in the library
+    });
+    expect(stillMissing.missingFromLibraryEntries.map((e) => e.videoId)).toEqual(['v1']);
+
+    const nowPresent = reconcilePlaylistSnapshot({
+      libraryDir, playlistId: 'PL1',
+      freshEntries: [{ videoId: 'v1', title: 'Video One', url: 'u1', thumbnailUrl: 't1', uploadDate: '20260101' }],
+      index: indexWithV1, // added to the library between refreshes
+    });
+    expect(nowPresent.missingFromLibraryEntries).toHaveLength(0);
+  });
+
+  it('carries manualThumbnailVideoId through a refresh unchanged, and surfaces it in the return value', () => {
+    writePlaylistSnapshot({ libraryDir, playlistId: 'PL1', entries: initialEntries(), index: { channels: [] } });
+    setPlaylistManualThumbnail({ libraryDir, playlistId: 'PL1', videoId: 'v1' });
+
+    const result = reconcilePlaylistSnapshot({
+      libraryDir, playlistId: 'PL1',
+      freshEntries: [{ videoId: 'v1', title: 'Video One', url: 'u1', thumbnailUrl: 't1', uploadDate: '20260101' }],
+      index: { channels: [] },
+    });
+
+    expect(result.manualThumbnailVideoId).toBe('v1');
+  });
+
+  it('bumps a stale schemaVersion (and backfills fields that predate it) on refresh, so "Outdated data" actually clears', () => {
+    // Real bug: a refresh recomputed everything else but spread oldMetadata's
+    // own stale schemaVersion straight through unchanged, so a playlist
+    // flagged "Outdated data" stayed flagged forever no matter how many
+    // times it was refreshed.
+    const written = writePlaylistSnapshot({ libraryDir, playlistId: 'PL1', entries: initialEntries(), index: { channels: [] } });
+    const metadataPath = path.join(written.epochDir, 'metadata.json');
+    const stale = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    delete stale.manualThumbnailVideoId; // predates schemaVersion 2
+    stale.schemaVersion = 1;
+    fs.writeFileSync(metadataPath, JSON.stringify(stale, null, 2), 'utf-8');
+
+    reconcilePlaylistSnapshot({
+      libraryDir, playlistId: 'PL1',
+      freshEntries: [{ videoId: 'v1', title: 'Video One', url: 'u1', thumbnailUrl: 't1', uploadDate: '20260101' }],
+      index: { channels: [] },
+    });
+
+    const updated = readMetadata(written.epochDir);
+    expect(updated.schemaVersion).toBe(CURRENT_PLAYLIST_SCHEMA_VERSION);
+    expect(updated.manualThumbnailVideoId).toBeNull();
+  });
+});
+
+describe('setPlaylistManualThumbnail', () => {
+  const entries = () => [
+    { videoId: 'v1', title: 'Video One', url: 'u1', thumbnailUrl: 't1', uploadDate: '20260101' },
+    { videoId: 'v2', title: 'v2', url: 'u2' }, // dead title (== videoId)
+  ];
+
+  it('sets the override, resolves the thumbnail to that entry\'s own, and persists it', () => {
+    const written = writePlaylistSnapshot({ libraryDir, playlistId: 'PL1', entries: entries(), index: { channels: [] } });
+
+    const result = setPlaylistManualThumbnail({ libraryDir, playlistId: 'PL1', videoId: 'v1' });
+
+    expect(result.success).toBe(true);
+    expect(result.manualThumbnailVideoId).toBe('v1');
+    expect(result.thumbnailUrl).toBe('t1');
+    expect(readMetadata(written.epochDir).manualThumbnailVideoId).toBe('v1');
+  });
+
+  it('clearing (videoId null) reverts to automatic resolution', () => {
+    writePlaylistSnapshot({ libraryDir, playlistId: 'PL1', entries: entries(), index: { channels: [] } });
+    setPlaylistManualThumbnail({ libraryDir, playlistId: 'PL1', videoId: 'v1' });
+
+    const result = setPlaylistManualThumbnail({ libraryDir, playlistId: 'PL1', videoId: null });
+
+    expect(result.success).toBe(true);
+    expect(result.manualThumbnailVideoId).toBeNull();
+  });
+
+  it('refuses to set an unavailable or nonexistent entry as the thumbnail', () => {
+    writePlaylistSnapshot({ libraryDir, playlistId: 'PL1', entries: entries(), index: { channels: [] } });
+
+    const deadResult = setPlaylistManualThumbnail({ libraryDir, playlistId: 'PL1', videoId: 'v2' });
+    expect(deadResult.success).toBe(false);
+
+    const missingResult = setPlaylistManualThumbnail({ libraryDir, playlistId: 'PL1', videoId: 'nope' });
+    expect(missingResult.success).toBe(false);
+  });
+
+  it('reports failure for a playlist with no saved snapshot', () => {
+    const result = setPlaylistManualThumbnail({ libraryDir, playlistId: 'nope', videoId: 'v1' });
+    expect(result.success).toBe(false);
   });
 });
 

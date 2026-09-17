@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listPlaylists: () => ipcRenderer.invoke('library:listPlaylists'),
     getPlaylist: (playlistId) => ipcRenderer.invoke('library:getPlaylist', playlistId),
     refreshPlaylist: (playlistId) => ipcRenderer.invoke('library:refreshPlaylist', playlistId),
+    setPlaylistManualThumbnail: (playlistId, videoId) => ipcRenderer.invoke('library:setPlaylistManualThumbnail', { playlistId, videoId }),
     undoPlaylistRefresh: (playlistId) => ipcRenderer.invoke('library:undoPlaylistRefresh', playlistId),
     deletePlaylist: (playlistId) => ipcRenderer.invoke('library:deletePlaylist', playlistId),
     recordLibraryDownload: (payload) => ipcRenderer.invoke('library:recordDownload', payload),

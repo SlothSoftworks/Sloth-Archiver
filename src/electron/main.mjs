@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -858,7 +858,12 @@ ipcMain.handle('library:fetchPlaylistEntries', async (e, playlistUrl) => {
                 index,
             });
             // Fire-and-forget, same as the video/channel thumbnail caches.
-            ensurePlaylistThumbnail(result.playlistDir, playlist.entries[0]?.thumbnailUrl);
+            // Prefers result.metadata.entries (already dead-flagged by
+            // writePlaylistSnapshot's own isDeadTitle check) over the raw
+            // fetch, so a dead first entry doesn't win here either -- falls
+            // back to the raw entries only on the rare no-op-second-save
+            // case (result.metadata is null then).
+            ensurePlaylistThumbnail(result.playlistDir, firstAvailablePlaylistThumbnail(result.metadata?.entries || playlist.entries));
         }
         return { success: true, entries: playlist.entries, playlistId: playlist.id };
     } catch (err) {
@@ -931,8 +936,31 @@ ipcMain.handle('library:refreshPlaylist', async (e, playlistId) => {
             index,
         });
         const playlistDir = path.join(libraryTagDir(libraryDir, activeLibraryTag), PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
-        ensurePlaylistThumbnail(playlistDir, result.entries[0]?.thumbnailUrl);
+        ensurePlaylistThumbnail(playlistDir, resolvePlaylistThumbnailUrl({ entries: result.entries, manualThumbnailVideoId: result.manualThumbnailVideoId }));
         return result;
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// "Set as playlist thumbnail" (videoId set) / "Reset to automatic"
+// (videoId null) -- see setPlaylistManualThumbnail (library.mjs) for the
+// persistence + validation, and resolvePlaylistThumbnailUrl for how this
+// interacts with the automatic first-available-entry fallback.
+ipcMain.handle('library:setPlaylistManualThumbnail', async (e, { playlistId, videoId }) => {
+    const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    if (!libraryDir) {
+        return { success: false, message: 'No library folder configured.' };
+    }
+    try {
+        const result = setPlaylistManualThumbnail({ libraryDir, libraryTag: activeLibraryTag, playlistId, videoId });
+        if (!result.success) return result;
+        const playlistDir = path.join(libraryTagDir(libraryDir, activeLibraryTag), PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
+        // Refreshes the cached fallback file to match the newly-resolved
+        // thumbnail -- same fire-and-forget-style cache used everywhere else,
+        // but awaited here since the response needs the resulting path.
+        await ensurePlaylistThumbnail(playlistDir, result.thumbnailUrl);
+        return { ...result, thumbnailPath: findPlaylistThumbnailPath(playlistDir) };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }

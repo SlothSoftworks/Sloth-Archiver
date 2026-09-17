@@ -381,7 +381,7 @@ describe('PlaylistsSection tag/system filter', () => {
     await user.click(screen.getByRole('checkbox', { name: 'games' }));
     expect(screen.queryByText('Alpha Video')).not.toBeInTheDocument();
     expect(screen.queryByText('Gamma Video')).not.toBeInTheDocument();
-    expect(screen.getByText('No videos match the selected filter.')).toBeInTheDocument();
+    expect(screen.getByText('No videos match your search or the selected filter.')).toBeInTheDocument();
 
     // Filter button/popover stay reachable with the list empty, so the
     // filter can still be cleared.
@@ -493,5 +493,121 @@ describe('PlaylistsSection bulk tag', () => {
 
     // Only the in-library entry (vidA) is passed -- vidC has nothing to tag yet.
     await waitFor(() => expect(window.electronAPI.tagVideos).toHaveBeenCalledWith(['vidA'], 'TVshows'));
+  });
+});
+
+describe('PlaylistsSection entry search', () => {
+  it('narrows the entry list to titles matching the query, and composes with the existing filters', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [makeEntry(), makeEntry({ videoId: 'vidB', title: 'Beta Video' })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidB: null },
+      }),
+    });
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByText('Beta Video');
+
+    await user.type(screen.getByPlaceholderText('Search this playlist...'), 'alpha');
+
+    await waitFor(() => {
+      expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+      expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe('PlaylistsSection set playlist thumbnail', () => {
+  it('shows the button only for available entries, sets the override on click, and reflects the active state', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        manualThumbnailVideoId: null,
+        entries: [makeEntry(), makeEntry({ videoId: 'vidC', title: 'Gamma Video', unavailable: true })],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
+      }),
+    });
+    window.electronAPI.setPlaylistManualThumbnail = vi.fn().mockResolvedValue({
+      success: true, manualThumbnailVideoId: 'vidA', thumbnailUrl: 'https://example.com/a.jpg', thumbnailPath: null,
+    });
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByText('Alpha Video');
+
+    // Only vidA (available) gets the button -- vidC (unavailable) gets none,
+    // so there's exactly one "Set as playlist thumbnail" button on screen.
+    const setButtons = screen.getAllByRole('button', { name: 'Set as playlist thumbnail' });
+    expect(setButtons).toHaveLength(1);
+    const [setButton] = setButtons;
+
+    await user.click(setButton);
+
+    expect(window.electronAPI.setPlaylistManualThumbnail).toHaveBeenCalledWith('pl1', 'vidA');
+    // Now shows as active, with the "reset" affordance instead.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reset to automatic thumbnail' })).toBeInTheDocument());
+
+    window.electronAPI.setPlaylistManualThumbnail = vi.fn().mockResolvedValue({
+      success: true, manualThumbnailVideoId: null, thumbnailUrl: null, thumbnailPath: null,
+    });
+    await user.click(screen.getByRole('button', { name: 'Reset to automatic thumbnail' }));
+
+    expect(window.electronAPI.setPlaylistManualThumbnail).toHaveBeenCalledWith('pl1', null);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Set as playlist thumbnail' })).toBeInTheDocument());
+  });
+});
+
+describe('PlaylistsSection refresh fetches full data for entries missing a library match', () => {
+  it('feeds newly-added entries from a refresh into the bulk-add pipeline, metadata-only', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({ playlist: makePlaylist() });
+    window.electronAPI.refreshPlaylist = vi.fn().mockResolvedValue({
+      success: true, added: 1, removed: 0, updated: 0,
+      missingFromLibraryEntries: [{ videoId: 'vidNew', title: 'New Video', url: 'https://youtube.com/watch?v=vidNew', thumbnailUrl: null, uploadDate: null }],
+    });
+    window.electronAPI.getVideoInfoPython = vi.fn().mockResolvedValue({
+      data: { response: { id: 'vidNew', fullTitle: 'New Video', title: 'New Video', thumbnail: null, resolutions: [] } },
+    });
+    window.electronAPI.findLibraryVideo = vi.fn().mockResolvedValue({ found: false });
+    window.electronAPI.addLibraryEntry = vi.fn().mockResolvedValue({ success: true, videoDir: '/lib/Channel B/vidNew' });
+    window.electronAPI.enrichPlaylistEntry = vi.fn().mockResolvedValue({ success: true });
+
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByText('Alpha Video');
+
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    // Metadata-only: the new entry's real info gets fetched and written into
+    // the library, but nothing is downloaded (no download-progress call).
+    await waitFor(() => expect(window.electronAPI.getVideoInfoPython).toHaveBeenCalledWith('https://youtube.com/watch?v=vidNew'));
+    await waitFor(() => expect(window.electronAPI.addLibraryEntry).toHaveBeenCalled());
+  });
+
+  it('also fetches an entry that was already in the playlist but still has no library match, not just newly-found ones', async () => {
+    // Reported gap: an entry present since before this refresh (added
+    // stays 0 -- reconcilePlaylistSnapshot doesn't consider it "new") but
+    // still missing from the library must still be fetched.
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({ playlist: makePlaylist() });
+    window.electronAPI.refreshPlaylist = vi.fn().mockResolvedValue({
+      success: true, added: 0, removed: 0, updated: 0,
+      missingFromLibraryEntries: [{ videoId: 'vidA', title: 'Alpha Video', url: 'https://youtube.com/watch?v=vidA', thumbnailUrl: null, uploadDate: '20260101' }],
+    });
+    window.electronAPI.getVideoInfoPython = vi.fn().mockResolvedValue({
+      data: { response: { id: 'vidA', fullTitle: 'Alpha Video', title: 'Alpha Video', thumbnail: null, resolutions: [] } },
+    });
+    window.electronAPI.findLibraryVideo = vi.fn().mockResolvedValue({ found: false });
+    window.electronAPI.addLibraryEntry = vi.fn().mockResolvedValue({ success: true, videoDir: '/lib/Channel A/vidA' });
+    window.electronAPI.enrichPlaylistEntry = vi.fn().mockResolvedValue({ success: true });
+
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+    await screen.findByText('Alpha Video');
+
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    await waitFor(() => expect(window.electronAPI.getVideoInfoPython).toHaveBeenCalledWith('https://youtube.com/watch?v=vidA'));
+    await waitFor(() => expect(window.electronAPI.addLibraryEntry).toHaveBeenCalled());
   });
 });

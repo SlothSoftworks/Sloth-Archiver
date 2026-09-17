@@ -272,7 +272,7 @@ export function transferVideoTags(libraryDir, sourceTag, targetTag, videoIds) {
 // notice -- see LibraryVideoDetail.tsx/PlaylistsSection.tsx's own duplicated
 // copy of these two numbers.
 export const CURRENT_VIDEO_SCHEMA_VERSION = 4;
-export const CURRENT_PLAYLIST_SCHEMA_VERSION = 1;
+export const CURRENT_PLAYLIST_SCHEMA_VERSION = 2;
 
 // One cross-platform sanitizer using Windows' illegal-character set as the
 // superset (rather than branching per-OS) -- keeps folder names identical if
@@ -1181,6 +1181,10 @@ export function writePlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIBRARY
             unavailable: isDeadTitle(e.title, e.videoId),
         })),
         localFiles,
+        // Set only via setPlaylistManualThumbnail below -- null means
+        // "automatic" (follow the first available entry, see
+        // resolvePlaylistThumbnailUrl).
+        manualThumbnailVideoId: null,
     };
     fs.writeFileSync(path.join(epochDir, 'metadata.json'), JSON.stringify(metadata, null, 2), 'utf-8');
     return { playlistDir, epochDir, epoch: String(addedEpoch), metadata };
@@ -1245,15 +1249,47 @@ function resolvePlaylistEpochDir(playlistDir) {
 
 // Playlist-level (not per-epoch), a sibling of the epoch folders -- same
 // pattern as channel-icon.*/video-thumbnail.*. Cached by
-// ensurePlaylistThumbnail (main.mjs) as a fallback for when the live first
-// entry has no thumbnailUrl of its own (empty playlist, or a dead first
-// entry) -- the renderer always prefers the live entries[0].thumbnailUrl
-// when available.
-function findPlaylistThumbnailPath(playlistDir) {
+// ensurePlaylistThumbnail (main.mjs) as a fallback for when the live
+// resolved thumbnail (see resolvePlaylistThumbnailUrl below) has no
+// thumbnailUrl of its own (empty playlist, or every entry dead) -- the
+// renderer always prefers the live thumbnailUrl when available. Exported so
+// main.mjs can re-read it after calling ensurePlaylistThumbnail itself
+// (that function lives there, not here -- it needs the thumbnails.mjs
+// fetcher instance main.mjs already owns).
+export function findPlaylistThumbnailPath(playlistDir) {
     if (!fs.existsSync(playlistDir)) return null;
     const entry = fs.readdirSync(playlistDir, { withFileTypes: true })
         .find((e) => e.isFile() && e.name.startsWith('playlist-thumbnail.'));
     return entry ? path.join(playlistDir, entry.name) : null;
+}
+
+// Skips unavailable/thumbnail-less entries rather than blindly trusting
+// entries[0] -- a dead or thumbnail-less first entry used to leave the
+// playlist showing a broken/missing image even though later entries had a
+// perfectly good one. Falls back to entries[0]'s own thumbnailUrl (possibly
+// null) only once every entry has been checked and none qualify, so this
+// never returns worse than the old unconditional behavior.
+export function firstAvailablePlaylistThumbnail(entries) {
+    const available = (entries || []).find((e) => !e.unavailable && e.thumbnailUrl);
+    if (available) return available.thumbnailUrl;
+    return entries?.[0]?.thumbnailUrl || null;
+}
+
+// The single source of truth for "what should this playlist's thumbnail be
+// right now" -- used by both listPlaylistSnapshots and getPlaylistSnapshot
+// so list and detail views never disagree, and by main.mjs whenever it
+// needs to refresh the cached fallback file. A manual override
+// (setPlaylistManualThumbnail below) wins only while its entry still exists
+// and isn't unavailable -- a picked entry that later goes dead or drops out
+// of the playlist on refresh silently reverts to automatic, same as B's own
+// "never show known-dead content" rule, rather than needing reconcile to
+// special-case it.
+export function resolvePlaylistThumbnailUrl(metadata) {
+    if (metadata.manualThumbnailVideoId) {
+        const manual = (metadata.entries || []).find((e) => e.videoId === metadata.manualThumbnailVideoId);
+        if (manual && !manual.unavailable && manual.thumbnailUrl) return manual.thumbnailUrl;
+    }
+    return firstAvailablePlaylistThumbnail(metadata.entries);
 }
 
 // Summary list for the Library tab's new Playlists section -- nothing before
@@ -1282,7 +1318,7 @@ export function listPlaylistSnapshots({ libraryDir, libraryTag = DEFAULT_LIBRARY
             addedEpoch: metadata.addedEpoch,
             lastRefreshedEpoch: metadata.lastRefreshedEpoch || null,
             hasPreviousMetadata: fs.existsSync(path.join(epochDir, 'previousMetadata.json')),
-            thumbnailUrl: metadata.entries?.[0]?.thumbnailUrl || null,
+            thumbnailUrl: resolvePlaylistThumbnailUrl(metadata),
             thumbnailPath: findPlaylistThumbnailPath(playlistDir),
         });
     }
@@ -1342,6 +1378,7 @@ export async function getPlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIB
         localFiles,
         hasPreviousMetadata: previousMetadataSavedEpoch !== null,
         previousMetadataSavedEpoch,
+        thumbnailUrl: resolvePlaylistThumbnailUrl(metadata),
         thumbnailPath: findPlaylistThumbnailPath(playlistDir),
     };
 }
@@ -1420,9 +1457,27 @@ export function reconcilePlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIB
         localFiles[entry.videoId] = match ? match.video.videoDir : null;
     }
 
+    // Every live entry with no library match right now -- not just ones
+    // brand-new to this playlist. An entry can predate this feature, or have
+    // been in the playlist for a while without ever actually getting added
+    // (a failed/skipped bulk-add, or simply never triggered), and a refresh
+    // should still notice and pull its full data in either case, not only
+    // for entries the reconcile above happens to consider "new."
+    const missingFromLibraryEntries = reconciledEntries.filter((e) => !e.unavailable && !localFiles[e.videoId]);
+
     const lastRefreshedEpoch = Date.now();
     const newMetadata = {
         ...oldMetadata,
+        // A refresh brings the saved shape up to date with whatever
+        // writePlaylistSnapshot would produce today -- without this, an
+        // "Outdated data" playlist (schemaVersion behind current) stayed
+        // flagged outdated forever, since oldMetadata's own stale
+        // schemaVersion was just carried through unchanged by the spread
+        // above, no matter how many times it was refreshed. Falls back the
+        // same way writePlaylistSnapshot's own initial write does, for
+        // fields (manualThumbnailVideoId) that predate this schema version.
+        schemaVersion: CURRENT_PLAYLIST_SCHEMA_VERSION,
+        manualThumbnailVideoId: oldMetadata.manualThumbnailVideoId ?? null,
         title: freshTitle || oldMetadata.title,
         uploader: freshUploader || oldMetadata.uploader,
         lastRefreshedEpoch,
@@ -1434,7 +1489,39 @@ export function reconcilePlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIB
     fs.writeFileSync(tempPath, JSON.stringify(newMetadata, null, 2), 'utf-8');
     fs.renameSync(tempPath, metadataPath);
 
-    return { success: true, added, removed, updated, lastRefreshedEpoch, entries: reconciledEntries };
+    return { success: true, added, removed, updated, lastRefreshedEpoch, entries: reconciledEntries, missingFromLibraryEntries, manualThumbnailVideoId: newMetadata.manualThumbnailVideoId ?? null };
+}
+
+// Sets (or, with videoId null, clears) which entry's thumbnail this
+// playlist's own thumbnail should follow -- see resolvePlaylistThumbnailUrl
+// for how this interacts with automatic (first-available-entry) selection.
+// Refuses to point at an entry that doesn't exist or is already flagged
+// unavailable, rather than silently accepting a pick that resolvePlaylistThumbnailUrl
+// would just ignore anyway -- the caller (the UI's hover button) never
+// offers this for an unavailable entry, but the backend shouldn't trust that.
+// Doesn't itself touch the cached fallback file (ensurePlaylistThumbnail) --
+// that lives in main.mjs, which calls it right after this succeeds.
+export function setPlaylistManualThumbnail({ libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAME, playlistId, videoId }) {
+    const playlistDir = path.join(libraryTagDir(libraryDir, libraryTag), PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
+    const epochDir = resolvePlaylistEpochDir(playlistDir);
+    if (!epochDir) return { success: false, message: 'This playlist has no saved snapshot.' };
+
+    const metadataPath = path.join(epochDir, 'metadata.json');
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+
+    if (videoId) {
+        const target = metadata.entries.find((e) => e.videoId === videoId);
+        if (!target || target.unavailable) {
+            return { success: false, message: 'That entry is not available to use as a thumbnail.' };
+        }
+    }
+
+    metadata.manualThumbnailVideoId = videoId || null;
+    const tempPath = `${metadataPath}.new`;
+    fs.writeFileSync(tempPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    fs.renameSync(tempPath, metadataPath);
+
+    return { success: true, manualThumbnailVideoId: metadata.manualThumbnailVideoId, thumbnailUrl: resolvePlaylistThumbnailUrl(metadata) };
 }
 
 // One-shot undo -- reverts to previousMetadata.json (written by the most

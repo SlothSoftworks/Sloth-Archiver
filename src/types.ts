@@ -89,7 +89,16 @@ export type PlaylistSnapshot = {
     // What Undo would revert to, and when that version was itself last
     // current -- null when there's nothing to undo.
     previousMetadataSavedEpoch: number | null;
+    // The resolved thumbnail source (manual override if set and still valid,
+    // else the first available -- not dead -- entry) and a locally-cached
+    // fallback file path, mirroring PlaylistSummary's own pair.
+    thumbnailUrl: string | null;
     thumbnailPath: string | null;
+    // The entry deliberately picked via "Set as playlist thumbnail," or null
+    // for the default automatic (first-available-entry) behavior. Only
+    // honored while that entry still exists and isn't unavailable -- see
+    // resolvePlaylistThumbnailUrl (library.mjs).
+    manualThumbnailVideoId: string | null;
 }
 
 export type DownloadProgressMessage = {

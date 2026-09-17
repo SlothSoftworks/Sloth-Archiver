@@ -126,7 +126,8 @@ declare global {
             enrichPlaylistEntry: (payload: { playlistId: string; videoId: string; title?: string | null; uploadDate?: string | null; thumbnailUrl?: string | null }) => Promise<{ success: boolean; message?: string }>
             listPlaylists: () => Promise<{ playlists: PlaylistSummary[] }>
             getPlaylist: (playlistId: string) => Promise<{ playlist: PlaylistSnapshot | null }>
-            refreshPlaylist: (playlistId: string) => Promise<{ success: boolean; added?: number; removed?: number; updated?: number; lastRefreshedEpoch?: number; entries?: PlaylistEntry[]; message?: string }>
+            refreshPlaylist: (playlistId: string) => Promise<{ success: boolean; added?: number; removed?: number; updated?: number; lastRefreshedEpoch?: number; entries?: PlaylistEntry[]; missingFromLibraryEntries?: PlaylistEntry[]; manualThumbnailVideoId?: string | null; message?: string }>
+            setPlaylistManualThumbnail: (playlistId: string, videoId: string | null) => Promise<{ success: boolean; manualThumbnailVideoId?: string | null; thumbnailUrl?: string | null; thumbnailPath?: string | null; message?: string }>
             undoPlaylistRefresh: (playlistId: string) => Promise<{ success: boolean; metadata?: PlaylistSnapshot; message?: string }>
             deletePlaylist: (playlistId: string) => Promise<{ success: boolean; message?: string }>
             recordLibraryDownload: (payload: { videoDir: string; epoch: string; filePath: string; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<{ success: boolean }>
