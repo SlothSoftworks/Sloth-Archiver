@@ -12,14 +12,7 @@ import {
   Select,
   Typography,
 } from '@mui/material';
-
-// Mirrors listLibraryTags' return shape (library.mjs) -- see LibraryScreen.tsx's
-// own copy of this type for why it isn't shared/imported across screens.
-type LibraryTag = {
-  tagName: string;
-  folderName: string;
-  createdEpoch: number | null;
-};
+import type { LibraryTag } from '../../types/electron-api';
 
 // options is deliberately the caller's responsibility to filter (excluding
 // whichever sublibrary is currently active -- there's nowhere to move a

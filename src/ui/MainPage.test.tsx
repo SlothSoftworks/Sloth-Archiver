@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router';
 import MainPage from './MainPage';
 import { LibraryNotificationProvider, useLibraryNotification } from './hooks/useLibraryNotifications';
 import { YtdlpUpdaterProvider } from './hooks/useYtdlpUpdater';
+import { CookiesChangeProvider } from './hooks/useCookiesChange';
 
 // Each tab's screen is a large, independently-tested component (its own
 // dedicated test file covers it) -- mocked out here so MainPage's tests stay
@@ -29,6 +30,8 @@ beforeEach(() => {
     getFfmpegVersion: vi.fn().mockResolvedValue('7.0.2'),
     onYtdlpUpdateProgress: vi.fn(),
     removeYtdlpUpdateProgressListener: vi.fn(),
+    getCookiesConfig: vi.fn().mockResolvedValue({ cookiesMode: 'file', cookiesBrowser: '', supportedBrowsers: [], cookiesPersistAcrossSessions: false }),
+    getCookieStatus: vi.fn().mockResolvedValue({ loaded: false, cookieCount: 0 }),
   };
 });
 
@@ -45,8 +48,10 @@ function renderMainPage() {
     <MemoryRouter>
       <YtdlpUpdaterProvider>
         <LibraryNotificationProvider>
-          <IncrementButton />
-          <MainPage />
+          <CookiesChangeProvider>
+            <IncrementButton />
+            <MainPage />
+          </CookiesChangeProvider>
         </LibraryNotificationProvider>
       </YtdlpUpdaterProvider>
     </MemoryRouter>,
@@ -107,5 +112,52 @@ describe('MainPage', () => {
 
     await user.click(screen.getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByText(/under active construction/)).not.toBeInTheDocument());
+  });
+
+  describe('cookies header indicator', () => {
+    it('is hidden when no cookies are configured', async () => {
+      renderMainPage();
+      await waitFor(() => expect(window.electronAPI.getCookiesConfig).toHaveBeenCalled());
+      expect(screen.queryByLabelText('Cookies loaded')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Clear cookies')).not.toBeInTheDocument();
+    });
+
+    it('shows the indicator with a tooltip in file mode, and clicking clear calls deleteCookie', async () => {
+      const user = userEvent.setup();
+      window.electronAPI.getCookieStatus = vi.fn().mockResolvedValue({ loaded: true, cookieCount: 3 });
+      window.electronAPI.deleteCookie = vi.fn().mockResolvedValue({ success: true });
+      renderMainPage();
+
+      const cookieIcon = await screen.findByLabelText('Cookies loaded');
+      await user.hover(cookieIcon);
+      expect(await screen.findByText('Cookies are loaded and being sent to yt-dlp')).toBeInTheDocument();
+
+      // Re-mock to reflect the cleared state before the click resolves, so
+      // the post-clear refetch shows the indicator disappearing.
+      window.electronAPI.getCookieStatus = vi.fn().mockResolvedValue({ loaded: false, cookieCount: 0 });
+      await user.click(screen.getByLabelText('Clear cookies'));
+
+      expect(window.electronAPI.deleteCookie).toHaveBeenCalled();
+      await waitFor(() => expect(screen.queryByLabelText('Cookies loaded')).not.toBeInTheDocument());
+    });
+
+    it('shows the indicator in browser mode, and clicking clear calls setCookiesConfig with an empty browser', async () => {
+      const user = userEvent.setup();
+      window.electronAPI.getCookiesConfig = vi.fn().mockResolvedValue({
+        cookiesMode: 'browser', cookiesBrowser: 'chrome', supportedBrowsers: ['chrome'], cookiesPersistAcrossSessions: false,
+      });
+      window.electronAPI.setCookiesConfig = vi.fn().mockResolvedValue({ success: true, cookiesMode: 'browser', cookiesBrowser: '' });
+      renderMainPage();
+
+      await screen.findByLabelText('Cookies loaded');
+
+      window.electronAPI.getCookiesConfig = vi.fn().mockResolvedValue({
+        cookiesMode: 'browser', cookiesBrowser: '', supportedBrowsers: ['chrome'], cookiesPersistAcrossSessions: false,
+      });
+      await user.click(screen.getByLabelText('Clear cookies'));
+
+      expect(window.electronAPI.setCookiesConfig).toHaveBeenCalledWith({ cookiesMode: 'browser', cookiesBrowser: '' });
+      await waitFor(() => expect(screen.queryByLabelText('Cookies loaded')).not.toBeInTheDocument());
+    });
   });
 });

@@ -6,21 +6,24 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import LibraryScreen from './LibraryScreen';
 import { BulkAddProvider } from '../hooks/useBulkAddQueue.tsx';
+import { LibraryTagsProvider } from '../hooks/useLibraryTags.tsx';
 
 // LibraryScreen reads/matches deep-link routes (useMatch/useNavigate, for
 // /library/video/:videoId) -- needs a real Router context, same reason
 // App.test.tsx already wraps with one. BulkAddProvider is needed too, now
 // that the bulk-select "Download selected" action calls useBulkAddQueue()
 // directly -- without it every render throws ("must be used within a
-// BulkAddProvider").
+// BulkAddProvider"). LibraryTagsProvider likewise, now that libraryTags/
+// activeLibraryTag come from the shared hook instead of this screen's own
+// local state.
 function render(ui: ReactElement) {
-  return rtlRender(<MemoryRouter><BulkAddProvider>{ui}</BulkAddProvider></MemoryRouter>);
+  return rtlRender(<MemoryRouter><LibraryTagsProvider><BulkAddProvider>{ui}</BulkAddProvider></LibraryTagsProvider></MemoryRouter>);
 }
 
 // For the deep-link (?tag=) tests below -- same wrapper as render() but
 // starting on a specific route instead of the default "/".
 function renderAt(path: string, ui: ReactElement) {
-  return rtlRender(<MemoryRouter initialEntries={[path]}><BulkAddProvider>{ui}</BulkAddProvider></MemoryRouter>);
+  return rtlRender(<MemoryRouter initialEntries={[path]}><LibraryTagsProvider><BulkAddProvider>{ui}</BulkAddProvider></LibraryTagsProvider></MemoryRouter>);
 }
 
 // LibraryVideoDetail is the biggest, most complex file in the app (its own

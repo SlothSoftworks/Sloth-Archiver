@@ -18,6 +18,8 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogContentText from '@mui/material/DialogContentText';
 import DialogActions from '@mui/material/DialogActions';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import CookieIcon from '@mui/icons-material/Cookie';
+import CancelIcon from '@mui/icons-material/Cancel';
 import './App.css';
 import './MainPage.css';
 import DownloaderScreen from './screens/DownloaderScreen';
@@ -26,6 +28,7 @@ import LibraryScreen from './screens/LibraryScreen';
 import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
 import BulkAddSidePanel, { BulkAddToggleButton } from './components/BulkAddSidePanel';
 import { useLibraryNotification } from './hooks/useLibraryNotifications';
+import { useCookiesChange } from './hooks/useCookiesChange';
 import { useYtdlpUpdater } from './hooks/useYtdlpUpdater';
 import buttonIcon from '../../assets/button_icon.png';
 
@@ -116,6 +119,45 @@ export function BasicTabs() {
   }, []);
   const { currentVersion: ytdlpVersion } = useYtdlpUpdater();
   const { count: libraryNotificationCount, reset: resetLibraryNotifications } = useLibraryNotification();
+
+  // "Loaded" mirrors cookies.mjs's own makeCookiesArgs() precedence, the
+  // function that actually decides what yt-dlp receives -- browser mode
+  // wins whenever a browser is configured there, file mode only matters
+  // otherwise, so this checks whichever one is actually live rather than
+  // just whether a cookies.txt happens to exist on disk.
+  const [cookiesMode, setCookiesMode] = useState<'file' | 'browser'>('file');
+  const [cookiesBrowser, setCookiesBrowser] = useState('');
+  const [cookieFileLoaded, setCookieFileLoaded] = useState(false);
+  const { version: cookiesChangeVersion, notifyChanged: notifyCookiesChanged } = useCookiesChange();
+  const refreshCookieIndicator = () => {
+    window.electronAPI.getCookiesConfig().then((config) => {
+      setCookiesMode(config.cookiesMode);
+      setCookiesBrowser(config.cookiesBrowser);
+    });
+    window.electronAPI.getCookieStatus().then((status) => setCookieFileLoaded(status.loaded));
+  };
+  // Re-fetches whenever OptionsScreen bumps this shared signal after saving,
+  // deleting, or switching cookies -- without it, this only ever refetched
+  // once on mount, so the header stayed stuck at whatever cookie state
+  // existed when the app launched until the next restart.
+  useEffect(() => {
+    refreshCookieIndicator();
+  }, [cookiesChangeVersion]);
+  const cookiesLoaded = cookiesMode === 'browser' ? !!cookiesBrowser : cookieFileLoaded;
+  // Same bare one-click clear Options' own "Delete cookie"/"Clear" buttons
+  // already do (handleDelete/handleClearBrowserSelection, OptionsScreen.tsx)
+  // -- no confirmation dialog, just reuse the same two calls and refresh.
+  const handleClearCookiesFromHeader = async () => {
+    if (cookiesMode === 'browser') {
+      await window.electronAPI.setCookiesConfig({ cookiesMode: 'browser', cookiesBrowser: '' });
+    } else {
+      await window.electronAPI.deleteCookie();
+    }
+    refreshCookieIndicator();
+    // So OptionsScreen (if open) picks up the clear too, same as this
+    // header picks up a save/delete/switch made there.
+    notifyCookiesChanged();
+  };
   // Bumped to force LibraryScreen to remount (see its `key` below) -- every
   // other tab gets this reset for free, since CustomTabPanel only renders a
   // tab's content while active. Library's own drill-down and Videos/
@@ -164,6 +206,34 @@ export function BasicTabs() {
           {appVersion &&
             <Chip size="small" variant="outlined" label={`v${appVersion}`} sx={{ fontFamily: 'monospace' }} />}
           <BulkAddToggleButton />
+          {cookiesLoaded &&
+            <Badge
+              overlap="circular"
+              anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+              // MUI's default badge chrome (min-width/height 20px, pill
+              // padding, its own background) is built for a number/dot --
+              // overridden here since badgeContent is a real interactive
+              // element (the clear button) sized to just fit it instead.
+              sx={{ '& .MuiBadge-badge': { padding: 0, minWidth: 16, height: 16, borderRadius: '50%' } }}
+              badgeContent={
+                <Tooltip title="Clear cookies">
+                  <IconButton
+                    size="small"
+                    onClick={handleClearCookiesFromHeader}
+                    aria-label="Clear cookies"
+                    sx={{ width: 16, height: 16, padding: 0, backgroundColor: 'background.paper', '&:hover': { backgroundColor: 'background.paper' } }}
+                  >
+                    <CancelIcon sx={{ fontSize: 16 }} color="error" />
+                  </IconButton>
+                </Tooltip>
+              }
+            >
+              <Tooltip title="Cookies are loaded and being sent to yt-dlp">
+                <IconButton size="small" aria-label="Cookies loaded">
+                  <CookieIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Badge>}
           <Tooltip title="About">
             <IconButton size="small" onClick={() => setInfoOpen(true)} aria-label="About">
               <InfoOutlinedIcon />

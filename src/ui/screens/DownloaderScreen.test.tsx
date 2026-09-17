@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import DownloaderScreen from './DownloaderScreen';
 import { LibraryNotificationProvider } from '../hooks/useLibraryNotifications';
+import { LibraryTagsProvider } from '../hooks/useLibraryTags';
 
 // Real timers throughout -- useDebounce's default 500ms delay is real, and
 // combining fake timers with userEvent's click/type simulation proved
@@ -44,7 +45,7 @@ beforeEach(() => {
 function renderScreen() {
   return render(
     <MemoryRouter>
-      <LibraryNotificationProvider><DownloaderScreen /></LibraryNotificationProvider>
+      <LibraryTagsProvider><LibraryNotificationProvider><DownloaderScreen /></LibraryNotificationProvider></LibraryTagsProvider>
     </MemoryRouter>,
   );
 }

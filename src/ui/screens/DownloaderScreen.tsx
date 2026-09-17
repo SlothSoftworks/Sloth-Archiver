@@ -36,14 +36,7 @@ import { useDebounce } from '../../utils/useDebounce';
 import { getInitialDownloaderVideoInfo } from '../../../testing/mockData/electronAPIMocks.ts';
 import VideoDetailCardSkeleton from './VideoDetailCardSkeleton.tsx';
 import { useLibraryNotification } from '../hooks/useLibraryNotifications';
-
-// Mirrors listLibraryTags' return shape (library.mjs) -- see LibraryScreen.tsx's
-// own copy of this type for why it isn't shared/imported across screens.
-type LibraryTag = {
-  tagName: string;
-  folderName: string;
-  createdEpoch: number | null;
-};
+import { useLibraryTags } from '../hooks/useLibraryTags.tsx';
 
 export default function DownloaderScreen() {
 
@@ -58,20 +51,15 @@ export default function DownloaderScreen() {
   const [libraryAddStatus, setLibraryAddStatus] = useState<'idle' | 'saving' | 'error'>('idle');
   const [libraryErrorMessage, setLibraryErrorMessage] = useState<string | null>(null);
   const [librarySuccessSnackbarOpen, setLibrarySuccessSnackbarOpen] = useState(false);
-  // Only ever shown/relevant once more than one sublibrary exists -- fetched
-  // once on mount, same as everything else here that doesn't change mid-session.
-  const [libraryTags, setLibraryTags] = useState<LibraryTag[]>([]);
+  // Only ever shown/relevant once more than one sublibrary exists. This
+  // screen fully remounts on every Downloader-tab visit (CustomTabPanel's
+  // conditional-render pattern), so seeding targetLibraryTag from the
+  // shared hook's activeLibraryTag is already fresh on every visit.
+  const { libraryTags, activeLibraryTag } = useLibraryTags();
   const [targetLibraryTag, setTargetLibraryTag] = useState('');
   useEffect(() => {
-    (async () => {
-      const [{ tags }, { activeLibraryTag }] = await Promise.all([
-        window.electronAPI.listLibraryTags(),
-        window.electronAPI.getActiveLibraryTag(),
-      ]);
-      setLibraryTags(tags);
-      setTargetLibraryTag(activeLibraryTag);
-    })();
-  }, []);
+    setTargetLibraryTag(activeLibraryTag);
+  }, [activeLibraryTag]);
   // Captured alongside the snackbar open, not read from videoInfo later,
   // since all three add paths below clear videoInfo right after a
   // successful add -- this is what the toast's "View" link navigates to.

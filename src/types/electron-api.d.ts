@@ -22,8 +22,9 @@ type LibrarySortDirection = 'asc' | 'desc';
 // Mirrors listLibraryTags' return shape (library.mjs) -- folderName is what
 // every IPC call actually keys on; tagName is presentational (today always
 // equal to folderName, since sublibrary names aren't renamable separately
-// from their folder).
-type LibraryTag = {
+// from their folder). Exported so useLibraryTags.tsx and its consumers share
+// this one declaration instead of each keeping their own local copy.
+export type LibraryTag = {
     tagName: string;
     folderName: string;
     createdEpoch: number | null;

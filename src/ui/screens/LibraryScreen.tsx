@@ -50,6 +50,7 @@ import TagSelectedDialog from '../components/TagSelectedDialog';
 import TagFilterPopover, { type SystemFilterKey } from '../components/TagFilterPopover';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
+import { useLibraryTags } from '../hooks/useLibraryTags.tsx';
 import type { LibraryVideoMetadata } from '../../types';
 
 type LibraryViewMode = 'channel' | 'video';
@@ -75,15 +76,6 @@ type LibraryChannel = {
   displayName: string;
   channelIconPath: string | null;
   videos: LibraryVideo[];
-};
-
-// Mirrors listLibraryTags' return shape (library.mjs) -- folderName is what
-// every IPC call actually keys on; tagName is presentational (today always
-// equal to folderName).
-type LibraryTag = {
-  tagName: string;
-  folderName: string;
-  createdEpoch: number | null;
 };
 
 // Only the flat by-video list gets a sort control -- the channel view's own
@@ -168,9 +160,7 @@ export default function LibraryScreen() {
   const [moving, setMoving] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
   const [playlistBulkBar, setPlaylistBulkBar] = useState<PlaylistBulkBar | null>(null);
-  const [libraryTags, setLibraryTags] = useState<LibraryTag[]>([]);
-  const [activeLibraryTag, setActiveLibraryTagState] = useState('');
-  const [activeLibraryTagDir, setActiveLibraryTagDir] = useState('');
+  const { libraryTags, activeLibraryTag, activeLibraryTagDir, switchTag, createTag } = useLibraryTags();
   const [createTagDialogOpen, setCreateTagDialogOpen] = useState(false);
   const [creatingTag, setCreatingTag] = useState(false);
   const [createTagError, setCreateTagError] = useState<string | null>(null);
@@ -185,24 +175,22 @@ export default function LibraryScreen() {
   const navigate = useNavigate();
   const { start } = useBulkAddQueue();
 
+  // libraryTags/activeLibraryTag/activeLibraryTagDir come from the shared
+  // useLibraryTags() hook, not fetched here -- everything else below is
+  // still this screen's own to own.
   const load = async () => {
     setLoading(true);
-    const [{ libraryDir }, index, { libraryViewMode }, { thumbnailSize }, { tags }, { activeLibraryTag, activeLibraryTagDir }, { tags: videoTags }] = await Promise.all([
+    const [{ libraryDir }, index, { libraryViewMode }, { thumbnailSize }, { tags: videoTags }] = await Promise.all([
       window.electronAPI.getLibraryDir(),
       window.electronAPI.getLibraryIndex(),
       window.electronAPI.getLibraryViewMode(),
       window.electronAPI.getThumbnailSize(),
-      window.electronAPI.listLibraryTags(),
-      window.electronAPI.getActiveLibraryTag(),
       window.electronAPI.listVideoTags(),
     ]);
     setLibraryDir(libraryDir);
     setChannels(index.channels);
     setViewMode(libraryViewMode);
     setThumbnailSize(thumbnailSize);
-    setLibraryTags(tags);
-    setActiveLibraryTagState(activeLibraryTag);
-    setActiveLibraryTagDir(activeLibraryTagDir);
     setVideoTags(videoTags);
     setLoading(false);
   };
@@ -219,13 +207,14 @@ export default function LibraryScreen() {
   // Switching sublibraries resets everything the previous one's scan
   // produced -- channels, any channel/video drill-down, and the current
   // selection -- since none of it belongs to the newly-active sublibrary.
-  // Re-runs the same full load() rather than just refreshing the index, so
-  // the tag list/active tag/library dir all stay in sync too.
+  // The tag list/active tag/library dir are the shared hook's own job to
+  // keep in sync (switchTag already refreshes them); load() here just picks
+  // up the channel/video data for the newly-active one.
   const switchLibraryTag = async (tag: string) => {
     setSelectedChannel(null);
     setSelectedVideo(null);
     clearSelection();
-    await window.electronAPI.setActiveLibraryTag(tag);
+    await switchTag(tag);
     await load();
   };
 
@@ -233,13 +222,14 @@ export default function LibraryScreen() {
     setCreatingTag(true);
     setCreateTagError(null);
     try {
-      const result = await window.electronAPI.createLibraryTag(name);
+      const result = await createTag(name);
       if (!result.success) {
         setCreateTagError(result.message || 'Could not create this sublibrary.');
         return;
       }
-      // createLibraryTag already switched the active tag server-side --
-      // just close the dialog and reload to pick it up, same as
+      // createTag already switched the active tag server-side (and the
+      // shared hook's own refresh picked that up) -- just close the dialog
+      // and reload this screen's channel/video data, same as
       // switchLibraryTag's own reset/reload.
       setCreateTagDialogOpen(false);
       setSelectedChannel(null);

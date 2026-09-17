@@ -4,6 +4,7 @@ import { render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import BulkAddSidePanel, { BulkAddToggleButton } from './BulkAddSidePanel';
 import { BulkAddProvider, useBulkAddQueue } from '../hooks/useBulkAddQueue';
+import { LibraryTagsProvider } from '../hooks/useLibraryTags';
 
 // Real timers throughout this file, deliberately -- combining fake timers
 // with @testing-library/user-event's click simulation turned out to hang
@@ -52,7 +53,7 @@ function Harness({ onReady }: { onReady: (queue: ReturnType<typeof useBulkAddQue
 function renderPanel() {
   let queue!: ReturnType<typeof useBulkAddQueue>;
   const utils = render(
-    <BulkAddProvider><Harness onReady={(q) => { queue = q; }} /></BulkAddProvider>,
+    <LibraryTagsProvider><BulkAddProvider><Harness onReady={(q) => { queue = q; }} /></BulkAddProvider></LibraryTagsProvider>,
   );
   return { ...utils, getQueue: () => queue };
 }
