@@ -27,6 +27,7 @@ import OptionsScreen from './screens/OptionsScreen';
 import LibraryScreen from './screens/LibraryScreen';
 import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
 import BulkAddSidePanel, { BulkAddToggleButton } from './components/BulkAddSidePanel';
+import MiniPlayerBar from './components/MiniPlayerBar';
 import { useLibraryNotification } from './hooks/useLibraryNotifications';
 import { useCookiesChange } from './hooks/useCookiesChange';
 import { useYtdlpUpdater } from './hooks/useYtdlpUpdater';
@@ -252,6 +253,7 @@ export function BasicTabs() {
       </CustomTabPanel>
 
       <BulkAddSidePanel />
+      <MiniPlayerBar />
 
       <Dialog open={infoOpen} onClose={() => setInfoOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>

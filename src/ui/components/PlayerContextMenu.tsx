@@ -1,13 +1,14 @@
 import { ListItemIcon, Menu, MenuItem } from '@mui/material';
 import CheckIcon from '@mui/icons-material/Check';
 
-// A short, hardcoded item list -- only two items exist today, and a third
-// playback option can be added here the same way later without needing a
-// generic item-array abstraction now.
+// A short, hardcoded item list -- a third playback option (Play in
+// background) was added here the same way its own original comment said
+// one could be, without needing a generic item-array abstraction yet.
 export default function PlayerContextMenu({
   open, anchorPosition, onClose,
   loopEnabled, onToggleLoop,
   loopSequenceEnabled, onToggleLoopSequence, loopSequenceDisabled,
+  onPlayInBackground,
 }: {
   open: boolean;
   anchorPosition: { top: number; left: number } | null;
@@ -17,6 +18,9 @@ export default function PlayerContextMenu({
   loopSequenceEnabled: boolean;
   onToggleLoopSequence: () => void;
   loopSequenceDisabled: boolean;
+  // undefined (not just a disabled flag) hides the item entirely -- the
+  // caller only ever omits it for a not-yet-ready video.
+  onPlayInBackground?: () => void;
 }) {
   return (
     <Menu open={open} onClose={onClose} anchorReference="anchorPosition" anchorPosition={anchorPosition ?? undefined}>
@@ -30,6 +34,11 @@ export default function PlayerContextMenu({
         <ListItemIcon>{loopSequenceEnabled && <CheckIcon fontSize="small" />}</ListItemIcon>
         Loop sequence
       </MenuItem>
+      {onPlayInBackground &&
+        <MenuItem onClick={() => { onPlayInBackground(); onClose(); }}>
+          <ListItemIcon />
+          Play in background
+        </MenuItem>}
     </Menu>
   );
 }

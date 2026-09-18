@@ -148,6 +148,21 @@ export default function LibraryScreen() {
   const [librarySection, setLibrarySection] = useState<LibrarySection>('videos');
   const [thumbnailSize, setThumbnailSize] = useState(220); // overwritten by load()
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
+  // Set from the deep-link's own ?view=/?clip= query params (see the effect
+  // below) -- the mini-player bar (MiniPlayerBar.tsx) uses these to reopen a
+  // video straight into Clip Collection with the clip that was playing in
+  // the background already selected.
+  const [deepLinkView, setDeepLinkView] = useState<'video' | 'clips' | undefined>(undefined);
+  const [deepLinkClipId, setDeepLinkClipId] = useState<string | null>(null);
+  // A normal (non-deep-link) video selection -- clears any stale
+  // deepLinkView/deepLinkClipId left over from a previous mini-player-bar
+  // deep link, so picking a different video afterward doesn't wrongly reopen
+  // it straight into Clip Collection.
+  const handleSelectVideo = (video: LibraryVideo) => {
+    setDeepLinkView(undefined);
+    setDeepLinkClipId(null);
+    setSelectedVideo(video);
+  };
   const [selectedVideoDirs, setSelectedVideoDirs] = useState<Set<string>>(new Set());
   const [bulkDownloadDialogOpen, setBulkDownloadDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
@@ -488,6 +503,8 @@ export default function LibraryScreen() {
   // as before this param existed.
   const videoIdToOpen = deepLinkMatch?.params.videoId;
   const libraryTagToOpen = searchParams.get('tag');
+  const viewToOpen = searchParams.get('view');
+  const clipIdToOpen = searchParams.get('clip');
   useEffect(() => {
     if (!videoIdToOpen) return;
     (async () => {
@@ -519,6 +536,8 @@ export default function LibraryScreen() {
         setLibrarySection('videos');
         setSelectedChannel(targetChannel);
         setSelectedVideo(targetVideo);
+        setDeepLinkView(viewToOpen === 'clips' ? 'clips' : undefined);
+        setDeepLinkClipId(clipIdToOpen);
       } else {
         setDeepLinkError('This video is no longer in your library.');
       }
@@ -572,6 +591,8 @@ export default function LibraryScreen() {
       onVersionsChanged={handleVersionsChanged}
       videoTags={videoTags}
       onVideoTagsChanged={refreshVideoTags}
+      initialActiveView={deepLinkView}
+      initialClipId={deepLinkClipId}
     />
   ) : selectedChannel ? (
     <VideoGrid
@@ -581,7 +602,7 @@ export default function LibraryScreen() {
       onToggleSelect={toggleVideoSelected}
       onSelectAll={(dirs) => setSelectedVideoDirs(new Set(dirs))}
       onBack={() => { setSelectedChannel(null); clearSelection(); }}
-      onSelectVideo={setSelectedVideo}
+      onSelectVideo={handleSelectVideo}
       onChannelsUpdated={handleChannelsUpdated}
       videoTags={videoTags}
     />
@@ -595,7 +616,7 @@ export default function LibraryScreen() {
       onToggleSelect={toggleVideoSelected}
       onSelectAll={(dirs) => setSelectedVideoDirs(new Set(dirs))}
       onViewModeChange={handleViewModeChange}
-      onSelectVideo={setSelectedVideo}
+      onSelectVideo={handleSelectVideo}
       onRefresh={handleRefresh}
       videoTags={videoTags}
     />

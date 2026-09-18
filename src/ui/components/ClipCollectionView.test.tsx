@@ -1,9 +1,61 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ClipCollectionView from './ClipCollectionView';
+import { BackgroundPlayerProvider, useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import type { LibraryClip } from '../../types';
+
+// Same one-shot readiness sequence LibraryVideoPlayer.test.tsx fires --
+// Vidstack won't treat the <video> as playable (and offer "Play in
+// background") until these land.
+function fireReadinessCascade(video: HTMLVideoElement) {
+  for (const type of ['loadstart', 'durationchange', 'loadedmetadata', 'loadeddata', 'canplay']) {
+    fireEvent(video, new Event(type));
+  }
+}
+
+// A sibling under the same BackgroundPlayerProvider used to inspect the
+// background player's state after an action -- returns a function, not a
+// plain property, so it stays live instead of snapshotting at destructure
+// time (same reasoning as LibraryVideoPlayer.test.tsx's renderWithBgProbe).
+function renderWithBgProbe(overrides: Partial<Parameters<typeof ClipCollectionView>[0]> = {}) {
+  let bgRef!: ReturnType<typeof useBackgroundPlayer>;
+  function Probe() {
+    bgRef = useBackgroundPlayer();
+    return null;
+  }
+  const onClipsChanged = vi.fn();
+  const onEmptied = vi.fn();
+  const utils = render(
+    <BackgroundPlayerProvider>
+      <ClipCollectionView
+        videoDir="/lib/c/v1"
+        clips={[makeClip()]}
+        onClipsChanged={onClipsChanged}
+        onEmptied={onEmptied}
+        onOpenFileLocation={vi.fn()}
+        onExtractMp3={vi.fn()}
+        extractingMp3={false}
+        extractMp3Disabled={false}
+        extractMp3Progress={0}
+        extractMp3Error={null}
+        convertFormatOptions={['mp4', 'mov', 'mkv', 'webm', 'avi']}
+        onConvertClip={vi.fn()}
+        convertingClip={false}
+        convertClipDisabled={false}
+        convertClipProgress={0}
+        convertClipError={null}
+        parentVideoId="video1"
+        parentVideoTitle="Parent Video"
+        parentThumbnailPath="/lib/c/v1/thumb.jpg"
+        {...overrides}
+      />
+      <Probe />
+    </BackgroundPlayerProvider>,
+  );
+  return { ...utils, getBg: () => bgRef };
+}
 
 function makeClip(overrides: Partial<LibraryClip> = {}): LibraryClip {
   return { id: 'clip1', fileName: 'Clip One.mp4', title: 'Clip One', createdAt: Date.UTC(2026, 0, 1), durationSeconds: 5, ...overrides };
@@ -16,25 +68,30 @@ function renderView(overrides: Partial<Parameters<typeof ClipCollectionView>[0]>
   const onExtractMp3 = vi.fn();
   const onConvertClip = vi.fn();
   const utils = render(
-    <ClipCollectionView
-      videoDir="/lib/c/v1"
-      clips={[makeClip()]}
-      onClipsChanged={onClipsChanged}
-      onEmptied={onEmptied}
-      onOpenFileLocation={onOpenFileLocation}
-      onExtractMp3={onExtractMp3}
-      extractingMp3={false}
-      extractMp3Disabled={false}
-      extractMp3Progress={0}
-      extractMp3Error={null}
-      convertFormatOptions={['mp4', 'mov', 'mkv', 'webm', 'avi']}
-      onConvertClip={onConvertClip}
-      convertingClip={false}
-      convertClipDisabled={false}
-      convertClipProgress={0}
-      convertClipError={null}
-      {...overrides}
-    />,
+    <BackgroundPlayerProvider>
+      <ClipCollectionView
+        videoDir="/lib/c/v1"
+        clips={[makeClip()]}
+        onClipsChanged={onClipsChanged}
+        onEmptied={onEmptied}
+        onOpenFileLocation={onOpenFileLocation}
+        onExtractMp3={onExtractMp3}
+        extractingMp3={false}
+        extractMp3Disabled={false}
+        extractMp3Progress={0}
+        extractMp3Error={null}
+        convertFormatOptions={['mp4', 'mov', 'mkv', 'webm', 'avi']}
+        onConvertClip={onConvertClip}
+        convertingClip={false}
+        convertClipDisabled={false}
+        convertClipProgress={0}
+        convertClipError={null}
+        parentVideoId="video1"
+        parentVideoTitle="Parent Video"
+        parentThumbnailPath={null}
+        {...overrides}
+      />
+    </BackgroundPlayerProvider>,
   );
   return { ...utils, onClipsChanged, onEmptied, onOpenFileLocation, onExtractMp3, onConvertClip };
 }
@@ -179,5 +236,86 @@ describe('ClipCollectionView', () => {
     expect(screen.getByRole('button', { name: 'Convert clip to a different format' })).toBeDisabled();
     expect(screen.getByText('17%')).toBeInTheDocument();
     expect(screen.getByText('Failed to convert.')).toBeInTheDocument();
+  });
+
+  describe('Play in background', () => {
+    it('gives it the parent video\'s thumbnail and a "<video> - <clip>" title, not a blank/clip-only one', async () => {
+      const user = userEvent.setup();
+      const { container, getBg } = renderWithBgProbe();
+      const video = container.querySelector('video') as HTMLVideoElement;
+      fireReadinessCascade(video);
+
+      await user.click(screen.getByRole('button', { name: 'Play in background' }));
+
+      expect(getBg().current).toEqual(expect.objectContaining({
+        videoId: 'video1',
+        title: 'Parent Video - Clip One',
+        thumbnailPath: '/lib/c/v1/thumb.jpg',
+        clipId: 'clip1',
+      }));
+    });
+
+    it('identifies the specific active clip, not just the parent video, when the active clip changes', async () => {
+      const user = userEvent.setup();
+      const clips = [makeClip(), makeClip({ id: 'clip2', fileName: 'Clip Two.mp4', title: 'Clip Two' })];
+      const { container, getBg } = renderWithBgProbe({ clips });
+      await user.click(screen.getByText('Clip Two'));
+      const video = container.querySelector('video') as HTMLVideoElement;
+      fireReadinessCascade(video);
+
+      await user.click(screen.getByRole('button', { name: 'Play in background' }));
+
+      expect(getBg().current).toEqual(expect.objectContaining({ title: 'Parent Video - Clip Two', clipId: 'clip2' }));
+    });
+  });
+
+  it('initialClipId opens directly into that clip instead of the first one, when it exists among the clips', async () => {
+    const clips = [makeClip(), makeClip({ id: 'clip2', fileName: 'Clip Two.mp4', title: 'Clip Two' })];
+    const { container } = renderView({ clips, initialClipId: 'clip2' });
+    await waitFor(() => {
+      expect(container.querySelector('video source')).toHaveAttribute('src', expect.stringContaining('Clip%20Two.mp4'));
+    });
+  });
+
+  it('still picks initialClipId when clips arrive after mount, not just when passed synchronously up front', async () => {
+    const clips = [makeClip(), makeClip({ id: 'clip2', fileName: 'Clip Two.mp4', title: 'Clip Two' })];
+    const { container, rerender } = renderView({ clips: [], initialClipId: 'clip2' });
+    rerender(
+      <BackgroundPlayerProvider>
+        <ClipCollectionView
+          videoDir="/lib/c/v1"
+          clips={clips}
+          onClipsChanged={vi.fn()}
+          onEmptied={vi.fn()}
+          onOpenFileLocation={vi.fn()}
+          onExtractMp3={vi.fn()}
+          extractingMp3={false}
+          extractMp3Disabled={false}
+          extractMp3Progress={0}
+          extractMp3Error={null}
+          convertFormatOptions={['mp4']}
+          onConvertClip={vi.fn()}
+          convertingClip={false}
+          convertClipDisabled={false}
+          convertClipProgress={0}
+          convertClipError={null}
+          parentVideoId="video1"
+          parentVideoTitle="Parent Video"
+          parentThumbnailPath={null}
+          initialClipId="clip2"
+        />
+      </BackgroundPlayerProvider>,
+    );
+    await waitFor(() => {
+      expect(container.querySelector('video source')).toHaveAttribute('src', expect.stringContaining('Clip%20Two.mp4'));
+    });
+  });
+
+  it('falls back to the first clip when initialClipId no longer matches any clip', async () => {
+    const clips = [makeClip(), makeClip({ id: 'clip2', fileName: 'Clip Two.mp4', title: 'Clip Two' })];
+    const { container } = renderView({ clips, initialClipId: 'deleted-clip' });
+    await waitFor(() => {
+      expect(container.querySelector('video source')).toHaveAttribute('src', expect.stringContaining('Clip%20One.mp4'));
+    });
   });
 });

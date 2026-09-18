@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import LibraryVideoDetail from './LibraryVideoDetail';
+import { BackgroundPlayerProvider, useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import type { LibraryClip, DownloadProgressMessage } from '../../types';
 
 // The real clip-creation flow (seeking the player, the embedded Set Start/
@@ -18,12 +19,18 @@ import type { LibraryClip, DownloadProgressMessage } from '../../types';
 // player and exercises exactly that, via a single button that fires
 // onClipCreated with a canned clip.
 vi.mock('../components/LibraryVideoPlayerWithTools', () => ({
-  default: ({ onClipCreated }: { onClipCreated?: (clip: LibraryClip) => void }) => (
-    <button
-      onClick={() => onClipCreated?.({ id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 10 })}
-    >
-      Fake save clip
-    </button>
+  default: ({ onClipCreated, overrideFilePath }: { onClipCreated?: (clip: LibraryClip) => void; overrideFilePath?: string }) => (
+    <>
+      <button
+        onClick={() => onClipCreated?.({ id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 10 })}
+      >
+        Fake save clip
+      </button>
+      {/* Exposes overrideFilePath (the real component's own file-to-play prop)
+          so tests can assert which clip a caller handed down, without this
+          fake needing to stand in for the real Vidstack player. */}
+      {overrideFilePath && <div data-testid="fake-player-override-path" data-override-file-path={overrideFilePath} />}
+    </>
   ),
 }));
 
@@ -124,22 +131,29 @@ beforeEach(() => {
   } as unknown as typeof window.electronAPIPythonDownload;
 });
 
-function renderDetail(video: ReturnType<typeof makeVideo>, videoTags: Record<string, string[]> = {}) {
+function renderDetail(
+  video: ReturnType<typeof makeVideo>,
+  videoTags: Record<string, string[]> = {},
+  deepLinkOverrides: { initialActiveView?: 'video' | 'clips'; initialClipId?: string | null } = {},
+) {
   const onBack = vi.fn();
   const onLibraryChanged = vi.fn().mockResolvedValue(undefined);
   const onDeleted = vi.fn();
   const onVersionsChanged = vi.fn().mockResolvedValue(undefined);
   const onVideoTagsChanged = vi.fn().mockResolvedValue(undefined);
   const utils = render(
-    <LibraryVideoDetail
-      video={video}
-      onBack={onBack}
-      onLibraryChanged={onLibraryChanged}
-      onDeleted={onDeleted}
-      onVersionsChanged={onVersionsChanged}
-      videoTags={videoTags}
-      onVideoTagsChanged={onVideoTagsChanged}
-    />,
+    <BackgroundPlayerProvider>
+      <LibraryVideoDetail
+        video={video}
+        onBack={onBack}
+        onLibraryChanged={onLibraryChanged}
+        onDeleted={onDeleted}
+        onVersionsChanged={onVersionsChanged}
+        videoTags={videoTags}
+        onVideoTagsChanged={onVideoTagsChanged}
+        {...deepLinkOverrides}
+      />
+    </BackgroundPlayerProvider>,
   );
   return { ...utils, onBack, onLibraryChanged, onDeleted, onVersionsChanged, onVideoTagsChanged };
 }
@@ -685,6 +699,107 @@ describe('LibraryVideoDetail', () => {
 
       expect(window.electronAPI.setVideoTag).toHaveBeenCalledWith('brandNew', 'vid1', true);
       expect(input).toHaveValue('');
+    });
+  });
+
+  describe('deep-linked Clip Collection (mini-player bar reopen)', () => {
+    it('opens straight into Clip Collection with the given clip active, when initialActiveView/initialClipId are set', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' }, { clipCount: 2 });
+      window.electronAPI.getClips = vi.fn().mockResolvedValue({
+        success: true,
+        clips: [
+          { id: 'clip1', fileName: 'Clip One.mp4', title: 'Clip One', createdAt: 0, durationSeconds: 5 },
+          { id: 'clip2', fileName: 'Clip Two.mp4', title: 'Clip Two', createdAt: 0, durationSeconds: 5 },
+        ],
+      });
+      renderDetail(video, {}, { initialActiveView: 'clips', initialClipId: 'clip2' });
+
+      expect(await screen.findByText('Clip Two')).toBeInTheDocument();
+      // The fake LibraryVideoPlayerWithTools (see the module mock above)
+      // surfaces whichever overrideFilePath it was actually handed -- this
+      // confirms ClipCollectionView picked clip2 as active, not just that
+      // clip2 appears somewhere in the sidebar list.
+      expect(await screen.findByTestId('fake-player-override-path')).toHaveAttribute('data-override-file-path', expect.stringContaining('Clip Two.mp4'));
+    });
+  });
+
+  describe('double-playback guard (background player)', () => {
+    // Two-phase render, deliberately: mount the provider + a probe first,
+    // start background playback via act(), *then* rerender with
+    // LibraryVideoDetail added -- guarantees the background player already
+    // has `current` set before LibraryVideoDetail's own guard effect runs,
+    // rather than racing two components' mount-effects against each other.
+    function renderWithBackgroundPlaying(playingVideo: ReturnType<typeof makeVideo>) {
+      let bgRef!: ReturnType<typeof useBackgroundPlayer>;
+      function Probe({ children }: { children?: React.ReactNode }) {
+        bgRef = useBackgroundPlayer();
+        return <>{children}</>;
+      }
+      const utils = render(
+        <BackgroundPlayerProvider>
+          <Probe />
+        </BackgroundPlayerProvider>,
+      );
+      act(() => {
+        bgRef.play({
+          videoId: playingVideo.metadata.videoId, title: playingVideo.metadata.title, channel: playingVideo.metadata.channel,
+          thumbnailPath: null, sourcePath: '/lib/Channel A/vidA/100/video.mp4', mimeType: 'video/mp4',
+        });
+        // Real media playback never actually starts in jsdom -- drive
+        // "currently playing" the same explicit way
+        // useBackgroundPlayer.test.tsx's own tests do, via the element's
+        // real play event, so `paused` genuinely starts false here.
+        bgRef.videoRef.current?.dispatchEvent(new Event('play'));
+      });
+
+      const mountDetail = (detailVideo: ReturnType<typeof makeVideo>) => utils.rerender(
+        <BackgroundPlayerProvider>
+          <Probe>
+            <LibraryVideoDetail
+              video={detailVideo}
+              onBack={vi.fn()}
+              onLibraryChanged={vi.fn()}
+              onDeleted={vi.fn()}
+              onVersionsChanged={vi.fn()}
+              videoTags={{}}
+              onVideoTagsChanged={vi.fn()}
+            />
+          </Probe>
+        </BackgroundPlayerProvider>,
+      );
+      // A function, not a plain getter-backed property -- destructuring a
+      // getter at call time would snapshot whatever bgRef was at that
+      // instant rather than staying live for a later read (confirmed the
+      // hard way in LibraryVideoPlayer.test.tsx's own equivalent helper).
+      return { getBg: () => bgRef, mountDetail };
+    }
+
+    it('auto-pauses the background player when opening the video it\'s currently playing', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      const { getBg, mountDetail } = renderWithBackgroundPlaying(video);
+      // jsdom's HTMLMediaElement.pause() is a no-op stub that never actually
+      // fires a real 'pause' event (confirmed directly -- unlike real
+      // browsers), so this asserts the guard effect actually *called*
+      // pause() on the element, rather than asserting the derived `paused`
+      // state flipped, which jsdom can't produce here.
+      const pauseSpy = vi.spyOn(getBg().videoRef.current!, 'pause');
+
+      mountDetail(video);
+
+      await waitFor(() => expect(pauseSpy).toHaveBeenCalled());
+    });
+
+    it('does not touch the background player when it\'s playing a different video', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' });
+      const otherVideo = makeVideo({ videoId: 'someOtherVideo' });
+      const { getBg, mountDetail } = renderWithBackgroundPlaying(otherVideo);
+      const pauseSpy = vi.spyOn(getBg().videoRef.current!, 'pause');
+
+      mountDetail(video);
+
+      await waitFor(() => screen.getByText('Alpha Video'));
+      expect(getBg().current?.videoId).toBe('someOtherVideo');
+      expect(pauseSpy).not.toHaveBeenCalled();
     });
   });
 });

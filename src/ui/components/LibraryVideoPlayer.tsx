@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Box, CardMedia, IconButton, Typography } from '@mui/material';
+import { Box, CardMedia, IconButton, Tooltip, Typography } from '@mui/material';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
+import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
 import { MediaPlayer, MediaProvider, type MediaPlayerInstance } from '@vidstack/react';
 import '@vidstack/react/player/styles/base.css';
 import type { LibraryVideoMetadata } from '../../types';
@@ -10,6 +11,7 @@ import LibraryVideoPlayerControls from './LibraryVideoPlayerControls';
 import PlayerContextMenu from './PlayerContextMenu';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
 import { buildAppVideoUrl } from '../../utils/utils.ts';
+import { useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 
 // getCurrentTime/getDuration return null (not a misleading 0) when no local
 // video is mounted right now.
@@ -95,7 +97,20 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   overrideFilePath?: string;
   clipMarkers?: ClipMarkersControl;
   onPlaybackStateChange?: (playing: boolean) => void;
-}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange }, ref) {
+  // Seeks here and starts playback automatically once the player has enough
+  // data to do so (the 'can-play' event) -- used to hand off from the
+  // separate background player (see useBackgroundPlayer.tsx) when opening
+  // the video it's currently playing, so playback picks up where the
+  // background player left off instead of restarting from 0. Applied once
+  // per mount only (see appliedInitialSeekRef below).
+  initialSeekSeconds?: number | null;
+  // Clip Collection's player passes real EMPTY_METADATA/no thumbnailPath (its
+  // on-screen poster should stay the clip's own first frame, not the parent
+  // video's), so "play in background" needs a separate source of truth for
+  // that payload's title/thumbnail/videoId/clipId -- this is it. Ignored by
+  // the normal (non-clip) player.
+  backgroundPlayOverride?: { videoId: string; title: string; thumbnailPath: string | null; clipId: string };
+}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange, initialSeekSeconds, backgroundPlayOverride }, ref) {
   const { thumbnail, videoId } = metadata;
   const filePath = overrideFilePath ?? metadata.downloadedFilePath;
   const [state, setState] = useState<PlaybackState>(() => computeInitialState(filePath));
@@ -106,6 +121,11 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   const [loopSequenceEnabled, setLoopSequenceEnabled] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const playerRef = useRef<MediaPlayerInstance>(null);
+  const backgroundPlayer = useBackgroundPlayer();
+  // Guards initialSeekSeconds from being re-applied on a later 'can-play'
+  // re-fire (e.g. after a network stall) -- it's a one-shot handoff, not
+  // something that should keep forcing the seek back every time.
+  const appliedInitialSeekRef = useRef(false);
 
   const ext = filePath ? getExtension(filePath) : '';
   const isNativePlayable = filePath ? PLAYABLE_VIDEO_EXTENSIONS.has(ext) : false;
@@ -195,6 +215,40 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     && clipMarkers.endSeconds > clipMarkers.startSeconds;
   const loopSequenceActive = loopSequenceEnabled && hasValidLoopMarkers;
 
+  // Hands the currently-playing video off to the separate background
+  // player (see useBackgroundPlayer.tsx) and pauses this player -- only one
+  // audio stream should ever play at once. Only offered once the source is
+  // actually resolved (state.kind === 'ready'), matching the guard already
+  // in place below this component's own two return branches.
+  const handlePlayInBackground = () => {
+    if (state.kind !== 'ready') return;
+    backgroundPlayer.play(backgroundPlayOverride ? {
+      videoId: backgroundPlayOverride.videoId,
+      title: backgroundPlayOverride.title,
+      channel: metadata.channel,
+      thumbnailPath: backgroundPlayOverride.thumbnailPath,
+      sourcePath: state.sourcePath,
+      mimeType: state.mimeType,
+      clipId: backgroundPlayOverride.clipId,
+    } : {
+      videoId,
+      title: metadata.fullTitle || metadata.title || null,
+      channel: metadata.channel,
+      thumbnailPath: thumbnailPath ?? null,
+      sourcePath: state.sourcePath,
+      mimeType: state.mimeType,
+    });
+    safePause();
+  };
+
+  const handleCanPlay = () => {
+    if (initialSeekSeconds == null || appliedInitialSeekRef.current || !playerRef.current) return;
+    appliedInitialSeekRef.current = true;
+    playerRef.current.currentTime = initialSeekSeconds;
+    setHasStartedPlayback(true);
+    safePlay();
+  };
+
   const handleLoopSequenceTimeUpdate = () => {
     if (!loopSequenceActive || !playerRef.current) return;
     const { startSeconds, endSeconds } = clipMarkers!;
@@ -219,7 +273,12 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   if (state.kind === 'ready') {
     return (
       <ResizableMediaContainer sx={containerSx}>
-        <Box sx={{ ...fillSx, position: 'relative' }}>
+        <Box
+          // Reveals the "play in background" hover button below on hover --
+          // same new-for-this-codebase pattern as PlaylistsSection.tsx's own
+          // "set as playlist thumbnail" hover button.
+          sx={{ ...fillSx, position: 'relative', '&:hover .play-in-background-btn': { opacity: 1 } }}
+        >
           <MediaPlayer
             ref={playerRef}
             title={metadata.fullTitle || metadata.title || undefined}
@@ -227,6 +286,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             style={{ width: '100%', height: '100%', backgroundColor: 'black' }}
             loop={loopEnabled}
             onTimeUpdate={handleLoopSequenceTimeUpdate}
+            onCanPlay={handleCanPlay}
             onError={() => setState({ kind: 'runtimeFailed' })}
             onPlay={() => { setHasStartedPlayback(true); onPlaybackStateChange?.(true); }}
             onPause={() => onPlaybackStateChange?.(false)}
@@ -252,6 +312,26 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
               }}
               sx={{ position: 'absolute', inset: 0, cursor: 'pointer' }}
             />
+            {/* Same action as the context menu's "Play in background" item --
+                a more discoverable, always-visible-on-hover entry point.
+                FormatListBulletedAdd is a deliberate choice ahead of this
+                becoming "Add to queue" once queueing exists. */}
+            <Tooltip title="Play in background">
+              <IconButton
+                className="play-in-background-btn"
+                size="small"
+                onClick={(e) => { e.stopPropagation(); handlePlayInBackground(); }}
+                aria-label="Play in background"
+                sx={{
+                  position: 'absolute', top: 8, right: 8, zIndex: 1,
+                  opacity: 0, transition: 'opacity 0.15s',
+                  backgroundColor: 'rgba(0, 0, 0, 0.5)', color: 'common.white',
+                  '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.7)' },
+                }}
+              >
+                <FormatListBulletedAddIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
             <LibraryVideoPlayerControls clipMarkers={clipMarkers} />
           </MediaPlayer>
           <PlayerContextMenu
@@ -263,6 +343,11 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             loopSequenceEnabled={loopSequenceEnabled}
             onToggleLoopSequence={handleToggleLoopSequence}
             loopSequenceDisabled={!hasValidLoopMarkers}
+            // Available for Clip Collection's own player too (overrideFilePath
+            // set) -- backgroundPlayOverride (passed in by ClipCollectionView)
+            // gives that case its own title/thumbnail/clipId instead of the
+            // normal videoId/metadata-derived payload above.
+            onPlayInBackground={handlePlayInBackground}
           />
           {/* Vidstack's own <Poster> component hard-rejects any src scheme
               outside http/https/data/blob -- our custom app-video:// scheme

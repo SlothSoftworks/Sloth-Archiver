@@ -7,6 +7,7 @@ import MainPage from './MainPage';
 import { LibraryNotificationProvider, useLibraryNotification } from './hooks/useLibraryNotifications';
 import { YtdlpUpdaterProvider } from './hooks/useYtdlpUpdater';
 import { CookiesChangeProvider } from './hooks/useCookiesChange';
+import { BackgroundPlayerProvider } from './hooks/useBackgroundPlayer';
 
 // Each tab's screen is a large, independently-tested component (its own
 // dedicated test file covers it) -- mocked out here so MainPage's tests stay
@@ -49,8 +50,10 @@ function renderMainPage() {
       <YtdlpUpdaterProvider>
         <LibraryNotificationProvider>
           <CookiesChangeProvider>
-            <IncrementButton />
-            <MainPage />
+            <BackgroundPlayerProvider>
+              <IncrementButton />
+              <MainPage />
+            </BackgroundPlayerProvider>
           </CookiesChangeProvider>
         </LibraryNotificationProvider>
       </YtdlpUpdaterProvider>

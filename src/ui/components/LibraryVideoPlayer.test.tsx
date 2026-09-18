@@ -1,9 +1,40 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import userEvent from '@testing-library/user-event';
 import LibraryVideoPlayer, { type ClipMarkersControl } from './LibraryVideoPlayer';
+import { BackgroundPlayerProvider, useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import type { LibraryVideoMetadata } from '../../types';
+
+// LibraryVideoPlayer always calls useBackgroundPlayer() (for its context
+// menu's "Play in background" item), so every render in this file needs a
+// provider ancestor -- shadowing the plain RTL render here means none of
+// the many call sites below need their own wrapper.
+function render(ui: ReactElement) {
+  return rtlRender(<BackgroundPlayerProvider>{ui}</BackgroundPlayerProvider>);
+}
+
+// For tests that need to inspect background-player state after an action --
+// a sibling under the same provider, same pattern already used in
+// LibraryVideoDetail.test.tsx/MiniPlayerBar.test.tsx. Returns a *function*
+// (not a plain property) deliberately -- destructuring a getter-backed
+// property at call time would snapshot whatever bgRef was at that instant,
+// not the live value after a later state update.
+function renderWithBgProbe(ui: ReactElement) {
+  let bgRef!: ReturnType<typeof useBackgroundPlayer>;
+  function Probe() {
+    bgRef = useBackgroundPlayer();
+    return null;
+  }
+  const utils = rtlRender(
+    <BackgroundPlayerProvider>
+      <Probe />
+      {ui}
+    </BackgroundPlayerProvider>,
+  );
+  return { ...utils, getBg: () => bgRef };
+}
 
 function baseMetadata(overrides: Partial<LibraryVideoMetadata> = {}): LibraryVideoMetadata {
   return {
@@ -91,7 +122,11 @@ describe('LibraryVideoPlayer', () => {
     const { container } = render(<LibraryVideoPlayer metadata={baseMetadata()} />);
     const iframe = container.querySelector('iframe');
     expect(iframe).toHaveAttribute('src', 'https://www.youtube-nocookie.com/embed/abc123');
-    expect(container.querySelector('video')).toBeNull();
+    // Excludes the always-present, unrelated hidden <video> the
+    // BackgroundPlayerProvider wrapper (see this file's own render() above)
+    // renders for background playback -- this assertion is about whether
+    // *this* player rendered a local video, not that one.
+    expect(container.querySelector('video:not([data-testid="background-player-video"])')).toBeNull();
   });
 
   it('renders a local <video> for a playable extension, pointed at the app-video:// URL', async () => {
@@ -172,7 +207,7 @@ describe('LibraryVideoPlayer', () => {
       <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: null })} overrideFilePath="" />,
     );
     expect(container.querySelector('iframe')).toBeNull();
-    expect(container.querySelector('video')).toBeNull();
+    expect(container.querySelector('video:not([data-testid="background-player-video"])')).toBeNull();
   });
 
   describe('clipMarkers', () => {
@@ -312,10 +347,12 @@ describe('LibraryVideoPlayer', () => {
       await userEvent.setup().keyboard('{Escape}');
 
       rerender(
-        <LibraryVideoPlayer
-          metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
-          clipMarkers={noopClipMarkers({ startSeconds: 5, endSeconds: 10 })}
-        />,
+        <BackgroundPlayerProvider>
+          <LibraryVideoPlayer
+            metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+            clipMarkers={noopClipMarkers({ startSeconds: 5, endSeconds: 10 })}
+          />
+        </BackgroundPlayerProvider>,
       );
       fireEvent.contextMenu(findClickOverlay(container));
       expect(await screen.findByRole('menuitem', { name: 'Loop sequence' })).not.toHaveAttribute('aria-disabled', 'true');
@@ -458,6 +495,95 @@ describe('LibraryVideoPlayer', () => {
       await user.dblClick(screen.getByTestId('time-current'));
       await waitFor(() => expect(screen.getByTestId('time-current').textContent).not.toContain('.'));
       expect(screen.getByTestId('time-duration')).toHaveAttribute('data-type', 'duration');
+    });
+  });
+
+  describe('Play in background', () => {
+    it('the hover button hands the video off to the background player and pauses this one', async () => {
+      const user = userEvent.setup();
+      const { container, getBg } = renderWithBgProbe(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} thumbnailPath="/lib/c/v1/thumb.jpg" />,
+      );
+      const video = container.querySelector('video') as HTMLVideoElement;
+      fireReadinessCascade(video);
+      await user.click(video); // start this player's own playback first
+      fireEvent.play(video);
+
+      await user.click(screen.getByRole('button', { name: 'Play in background' }));
+
+      expect(getBg().current).toEqual({
+        videoId: 'abc123', title: 'A Video', channel: 'Some Channel',
+        thumbnailPath: '/lib/c/v1/thumb.jpg', sourcePath: '/lib/c/v1/1/video.mp4', mimeType: 'video/mp4',
+      });
+      // This player's own playback stopped -- only one audio stream at a time.
+      expect(video.paused).toBe(true);
+    });
+
+    it('the context menu item does the same thing', async () => {
+      const user = userEvent.setup();
+      const { container, getBg } = renderWithBgProbe(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} />,
+      );
+      const video = container.querySelector('video') as HTMLVideoElement;
+      fireReadinessCascade(video);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await user.click(await screen.findByRole('menuitem', { name: 'Play in background' }));
+
+      expect(getBg().current?.videoId).toBe('abc123');
+    });
+
+    it('is offered even for Clip Collection\'s own player (overrideFilePath set)', async () => {
+      const { container } = render(
+        <LibraryVideoPlayer
+          metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+          overrideFilePath="/lib/c/v1/clips/My Clip.mp4"
+        />,
+      );
+      const video = container.querySelector('video') as HTMLVideoElement;
+      fireReadinessCascade(video);
+
+      expect(screen.getByRole('button', { name: 'Play in background' })).toBeInTheDocument();
+      fireEvent.contextMenu(findClickOverlay(container));
+      expect(await screen.findByRole('menuitem', { name: 'Play in background' })).toBeInTheDocument();
+    });
+
+    it('backgroundPlayOverride supplies the payload for Clip Collection\'s own player', async () => {
+      const user = userEvent.setup();
+      const { container, getBg } = renderWithBgProbe(
+        <LibraryVideoPlayer
+          metadata={baseMetadata({ downloadedFilePath: null, channel: 'Some Channel' })}
+          overrideFilePath="/lib/c/v1/clips/My Clip.mp4"
+          backgroundPlayOverride={{
+            videoId: 'abc123', title: 'A Video - My Clip', thumbnailPath: '/lib/c/v1/thumb.jpg', clipId: 'clip1',
+          }}
+        />,
+      );
+      const video = container.querySelector('video') as HTMLVideoElement;
+      fireReadinessCascade(video);
+
+      await user.click(screen.getByRole('button', { name: 'Play in background' }));
+
+      expect(getBg().current).toEqual({
+        videoId: 'abc123', title: 'A Video - My Clip', channel: 'Some Channel',
+        thumbnailPath: '/lib/c/v1/thumb.jpg', sourcePath: '/lib/c/v1/clips/My Clip.mp4', mimeType: 'video/mp4',
+        clipId: 'clip1',
+      });
+    });
+
+    it('initialSeekSeconds seeks and starts playback automatically once the player can play', async () => {
+      const { container } = render(
+        <LibraryVideoPlayer
+          metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })}
+          initialSeekSeconds={42}
+        />,
+      );
+      await findSourceEl(container);
+      const video = container.querySelector('video') as HTMLVideoElement;
+
+      fireReadinessCascade(video); // includes 'canplay', which triggers the seek+play
+
+      await waitFor(() => expect(video.currentTime).toBe(42));
     });
   });
 });
