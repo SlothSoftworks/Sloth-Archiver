@@ -37,6 +37,13 @@ export type LibraryVideoPlayerWithToolsProps = {
   // location via a native file dialog.
   standaloneClipping?: boolean;
   onClipSavedToFile?: (outputPath: string) => void;
+  // Passed straight through to LibraryVideoPlayer -- see its own prop of the
+  // same name for what this does (hands off from the separate background
+  // player, see useBackgroundPlayer.tsx).
+  initialSeekSeconds?: number | null;
+  // Passed straight through to LibraryVideoPlayer -- see its own prop of the
+  // same name.
+  backgroundPlayOverride?: { videoId: string; title: string; thumbnailPath: string | null; clipId: string };
 };
 
 // "source" means keep the input file's own extension, mirroring the same
@@ -49,7 +56,7 @@ function extensionForFormat(format: string, inputPath: string): string {
 
 export default function LibraryVideoPlayerWithTools({
   metadata, thumbnailPath, cacheBustKey, overrideFilePath, videoDir, epoch, existingClipTitles, convertFormatOptions, onClipCreated,
-  standaloneClipping = false, onClipSavedToFile,
+  standaloneClipping = false, onClipSavedToFile, initialSeekSeconds, backgroundPlayOverride,
 }: LibraryVideoPlayerWithToolsProps) {
   const playerRef = useRef<LibraryVideoPlayerHandle>(null);
   const [clipStartSeconds, setClipStartSeconds] = useState<number | null>(null);
@@ -218,6 +225,8 @@ export default function LibraryVideoPlayerWithTools({
         cacheBustKey={cacheBustKey}
         overrideFilePath={overrideFilePath}
         onPlaybackStateChange={handlePlaybackStateChange}
+        initialSeekSeconds={initialSeekSeconds}
+        backgroundPlayOverride={backgroundPlayOverride}
         clipMarkers={{
           startSeconds: clipStartSeconds,
           endSeconds: clipEndSeconds,

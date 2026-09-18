@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import OptionsScreen from './OptionsScreen';
 import { YtdlpUpdaterProvider } from '../hooks/useYtdlpUpdater';
 import { ThemeModeProvider } from '../hooks/useThemeMode';
+import { CookiesChangeProvider, useCookiesChange } from '../hooks/useCookiesChange';
 
 beforeEach(() => {
   window.electronAPI = {
@@ -47,7 +48,7 @@ beforeEach(() => {
 
 function renderScreen() {
   return render(
-    <YtdlpUpdaterProvider><ThemeModeProvider><OptionsScreen /></ThemeModeProvider></YtdlpUpdaterProvider>,
+    <YtdlpUpdaterProvider><ThemeModeProvider><CookiesChangeProvider><OptionsScreen /></CookiesChangeProvider></ThemeModeProvider></YtdlpUpdaterProvider>,
   );
 }
 
@@ -168,6 +169,38 @@ describe('OptionsScreen', () => {
     expect(await screen.findByText('Cookie loaded (3)')).toBeInTheDocument();
   });
 
+  // Regression test for the actual reported bug: the header cookie indicator
+  // (MainPage.tsx) only ever fetched once on its own mount, so it stayed
+  // stuck at whatever cookie state existed at app launch until a restart.
+  // This confirms the shared signal this screen now bumps after every
+  // mutation actually changes for an independent consumer under the same
+  // provider, without either side remounting -- the same shape MainPage's
+  // real header consumes it in.
+  it('bumps the shared cookies-change signal after saving, so an independent consumer (like the header) knows to refetch', async () => {
+    const user = userEvent.setup();
+    (window.electronAPI.saveCookie as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true, cookieCount: 1, skipped: 0 });
+
+    function VersionProbe() {
+      const { version } = useCookiesChange();
+      return <div>signal version: {version}</div>;
+    }
+    render(
+      <YtdlpUpdaterProvider><ThemeModeProvider>
+        <CookiesChangeProvider>
+          <VersionProbe />
+          <OptionsScreen />
+        </CookiesChangeProvider>
+      </ThemeModeProvider></YtdlpUpdaterProvider>,
+    );
+    await waitFor(() => expect(screen.getByText('signal version: 0')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Load personal cookie' }));
+    await user.type(screen.getByPlaceholderText(/Netscape HTTP Cookie File/), 'CONSENT=YES+1');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(screen.getByText(/signal version: [1-9]/)).toBeInTheDocument());
+  });
+
   it('deleting a loaded cookie clears the loaded status', async () => {
     const user = userEvent.setup();
     (window.electronAPI.getCookieStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ loaded: true, cookieCount: 2 });
@@ -189,6 +222,12 @@ describe('OptionsScreen', () => {
     await user.click(screen.getByRole('button', { name: 'Pull from browser' }));
     expect(screen.getByText('No browser selected')).toBeInTheDocument();
 
+    // Reflects the picked browser in a later getCookiesConfig fetch -- this
+    // screen now re-fetches after persisting (see notifyCookiesChanged),
+    // same as a real main-process round trip would actually return.
+    (window.electronAPI.getCookiesConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      cookiesMode: 'browser', cookiesBrowser: 'firefox', supportedBrowsers: ['firefox', 'chrome'], cookiesPersistAcrossSessions: false,
+    });
     await user.click(screen.getByLabelText('Browser'));
     await user.click(await screen.findByRole('option', { name: 'Firefox' }));
 

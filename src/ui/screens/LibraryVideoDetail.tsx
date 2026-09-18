@@ -30,6 +30,7 @@ import { convertYYYYMMDDStringToDate, cleanElectronErrorMessage } from '../../ut
 import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
+import { useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import VideoQualityDownload from './VideoQualityDownload';
 import FfmpegUtilitiesPanel, { OTHER_FORMAT_VALUE } from './FfmpegUtilitiesPanel';
 import ClipCollectionView from '../components/ClipCollectionView';
@@ -52,7 +53,10 @@ type LibraryVideo = {
 // that change added -- "Refresh from YouTube" is what fixes it.
 const CURRENT_VIDEO_SCHEMA_VERSION = 4;
 
-export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, onDeleted, onVersionsChanged, videoTags, onVideoTagsChanged }: {
+export default function LibraryVideoDetail({
+  video, onBack, onLibraryChanged, onDeleted, onVersionsChanged, videoTags, onVideoTagsChanged,
+  initialActiveView, initialClipId,
+}: {
   video: LibraryVideo;
   onBack: () => void;
   onLibraryChanged: () => Promise<void> | void;
@@ -63,9 +67,36 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // LibraryScreen.tsx already loads for the bulk "Tag selected" dialog.
   videoTags: Record<string, string[]>;
   onVideoTagsChanged: () => Promise<void> | void;
+  // Set by LibraryScreen.tsx's deep-link effect when this video was opened
+  // via the mini-player bar while a clip was playing in the background --
+  // opens straight into Clip Collection with that clip selected instead of
+  // the default video view.
+  initialActiveView?: 'video' | 'clips';
+  initialClipId?: string | null;
 }) {
   const [selectedEpoch, setSelectedEpoch] = useState(video.latestEpoch);
   const [metadata, setMetadata] = useState(video.metadata);
+  const backgroundPlayer = useBackgroundPlayer();
+  // Captured once, the moment this guard below fires -- this screen's own
+  // player picks up from here (see initialSeekSeconds passed to
+  // LibraryVideoPlayerWithTools). Stays null (plain from-the-start playback)
+  // whenever the opened video isn't the one currently playing in the
+  // background. The two players still don't share any live state beyond
+  // this one-shot handoff -- a deliberate, explicitly temporary scope while
+  // this feature is still just a foundation (see useBackgroundPlayer.tsx).
+  const [resumeFromBackgroundSeconds, setResumeFromBackgroundSeconds] = useState<number | null>(null);
+  // Double-playback guard: opening a video's own detail view while it's the
+  // one currently playing in the background (via the separate background
+  // player, see useBackgroundPlayer.tsx) auto-pauses that background
+  // playback, since this screen's own player is about to start its own
+  // independent audio for the same video otherwise.
+  useEffect(() => {
+    if (backgroundPlayer.current?.videoId === metadata.videoId) {
+      setResumeFromBackgroundSeconds(backgroundPlayer.currentTime);
+      backgroundPlayer.pause();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metadata.videoId]);
   const [selectedFormat, setSelectedFormat] = useState('dflt');
   const [selectedResolution, setSelectedResolution] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -155,7 +186,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
   // out for ClipCollectionView. clips starts empty and is fetched lazily the
   // first time the tab is opened (see the activeView effect below), not
   // eagerly on mount, since most videos will never have any.
-  const [activeView, setActiveView] = useState<'video' | 'clips'>('video');
+  const [activeView, setActiveView] = useState<'video' | 'clips'>(initialActiveView ?? 'video');
   const [clips, setClips] = useState<LibraryClip[]>([]);
   const [clipsLoaded, setClipsLoaded] = useState(false);
 
@@ -779,6 +810,10 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
           clips={clips}
           onClipsChanged={setClips}
           onEmptied={() => setActiveView('video')}
+          parentVideoId={metadata.videoId}
+          parentVideoTitle={metadata.fullTitle || metadata.title || ''}
+          parentThumbnailPath={video.thumbnailPath}
+          initialClipId={initialClipId}
           onOpenFileLocation={handleOpenClipFileLocation}
           onExtractMp3={handleExtractClipMp3}
           extractingMp3={ffmpegAction === 'extractClipMp3'}
@@ -808,6 +843,7 @@ export default function LibraryVideoDetail({ video, onBack, onLibraryChanged, on
             epoch={selectedEpoch}
             existingClipTitles={clips.map((c) => c.title)}
             convertFormatOptions={convertFormatOptions}
+            initialSeekSeconds={resumeFromBackgroundSeconds}
             onClipCreated={(clip) => {
               setClips((prev) => [...prev, clip]);
               onVersionsChanged();

@@ -22,8 +22,9 @@ type LibrarySortDirection = 'asc' | 'desc';
 // Mirrors listLibraryTags' return shape (library.mjs) -- folderName is what
 // every IPC call actually keys on; tagName is presentational (today always
 // equal to folderName, since sublibrary names aren't renamable separately
-// from their folder).
-type LibraryTag = {
+// from their folder). Exported so useLibraryTags.tsx and its consumers share
+// this one declaration instead of each keeping their own local copy.
+export type LibraryTag = {
     tagName: string;
     folderName: string;
     createdEpoch: number | null;
@@ -125,7 +126,8 @@ declare global {
             enrichPlaylistEntry: (payload: { playlistId: string; videoId: string; title?: string | null; uploadDate?: string | null; thumbnailUrl?: string | null }) => Promise<{ success: boolean; message?: string }>
             listPlaylists: () => Promise<{ playlists: PlaylistSummary[] }>
             getPlaylist: (playlistId: string) => Promise<{ playlist: PlaylistSnapshot | null }>
-            refreshPlaylist: (playlistId: string) => Promise<{ success: boolean; added?: number; removed?: number; updated?: number; lastRefreshedEpoch?: number; entries?: PlaylistEntry[]; message?: string }>
+            refreshPlaylist: (playlistId: string) => Promise<{ success: boolean; added?: number; removed?: number; updated?: number; lastRefreshedEpoch?: number; entries?: PlaylistEntry[]; missingFromLibraryEntries?: PlaylistEntry[]; manualThumbnailVideoId?: string | null; message?: string }>
+            setPlaylistManualThumbnail: (playlistId: string, videoId: string | null) => Promise<{ success: boolean; manualThumbnailVideoId?: string | null; thumbnailUrl?: string | null; thumbnailPath?: string | null; message?: string }>
             undoPlaylistRefresh: (playlistId: string) => Promise<{ success: boolean; metadata?: PlaylistSnapshot; message?: string }>
             deletePlaylist: (playlistId: string) => Promise<{ success: boolean; message?: string }>
             recordLibraryDownload: (payload: { videoDir: string; epoch: string; filePath: string; resolution: string; format?: string; kind?: 'video' | 'audio' }) => Promise<{ success: boolean }>

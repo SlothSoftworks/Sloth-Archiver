@@ -11,6 +11,9 @@ import { YtdlpUpdaterProvider } from './hooks/useYtdlpUpdater';
 import { LibraryNotificationProvider } from './hooks/useLibraryNotifications';
 import { BulkAddProvider } from './hooks/useBulkAddQueue.tsx';
 import { ThemeModeProvider, useThemeMode } from './hooks/useThemeMode.tsx';
+import { LibraryTagsProvider } from './hooks/useLibraryTags.tsx';
+import { CookiesChangeProvider } from './hooks/useCookiesChange.tsx';
+import { BackgroundPlayerProvider } from './hooks/useBackgroundPlayer.tsx';
 
 // Forwards uncaught renderer errors to the same main.log a crashed main
 // process already writes to (see errorLog:report in main.mjs) -- the renderer
@@ -51,18 +54,24 @@ function AppContent() {
       <CssBaseline />
       <YtdlpUpdaterProvider>
         <LibraryNotificationProvider>
-          <BulkAddProvider>
-            <Routes>
-              {/* "/*" (not "/") so MainPage -- and everything that lives
-                  alongside its tabs, like BulkAddSidePanel and the
-                  yt-dlp-update dialog -- stays mounted for every nested path
-                  this app's internal navigation uses (e.g.
-                  /library/video/:videoId). Those aren't separate <Route>s
-                  with their own element; they're just locations MainPage's
-                  own tab logic reads reactively (see MainPage.tsx). */}
-              <Route path="/*" element={<MainPage />}></Route>
-            </Routes>
-          </BulkAddProvider>
+          <LibraryTagsProvider>
+            <CookiesChangeProvider>
+              <BackgroundPlayerProvider>
+                <BulkAddProvider>
+                  <Routes>
+                    {/* "/*" (not "/") so MainPage -- and everything that lives
+                        alongside its tabs, like BulkAddSidePanel and the
+                        yt-dlp-update dialog -- stays mounted for every nested path
+                        this app's internal navigation uses (e.g.
+                        /library/video/:videoId). Those aren't separate <Route>s
+                        with their own element; they're just locations MainPage's
+                        own tab logic reads reactively (see MainPage.tsx). */}
+                    <Route path="/*" element={<MainPage />}></Route>
+                  </Routes>
+                </BulkAddProvider>
+              </BackgroundPlayerProvider>
+            </CookiesChangeProvider>
+          </LibraryTagsProvider>
         </LibraryNotificationProvider>
       </YtdlpUpdaterProvider>
     </ThemeProvider>

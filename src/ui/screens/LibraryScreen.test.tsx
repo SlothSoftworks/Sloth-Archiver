@@ -6,21 +6,32 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import LibraryScreen from './LibraryScreen';
 import { BulkAddProvider } from '../hooks/useBulkAddQueue.tsx';
+import { LibraryTagsProvider } from '../hooks/useLibraryTags.tsx';
+import { BackgroundPlayerProvider } from '../hooks/useBackgroundPlayer.tsx';
 
 // LibraryScreen reads/matches deep-link routes (useMatch/useNavigate, for
 // /library/video/:videoId) -- needs a real Router context, same reason
 // App.test.tsx already wraps with one. BulkAddProvider is needed too, now
 // that the bulk-select "Download selected" action calls useBulkAddQueue()
 // directly -- without it every render throws ("must be used within a
-// BulkAddProvider").
+// BulkAddProvider"). LibraryTagsProvider likewise, now that libraryTags/
+// activeLibraryTag come from the shared hook instead of this screen's own
+// local state. BackgroundPlayerProvider is needed too, now that every
+// VideoCard's own "Add to queue" hover button calls useBackgroundPlayer().
 function render(ui: ReactElement) {
-  return rtlRender(<MemoryRouter><BulkAddProvider>{ui}</BulkAddProvider></MemoryRouter>);
+  return rtlRender(
+    <MemoryRouter><LibraryTagsProvider><BulkAddProvider><BackgroundPlayerProvider>{ui}</BackgroundPlayerProvider></BulkAddProvider></LibraryTagsProvider></MemoryRouter>,
+  );
 }
 
 // For the deep-link (?tag=) tests below -- same wrapper as render() but
 // starting on a specific route instead of the default "/".
 function renderAt(path: string, ui: ReactElement) {
-  return rtlRender(<MemoryRouter initialEntries={[path]}><BulkAddProvider>{ui}</BulkAddProvider></MemoryRouter>);
+  return rtlRender(
+    <MemoryRouter initialEntries={[path]}>
+      <LibraryTagsProvider><BulkAddProvider><BackgroundPlayerProvider>{ui}</BackgroundPlayerProvider></BulkAddProvider></LibraryTagsProvider>
+    </MemoryRouter>,
+  );
 }
 
 // LibraryVideoDetail is the biggest, most complex file in the app (its own
@@ -298,6 +309,67 @@ describe('LibraryScreen', () => {
     await user.keyboard('{ArrowRight}');
 
     expect(window.electronAPI.setThumbnailSize).toHaveBeenCalled();
+  });
+
+  describe('Add to queue (video card)', () => {
+    it('is hidden when the video has no downloaded file at all', async () => {
+      const user = userEvent.setup();
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('Channel A'));
+
+      expect(screen.queryByRole('button', { name: 'Add to queue' })).not.toBeInTheDocument();
+    });
+
+    it('enqueues the video without navigating into its detail view, when a natively-playable file is downloaded', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({ metadata: { ...makeVideo().metadata, downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4' } })],
+        }],
+      });
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('Channel A'));
+
+      await user.click(screen.getByRole('button', { name: 'Add to queue' }));
+
+      expect(screen.queryByText('Detail: vidA')).not.toBeInTheDocument();
+    });
+
+    it('shows the button for a non-native (MKV) download too, resolving it via the same on-the-fly preview generation the video view uses', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({ metadata: { ...makeVideo().metadata, downloadedFilePath: '/lib/Channel A/vidA/1/video.mkv' } })],
+        }],
+      });
+      window.electronAPI.ensurePlayablePreview = vi.fn().mockResolvedValue({ success: true, previewPath: '/cache/vidA-preview.mp4' });
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('Channel A'));
+
+      await user.click(screen.getByRole('button', { name: 'Add to queue' }));
+
+      await waitFor(() => expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/Channel A/vidA/1/video.mkv' }));
+      expect(screen.queryByText('Detail: vidA')).not.toBeInTheDocument();
+    });
+
+    it('shows a toast and stays put when preview generation fails for a non-native download', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({ metadata: { ...makeVideo().metadata, downloadedFilePath: '/lib/Channel A/vidA/1/video.mkv' } })],
+        }],
+      });
+      window.electronAPI.ensurePlayablePreview = vi.fn().mockResolvedValue({ success: false });
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('Channel A'));
+
+      await user.click(screen.getByRole('button', { name: 'Add to queue' }));
+
+      expect(await screen.findByText(/Couldn't prepare/)).toBeInTheDocument();
+    });
   });
 
   describe('bulk select', () => {

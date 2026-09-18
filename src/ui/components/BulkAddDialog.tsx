@@ -18,19 +18,12 @@ import {
 } from '@mui/material';
 import { isValidUrl } from '../../utils/utils.ts';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
+import { useLibraryTags } from '../hooks/useLibraryTags.tsx';
 
 // Fixed set of common quality tiers -- not derived from any specific video's
 // own available resolutions, since those aren't known until each entry is
 // fetched. Per-video matching happens in useBulkAddQueue's pickClosestResolution.
 export const QUALITY_TIERS = ['2160', '1440', '1080', '720', '480', '360', '240', '144', 'MP3'];
-
-// Mirrors listLibraryTags' return shape (library.mjs) -- see LibraryScreen.tsx's
-// own copy of this type for why it isn't shared/imported across screens.
-type LibraryTag = {
-  tagName: string;
-  folderName: string;
-  createdEpoch: number | null;
-};
 
 function isPlaylistUrl(url: string): boolean {
   try {
@@ -47,20 +40,16 @@ export default function BulkAddDialog({ open, onClose }: { open: boolean; onClos
   const [targetResolution, setTargetResolution] = useState('720');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Only ever shown/relevant once more than one sublibrary exists -- same
-  // fetch-once-on-mount pattern as DownloaderScreen's own copy of this.
-  const [libraryTags, setLibraryTags] = useState<LibraryTag[]>([]);
+  // Only ever shown/relevant once more than one sublibrary exists.
+  const { libraryTags, activeLibraryTag } = useLibraryTags();
   const [targetLibraryTag, setTargetLibraryTag] = useState('');
+  // Re-seeds every time the dialog opens, not just on this permanently-
+  // mounted component's first-ever mount (BulkAddDialog only toggles `open`,
+  // it never remounts) -- otherwise the default target would go stale the
+  // same way the old fetch-once-on-mount bug did, just one step removed.
   useEffect(() => {
-    (async () => {
-      const [{ tags }, { activeLibraryTag }] = await Promise.all([
-        window.electronAPI.listLibraryTags(),
-        window.electronAPI.getActiveLibraryTag(),
-      ]);
-      setLibraryTags(tags);
-      setTargetLibraryTag(activeLibraryTag);
-    })();
-  }, []);
+    if (open) setTargetLibraryTag(activeLibraryTag);
+  }, [open, activeLibraryTag]);
 
   const handleClose = () => {
     if (submitting) return;

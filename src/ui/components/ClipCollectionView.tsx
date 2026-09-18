@@ -30,6 +30,7 @@ export default function ClipCollectionView({
   videoDir, clips, onClipsChanged, onEmptied,
   onOpenFileLocation, onExtractMp3, extractingMp3, extractMp3Disabled, extractMp3Progress, extractMp3Error,
   convertFormatOptions, onConvertClip, convertingClip, convertClipDisabled, convertClipProgress, convertClipError,
+  parentVideoId, parentVideoTitle, parentThumbnailPath, initialClipId,
 }: {
   videoDir: string;
   clips: LibraryClip[];
@@ -47,8 +48,19 @@ export default function ClipCollectionView({
   convertClipDisabled: boolean;
   convertClipProgress: number;
   convertClipError: string | null;
+  // The parent video's own identity -- used only to build the "play in
+  // background" payload for a clip (see backgroundPlayOverride below), never
+  // for the player's own on-screen poster/title, which stay clip-specific.
+  parentVideoId: string;
+  parentVideoTitle: string;
+  parentThumbnailPath: string | null;
+  // Deep-linked from the mini-player bar (see MiniPlayerBar.tsx/LibraryScreen.tsx)
+  // when reopening a clip that was playing in the background.
+  initialClipId?: string | null;
 }) {
-  const [activeClipId, setActiveClipId] = useState<string | null>(clips[0]?.id ?? null);
+  const [activeClipId, setActiveClipId] = useState<string | null>(
+    (initialClipId && clips.some((c) => c.id === initialClipId)) ? initialClipId : (clips[0]?.id ?? null),
+  );
   const [deleteTarget, setDeleteTarget] = useState<LibraryClip | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -58,10 +70,15 @@ export default function ClipCollectionView({
   const [forceReencode, setForceReencode] = useState(false);
 
   // Keep a valid active clip if the list changes underneath us (e.g. a
-  // delete elsewhere, or the initial fetch landing after mount).
+  // delete elsewhere, or the initial fetch landing after mount). Also
+  // re-checks initialClipId here, not just in the useState initializer above
+  // -- clips starts empty and is fetched lazily by the caller
+  // (LibraryVideoDetail.tsx), so this component often first mounts before
+  // that fetch resolves, missing the initializer's own check entirely.
   useEffect(() => {
     if (!clips.some((c) => c.id === activeClipId)) {
-      setActiveClipId(clips[0]?.id ?? null);
+      const preferred = initialClipId && clips.some((c) => c.id === initialClipId) ? initialClipId : (clips[0]?.id ?? null);
+      setActiveClipId(preferred);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clips]);
@@ -106,6 +123,12 @@ export default function ClipCollectionView({
             overrideFilePath={`${videoDir}/clips/${activeClip.fileName}`}
             convertFormatOptions={convertFormatOptions}
             standaloneClipping
+            backgroundPlayOverride={{
+              videoId: parentVideoId,
+              title: `${parentVideoTitle} - ${activeClip.title}`,
+              thumbnailPath: parentThumbnailPath,
+              clipId: activeClip.id,
+            }}
           />}
 
         {activeClip &&

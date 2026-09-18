@@ -27,6 +27,7 @@ import {
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { useYtdlpUpdater, IN_PROGRESS_STAGES } from '../hooks/useYtdlpUpdater';
 import { useThemeMode } from '../hooks/useThemeMode.tsx';
+import { useCookiesChange } from '../hooks/useCookiesChange.tsx';
 import { POPULAR_CONVERT_FORMATS, SUGGESTED_EXTRA_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { MAX_SIMULTANEOUS_DOWNLOADS_CEILING } from '../../utils/constants.ts';
 import { formatEpochLabel } from '../../utils/utils.ts';
@@ -100,6 +101,7 @@ export default function OptionsScreen() {
   // tab triggered it -- this screen only needs to check/kick off the update.
   const { currentVersion, latestVersion, updateAvailable, checking, checkError, stage, checkForUpdate, startUpdate } = useYtdlpUpdater();
   const { mode: themeMode, setMode: setThemeMode, themeName, setThemeName } = useThemeMode();
+  const { version: cookiesChangeVersion, notifyChanged: notifyCookiesChanged } = useCookiesChange();
   const isUpdating = IN_PROGRESS_STAGES.has(stage);
   const [cookieLoaded, setCookieLoaded] = useState(false);
   const [cookieCount, setCookieCount] = useState(0);
@@ -197,9 +199,17 @@ export default function OptionsScreen() {
     setEmbedMetadataByDefaultState(embedMetadataByDefault);
   };
 
+  // Re-fetches on mount and whenever the shared signal bumps (e.g. the
+  // header's own "Clear cookies" action, or -- once this file's own writes
+  // below also bump it -- another OptionsScreen mutation), instead of only
+  // ever fetching once at this screen's own mount, same staleness class as
+  // the header indicator's had until this fix.
   useEffect(() => {
     refreshStatus();
     refreshCookiesConfig();
+  }, [cookiesChangeVersion]);
+
+  useEffect(() => {
     refreshDownloadDir();
     refreshLibraryDir();
     refreshErrorLogInfo();
@@ -295,6 +305,7 @@ export default function OptionsScreen() {
     try {
       const result = await window.electronAPI.saveCookie(cookieText);
       await refreshStatus();
+      notifyCookiesChanged();
       if (result.skipped > 0) {
         setError(`Saved ${result.cookieCount} cookie(s), but ${result.skipped} line(s) couldn't be parsed. Try re-copying the cookie text -- a long value may have picked up stray line breaks when copied.`);
         return;
@@ -309,6 +320,7 @@ export default function OptionsScreen() {
   const handleDelete = async () => {
     await window.electronAPI.deleteCookie();
     await refreshStatus();
+    notifyCookiesChanged();
   };
 
   const handleThemeModeChange = (_e: MouseEvent<HTMLElement>, mode: 'light' | 'dark' | null) => {
@@ -339,12 +351,14 @@ export default function OptionsScreen() {
       arrivedAtBrowserModeFromFile.current = false;
       setCookiesBrowserState('');
       await window.electronAPI.setCookiesConfig({ cookiesMode: 'file', cookiesBrowser: '' });
+      notifyCookiesChanged();
     }
   };
 
   const handleSelectBrowser = async (browser: string) => {
     setCookiesBrowserState(browser);
     await window.electronAPI.setCookiesConfig({ cookiesMode: 'browser', cookiesBrowser: browser });
+    notifyCookiesChanged();
     const label = COOKIE_BROWSER_LABELS[browser] || browser;
     setBrowserSavedMessage(`Downloads will now pull cookies live from ${label}.`);
     // Only offer once per genuine paste-mode -> browser-mode transition, not
@@ -360,6 +374,7 @@ export default function OptionsScreen() {
     setDeletingOfferedCookie(true);
     await window.electronAPI.deleteCookie();
     await refreshStatus();
+    notifyCookiesChanged();
     setDeletingOfferedCookie(false);
     setOfferDeleteCookieOpen(false);
   };
@@ -371,6 +386,7 @@ export default function OptionsScreen() {
     setCookiesBrowserState('');
     setBrowserSavedMessage('');
     await window.electronAPI.setCookiesConfig({ cookiesMode: 'browser', cookiesBrowser: '' });
+    notifyCookiesChanged();
   };
 
   return (
