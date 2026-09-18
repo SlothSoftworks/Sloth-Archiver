@@ -18,15 +18,23 @@ function makeVideo(overrides: Partial<BackgroundPlayerVideo> = {}): BackgroundPl
 // itself (via a sibling under the same provider), mirroring how the real
 // app starts background playback from the player's own context menu.
 function PlayButton({ video = makeVideo() }: { video?: BackgroundPlayerVideo }) {
-  const { play } = useBackgroundPlayer();
-  return <button onClick={() => play(video)}>start playing (test)</button>;
+  const { enqueue } = useBackgroundPlayer();
+  return <button onClick={() => enqueue(video)}>start playing (test)</button>;
 }
 
-function renderBar(video?: BackgroundPlayerVideo) {
+// A second, independent enqueue trigger -- lets tests build a >1-item queue
+// without PlayButton's own default video colliding on videoId.
+function EnqueueSecondButton({ video }: { video: BackgroundPlayerVideo }) {
+  const { enqueue } = useBackgroundPlayer();
+  return <button onClick={() => enqueue(video)}>enqueue second (test)</button>;
+}
+
+function renderBar(video?: BackgroundPlayerVideo, secondVideo?: BackgroundPlayerVideo) {
   return render(
     <MemoryRouter>
       <BackgroundPlayerProvider>
         <PlayButton video={video} />
+        {secondVideo && <EnqueueSecondButton video={secondVideo} />}
         <MiniPlayerBar />
       </BackgroundPlayerProvider>
     </MemoryRouter>,
@@ -77,6 +85,27 @@ describe('MiniPlayerBar', () => {
     expect(await screen.findByRole('button', { name: 'Play' })).toBeInTheDocument();
   });
 
+  it('previous/next are disabled at the respective end of the queue, and navigate otherwise', async () => {
+    const user = userEvent.setup();
+    renderBar(makeVideo({ videoId: 'v1', title: 'Video One' }), makeVideo({ videoId: 'v2', title: 'Video Two' }));
+    await user.click(screen.getByRole('button', { name: 'start playing (test)' }));
+    await screen.findByText('Video One');
+    await user.click(screen.getByRole('button', { name: 'enqueue second (test)' }));
+
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next' })).not.toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(await screen.findByText('Video Two')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Previous' }));
+
+    expect(await screen.findByText('Video One')).toBeInTheDocument();
+  });
+
   it('the close button stops playback, hiding the bar', async () => {
     const user = userEvent.setup();
     renderBar();
@@ -86,5 +115,50 @@ describe('MiniPlayerBar', () => {
     await user.click(screen.getByRole('button', { name: 'Stop' }));
 
     expect(screen.queryByText('Video One')).not.toBeInTheDocument();
+  });
+
+  describe('queue counter and full view', () => {
+    it('hides the counter/arrow for a single-item queue', async () => {
+      const user = userEvent.setup();
+      renderBar();
+      await user.click(screen.getByRole('button', { name: 'start playing (test)' }));
+      await screen.findByText('Video One');
+
+      expect(screen.queryByText(/\(\d+\/\d+\)/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Show queue' })).not.toBeInTheDocument();
+    });
+
+    it('shows (X/N) and an arrow to open the full queue once there are multiple items', async () => {
+      const user = userEvent.setup();
+      renderBar(makeVideo({ videoId: 'v1' }), makeVideo({ videoId: 'v2', title: 'Video Two' }));
+      await user.click(screen.getByRole('button', { name: 'start playing (test)' }));
+      await screen.findByText('Video One');
+      await user.click(screen.getByRole('button', { name: 'enqueue second (test)' }));
+
+      expect(await screen.findByText('(1/2)')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Show queue' }));
+
+      expect(await screen.findByText('Video Two')).toBeInTheDocument();
+    });
+
+    it('hides the bar itself while the full queue view is open, and shows it again once minimized', async () => {
+      const user = userEvent.setup();
+      renderBar(makeVideo({ videoId: 'v1' }), makeVideo({ videoId: 'v2', title: 'Video Two' }));
+      await user.click(screen.getByRole('button', { name: 'start playing (test)' }));
+      await screen.findByText('Video One');
+      await user.click(screen.getByRole('button', { name: 'enqueue second (test)' }));
+      await user.click(screen.getByRole('button', { name: 'Show queue' }));
+      await screen.findByText('Video Two');
+
+      // The bar's own play/pause/seek/stop row is gone -- only the drawer's
+      // controls remain (its own Previous/Play/Next row uses the same
+      // "Play"/"Pause" labels, so this checks the bar-only "Stop" control).
+      expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+
+      // MUI's Modal (which Drawer is built on) closes on Escape by default.
+      await user.keyboard('{Escape}');
+
+      expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    });
   });
 });

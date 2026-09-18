@@ -7,8 +7,8 @@ import { BackgroundPlayerProvider, useBackgroundPlayer } from '../hooks/useBackg
 import type { LibraryClip } from '../../types';
 
 // Same one-shot readiness sequence LibraryVideoPlayer.test.tsx fires --
-// Vidstack won't treat the <video> as playable (and offer "Play in
-// background") until these land.
+// Vidstack won't treat the <video> as playable (and offer "Add to queue")
+// until these land.
 function fireReadinessCascade(video: HTMLVideoElement) {
   for (const type of ['loadstart', 'durationchange', 'loadedmetadata', 'loadeddata', 'canplay']) {
     fireEvent(video, new Event(type));
@@ -238,14 +238,14 @@ describe('ClipCollectionView', () => {
     expect(screen.getByText('Failed to convert.')).toBeInTheDocument();
   });
 
-  describe('Play in background', () => {
+  describe('Add to queue', () => {
     it('gives it the parent video\'s thumbnail and a "<video> - <clip>" title, not a blank/clip-only one', async () => {
       const user = userEvent.setup();
       const { container, getBg } = renderWithBgProbe();
       const video = container.querySelector('video') as HTMLVideoElement;
       fireReadinessCascade(video);
 
-      await user.click(screen.getByRole('button', { name: 'Play in background' }));
+      await user.click(screen.getByRole('button', { name: 'Add to queue' }));
 
       expect(getBg().current).toEqual(expect.objectContaining({
         videoId: 'video1',
@@ -263,7 +263,7 @@ describe('ClipCollectionView', () => {
       const video = container.querySelector('video') as HTMLVideoElement;
       fireReadinessCascade(video);
 
-      await user.click(screen.getByRole('button', { name: 'Play in background' }));
+      await user.click(screen.getByRole('button', { name: 'Add to queue' }));
 
       expect(getBg().current).toEqual(expect.objectContaining({ title: 'Parent Video - Clip Two', clipId: 'clip2' }));
     });

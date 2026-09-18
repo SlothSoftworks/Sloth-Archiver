@@ -215,14 +215,18 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     && clipMarkers.endSeconds > clipMarkers.startSeconds;
   const loopSequenceActive = loopSequenceEnabled && hasValidLoopMarkers;
 
-  // Hands the currently-playing video off to the separate background
-  // player (see useBackgroundPlayer.tsx) and pauses this player -- only one
-  // audio stream should ever play at once. Only offered once the source is
-  // actually resolved (state.kind === 'ready'), matching the guard already
-  // in place below this component's own two return branches.
-  const handlePlayInBackground = () => {
+  // Adds the currently-playing video to the separate background player's
+  // queue (see useBackgroundPlayer.tsx). An empty queue starts playing it
+  // immediately -- in that case this player is paused too, since only one
+  // audio stream should ever play at once; a non-empty queue just appends,
+  // leaving this player (and whatever's already playing in the background)
+  // undisturbed. Only offered once the source is actually resolved
+  // (state.kind === 'ready'), matching the guard already in place below
+  // this component's own two return branches.
+  const handleAddToQueue = () => {
     if (state.kind !== 'ready') return;
-    backgroundPlayer.play(backgroundPlayOverride ? {
+    const wasEmpty = backgroundPlayer.queue.length === 0;
+    backgroundPlayer.enqueue(backgroundPlayOverride ? {
       videoId: backgroundPlayOverride.videoId,
       title: backgroundPlayOverride.title,
       channel: metadata.channel,
@@ -238,7 +242,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
       sourcePath: state.sourcePath,
       mimeType: state.mimeType,
     });
-    safePause();
+    if (wasEmpty) safePause();
   };
 
   const handleCanPlay = () => {
@@ -312,16 +316,14 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
               }}
               sx={{ position: 'absolute', inset: 0, cursor: 'pointer' }}
             />
-            {/* Same action as the context menu's "Play in background" item --
-                a more discoverable, always-visible-on-hover entry point.
-                FormatListBulletedAdd is a deliberate choice ahead of this
-                becoming "Add to queue" once queueing exists. */}
-            <Tooltip title="Play in background">
+            {/* Same action as the context menu's "Add to queue" item -- a
+                more discoverable, always-visible-on-hover entry point. */}
+            <Tooltip title="Add to queue">
               <IconButton
                 className="play-in-background-btn"
                 size="small"
-                onClick={(e) => { e.stopPropagation(); handlePlayInBackground(); }}
-                aria-label="Play in background"
+                onClick={(e) => { e.stopPropagation(); handleAddToQueue(); }}
+                aria-label="Add to queue"
                 sx={{
                   position: 'absolute', top: 8, right: 8, zIndex: 1,
                   opacity: 0, transition: 'opacity 0.15s',
@@ -347,7 +349,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             // set) -- backgroundPlayOverride (passed in by ClipCollectionView)
             // gives that case its own title/thumbnail/clipId instead of the
             // normal videoId/metadata-derived payload above.
-            onPlayInBackground={handlePlayInBackground}
+            onAddToQueue={handleAddToQueue}
           />
           {/* Vidstack's own <Poster> component hard-rejects any src scheme
               outside http/https/data/blob -- our custom app-video:// scheme

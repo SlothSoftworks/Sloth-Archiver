@@ -8,7 +8,7 @@ import { BackgroundPlayerProvider, useBackgroundPlayer } from '../hooks/useBackg
 import type { LibraryVideoMetadata } from '../../types';
 
 // LibraryVideoPlayer always calls useBackgroundPlayer() (for its context
-// menu's "Play in background" item), so every render in this file needs a
+// menu's "Add to queue" item), so every render in this file needs a
 // provider ancestor -- shadowing the plain RTL render here means none of
 // the many call sites below need their own wrapper.
 function render(ui: ReactElement) {
@@ -498,7 +498,7 @@ describe('LibraryVideoPlayer', () => {
     });
   });
 
-  describe('Play in background', () => {
+  describe('Add to queue', () => {
     it('the hover button hands the video off to the background player and pauses this one', async () => {
       const user = userEvent.setup();
       const { container, getBg } = renderWithBgProbe(
@@ -509,7 +509,7 @@ describe('LibraryVideoPlayer', () => {
       await user.click(video); // start this player's own playback first
       fireEvent.play(video);
 
-      await user.click(screen.getByRole('button', { name: 'Play in background' }));
+      await user.click(screen.getByRole('button', { name: 'Add to queue' }));
 
       expect(getBg().current).toEqual({
         videoId: 'abc123', title: 'A Video', channel: 'Some Channel',
@@ -528,7 +528,7 @@ describe('LibraryVideoPlayer', () => {
       fireReadinessCascade(video);
 
       fireEvent.contextMenu(findClickOverlay(container));
-      await user.click(await screen.findByRole('menuitem', { name: 'Play in background' }));
+      await user.click(await screen.findByRole('menuitem', { name: 'Add to queue' }));
 
       expect(getBg().current?.videoId).toBe('abc123');
     });
@@ -543,9 +543,9 @@ describe('LibraryVideoPlayer', () => {
       const video = container.querySelector('video') as HTMLVideoElement;
       fireReadinessCascade(video);
 
-      expect(screen.getByRole('button', { name: 'Play in background' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Add to queue' })).toBeInTheDocument();
       fireEvent.contextMenu(findClickOverlay(container));
-      expect(await screen.findByRole('menuitem', { name: 'Play in background' })).toBeInTheDocument();
+      expect(await screen.findByRole('menuitem', { name: 'Add to queue' })).toBeInTheDocument();
     });
 
     it('backgroundPlayOverride supplies the payload for Clip Collection\'s own player', async () => {
@@ -562,7 +562,7 @@ describe('LibraryVideoPlayer', () => {
       const video = container.querySelector('video') as HTMLVideoElement;
       fireReadinessCascade(video);
 
-      await user.click(screen.getByRole('button', { name: 'Play in background' }));
+      await user.click(screen.getByRole('button', { name: 'Add to queue' }));
 
       expect(getBg().current).toEqual({
         videoId: 'abc123', title: 'A Video - My Clip', channel: 'Some Channel',

@@ -37,7 +37,9 @@ import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import FilterListIcon from '@mui/icons-material/FilterList';
+import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns } from '../../utils/utils.ts';
+import { useBackgroundPlayer, resolvePlayableSource } from '../hooks/useBackgroundPlayer.tsx';
 import LibraryVideoDetail from './LibraryVideoDetail';
 import PlaylistsSection, { type PlaylistBulkBar } from '../components/PlaylistsSection';
 import LibrarySearchBar from '../components/LibrarySearchBar';
@@ -820,6 +822,32 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
 }) {
   const bestQuality = getBestDownloadedQuality(video.epochs);
   const appliedTags = Object.keys(videoTags).filter((name) => videoTags[name].includes(video.metadata.videoId));
+  const { enqueue, showToast } = useBackgroundPlayer();
+  const [queueLoading, setQueueLoading] = useState(false);
+  // Shown for ANY downloaded file, not just a natively-playable one --
+  // handleAddToQueue below falls back to the same on-the-fly preview
+  // generation LibraryVideoPlayer.tsx's own player already uses for a
+  // non-native container (most commonly MKV), so a video that plays fine in
+  // the detail view is queueable here too, not silently excluded.
+  const isDownloaded = !!video.metadata.downloadedFilePath;
+  const handleAddToQueue = async () => {
+    if (!video.metadata.downloadedFilePath) return;
+    setQueueLoading(true);
+    const source = await resolvePlayableSource(video.metadata.downloadedFilePath);
+    setQueueLoading(false);
+    if (!source) {
+      showToast(`Couldn't prepare "${video.metadata.title || video.videoFolderName}" for playback.`);
+      return;
+    }
+    enqueue({
+      videoId: video.metadata.videoId,
+      title: video.metadata.fullTitle || video.metadata.title || null,
+      channel: video.metadata.channel,
+      thumbnailPath: video.thumbnailPath,
+      sourcePath: source.sourcePath,
+      mimeType: source.mimeType,
+    });
+  };
   return (
     <Card
       variant="outlined"
@@ -829,6 +857,7 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
         // states use), not a new palette entry.
         backgroundColor: selected ? 'action.selected' : undefined,
         '&:hover .video-card-checkbox': { opacity: 1 },
+        '&:hover .video-card-add-queue': { opacity: 1 },
       }}
     >
       {/* Sibling of CardActionArea below, not nested inside it -- MUI
@@ -836,12 +865,13 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
           target. Hidden by default, hover-reveals on this one card, and
           forced-visible on every card once any selection exists
           (selectionActive), so extending a selection never requires
-          re-hovering each item. */}
+          re-hovering each item. Left corner -- "Add to queue" (below) now
+          occupies the right corner the checkbox used to sit in. */}
       <Box
         className="video-card-checkbox"
         onClick={(e) => e.stopPropagation()}
         sx={{
-          position: 'absolute', top: 4, right: 4, zIndex: 1,
+          position: 'absolute', top: 4, left: 4, zIndex: 1,
           opacity: selectionActive || selected ? 1 : 0,
           transition: 'opacity 0.1s',
           backgroundColor: 'background.paper', borderRadius: '50%',
@@ -854,6 +884,22 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
           inputProps={{ 'aria-label': `Select ${video.metadata.title || video.videoFolderName}` }}
         />
       </Box>
+      {isDownloaded &&
+        <Box className="video-card-add-queue" sx={{ position: 'absolute', top: 4, right: 4, zIndex: 1, opacity: 0, transition: 'opacity 0.1s' }}>
+          <Tooltip title="Add to queue">
+            <span>
+              <IconButton
+                size="small"
+                onClick={(e) => { e.stopPropagation(); handleAddToQueue(); }}
+                aria-label="Add to queue"
+                disabled={queueLoading}
+                sx={{ backgroundColor: 'background.paper', '&:hover': { backgroundColor: 'background.paper' } }}
+              >
+                {queueLoading ? <CircularProgress size={18} /> : <FormatListBulletedAddIcon fontSize="small" />}
+              </IconButton>
+            </span>
+          </Tooltip>
+        </Box>}
       <CardActionArea onClick={() => onSelect(video)}>
         <CardMedia
           component="div"

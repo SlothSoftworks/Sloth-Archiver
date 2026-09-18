@@ -37,8 +37,9 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import ImageIcon from '@mui/icons-material/Image';
 import ImageOutlinedIcon from '@mui/icons-material/ImageOutlined';
+import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
 import { pink } from '@mui/material/colors';
-import { convertYYYYMMDDStringToDate, buildAppVideoUrl, formatEpochLabel, getBestDownloadedQuality } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, buildAppVideoUrl, formatEpochLabel, getBestDownloadedQuality, getBestDownloadedEpoch } from '../../utils/utils.ts';
 import LibrarySearchBar from './LibrarySearchBar';
 import BulkDownloadQualityDialog from './BulkDownloadQualityDialog';
 import BulkDeleteConfirmDialog from './BulkDeleteConfirmDialog';
@@ -46,7 +47,8 @@ import TagFilterPopover, { type SystemFilterKey } from './TagFilterPopover';
 import TagSelectedDialog from './TagSelectedDialog';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
-import type { PlaylistSummary, PlaylistSnapshot, LibraryVideoMetadata } from '../../types';
+import { useBackgroundPlayer, resolvePlayableSource } from '../hooks/useBackgroundPlayer.tsx';
+import type { PlaylistSummary, PlaylistSnapshot, PlaylistEntry, LibraryVideoMetadata } from '../../types';
 
 export type PlaylistBulkBar = {
   selectedCount: number;
@@ -73,8 +75,9 @@ function playlistThumbnailSrc(thumbnailUrl: string | null | undefined, thumbnail
 }
 
 // Minimal shape this component needs from a library index entry -- just
-// enough to compute download state and the resume-at-download fields.
-type IndexedVideo = { videoDir: string; latestEpoch: string | null; epochs: { metadata: LibraryVideoMetadata }[] };
+// enough to compute download state, the resume-at-download fields, and
+// (thumbnailPath) each entry's "Add to queue" payload.
+type IndexedVideo = { videoDir: string; latestEpoch: string | null; epochs: { metadata: LibraryVideoMetadata }[]; thumbnailPath: string | null };
 
 // onBulkBarUpdate reports a summary of the current selection (count, whether
 // "Download selected" applies, and the two trigger closures) up to
@@ -113,6 +116,9 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
   const [tagging, setTagging] = useState(false);
   const [tagError, setTagError] = useState<string | null>(null);
   const { start } = useBulkAddQueue();
+  const { enqueue, showToast } = useBackgroundPlayer();
+  const [queueLoadingIds, setQueueLoadingIds] = useState<Set<string>>(new Set());
+  const [playAllLoading, setPlayAllLoading] = useState(false);
   const { query, setQuery, isSearching, filtered: filteredPlaylists, clear } = useLibrarySearch(
     playlists,
     (playlist) => playlist.title || playlist.playlistId,
@@ -163,6 +169,59 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
     const videoDir = selectedPlaylist?.localFiles[videoId];
     const video = videoDir ? videoByDir.get(videoDir) : undefined;
     return video ? getBestDownloadedQuality(video.epochs) : null;
+  };
+
+  // "Available" for the queue means in-library with some downloaded file --
+  // handleAddEntryToQueue (below) resolves whatever's actually needed to
+  // play it (falling back to the same on-the-fly preview generation
+  // LibraryVideoPlayer.tsx's own player already uses for a non-native
+  // container, most commonly MKV) at click/Play-all time, not here, so a
+  // video that plays fine in the detail view is never silently excluded
+  // just because this check doesn't know about that fallback.
+  const getDownloadedEntry = (entry: PlaylistEntry): { channel: string | null; thumbnailPath: string | null; filePath: string } | null => {
+    const videoDir = selectedPlaylist?.localFiles[entry.videoId];
+    const video = videoDir ? videoByDir.get(videoDir) : undefined;
+    const best = video ? getBestDownloadedEpoch(video.epochs) : null;
+    if (!video || !best || !best.metadata.downloadedFilePath) return null;
+    return { channel: best.metadata.channel, thumbnailPath: video.thumbnailPath, filePath: best.metadata.downloadedFilePath };
+  };
+
+  const handleAddEntryToQueue = async (entry: PlaylistEntry) => {
+    const downloaded = getDownloadedEntry(entry);
+    if (!downloaded) return;
+    setQueueLoadingIds((prev) => new Set(prev).add(entry.videoId));
+    const source = await resolvePlayableSource(downloaded.filePath);
+    setQueueLoadingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(entry.videoId);
+      return next;
+    });
+    if (!source) {
+      showToast(`Couldn't prepare "${entry.title || entry.videoId}" for playback.`);
+      return;
+    }
+    enqueue({
+      videoId: entry.videoId,
+      title: entry.title,
+      channel: downloaded.channel,
+      thumbnailPath: downloaded.thumbnailPath,
+      sourcePath: source.sourcePath,
+      mimeType: source.mimeType,
+    });
+  };
+
+  // Queues every downloaded entry in playlist order, sequentially -- each
+  // await lets a natively-playable item resolve (and, for the very first
+  // one, start playing) near-instantly before moving to the next, rather
+  // than kicking off every entry's preview generation at once.
+  const handlePlayAll = async () => {
+    setPlayAllLoading(true);
+    for (const entry of selectedPlaylist?.entries || []) {
+      if (getDownloadedEntry(entry)) {
+        await handleAddEntryToQueue(entry);
+      }
+    }
+    setPlayAllLoading(false);
   };
   const isEntryDownloaded = (videoId: string) => getEntryQuality(videoId) !== null;
 
@@ -333,9 +392,22 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
 
   const loadDetail = async (playlistId: string) => {
     setDetailLoading(true);
+    // refreshLibraryIndex, not the plain (possibly cached) getLibraryIndex --
+    // getPlaylistSnapshot (library.mjs) already does a fresh rescan of its
+    // own to build `playlist.localFiles`, specifically so a recently-
+    // downloaded video shows up immediately rather than waiting for
+    // whatever invalidated getLibraryIndex()'s in-memory cache elsewhere.
+    // Building videoByDir from the cached version here reintroduced exactly
+    // that staleness one level up: localFiles could already point at a
+    // videoDir this map didn't have yet, so "Go to library" (needs only
+    // localFiles) would work while quality chips and "Add to queue" (both
+    // also need videoByDir.get(videoDir) to find a match) silently came up
+    // empty for that same, genuinely-downloaded entry -- intermittently,
+    // depending on whether something had happened to refresh the cache
+    // since.
     const [{ playlist }, index] = await Promise.all([
       window.electronAPI.getPlaylist(playlistId),
-      window.electronAPI.getLibraryIndex(),
+      window.electronAPI.refreshLibraryIndex(),
       refreshVideoTags(),
     ]);
     setSelectedPlaylist(playlist);
@@ -558,43 +630,57 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
                 />
               </Box>}
             {selectedPlaylist && selectedPlaylist.entries.length > 0 &&
-              <Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={0.5}>
-                {visibleSelectableEntries.length > 0 &&
-                  <>
-                    <Typography variant="body2" color="text.secondary">Select all</Typography>
-                    {/* Bare Checkbox in the same fixed-size Box used per-row below
-                        (not FormControlLabel, whose built-in margins would throw
-                        off the alignment) so this checkbox sits in the exact same
-                        column as the per-row ones. */}
-                    <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <Checkbox
-                        size="small"
-                        checked={allVisibleSelected}
-                        indeterminate={someVisibleSelected && !allVisibleSelected}
-                        onChange={() => setSelectedVideoIds(allVisibleSelected ? new Set() : new Set(visibleSelectableEntries.map((e) => e.videoId)))}
-                        inputProps={{ 'aria-label': 'Select all' }}
-                      />
-                    </Box>
-                  </>}
-                {/* Filter button lives in the same slot each row's "go to
-                    library" button uses below, so it stays in that column
-                    rather than floating loose -- and stays reachable even
-                    once a filter hides every entry (gated on the total
-                    entry count above, not the filtered one). */}
-                <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Tooltip title="Filter by tag">
-                    <IconButton
+              <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={0.5}>
+                <Tooltip title={selectedPlaylist.entries.some((e) => getDownloadedEntry(e)) ? '' : 'No downloaded videos in this playlist yet'}>
+                  <span>
+                    <Button
                       size="small"
-                      onClick={(e) => setFilterAnchorEl(e.currentTarget)}
-                      aria-label="Filter by tag"
-                      color={(selectedTagFilters.size > 0 || selectedSystemFilters.size > 0) ? 'primary' : 'default'}
+                      startIcon={playAllLoading ? <CircularProgress size={16} /> : <PlaylistPlayIcon />}
+                      onClick={handlePlayAll}
+                      disabled={playAllLoading || !selectedPlaylist.entries.some((e) => getDownloadedEntry(e))}
                     >
-                      <Badge badgeContent={selectedTagFilters.size + selectedSystemFilters.size} color="primary">
-                        <FilterListIcon fontSize="small" />
-                      </Badge>
-                    </IconButton>
-                  </Tooltip>
-                </Box>
+                      Play all
+                    </Button>
+                  </span>
+                </Tooltip>
+                <Stack direction="row" alignItems="center" spacing={0.5}>
+                  {visibleSelectableEntries.length > 0 &&
+                    <>
+                      <Typography variant="body2" color="text.secondary">Select all</Typography>
+                      {/* Bare Checkbox in the same fixed-size Box used per-row below
+                          (not FormControlLabel, whose built-in margins would throw
+                          off the alignment) so this checkbox sits in the exact same
+                          column as the per-row ones. */}
+                      <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Checkbox
+                          size="small"
+                          checked={allVisibleSelected}
+                          indeterminate={someVisibleSelected && !allVisibleSelected}
+                          onChange={() => setSelectedVideoIds(allVisibleSelected ? new Set() : new Set(visibleSelectableEntries.map((e) => e.videoId)))}
+                          inputProps={{ 'aria-label': 'Select all' }}
+                        />
+                      </Box>
+                    </>}
+                  {/* Filter button lives in the same slot each row's "go to
+                      library" button uses below, so it stays in that column
+                      rather than floating loose -- and stays reachable even
+                      once a filter hides every entry (gated on the total
+                      entry count above, not the filtered one). */}
+                  <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Tooltip title="Filter by tag">
+                      <IconButton
+                        size="small"
+                        onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+                        aria-label="Filter by tag"
+                        color={(selectedTagFilters.size > 0 || selectedSystemFilters.size > 0) ? 'primary' : 'default'}
+                      >
+                        <Badge badgeContent={selectedTagFilters.size + selectedSystemFilters.size} color="primary">
+                          <FilterListIcon fontSize="small" />
+                        </Badge>
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                </Stack>
               </Stack>}
           {selectedPlaylist && selectedPlaylist.entries.length > 0 && filteredEntries.length === 0 &&
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>No videos match your search or the selected filter.</Typography>}
@@ -604,21 +690,25 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
               const entryQuality = getEntryQuality(entry.videoId);
               const entryAppliedTags = Object.keys(videoTags).filter((name) => videoTags[name].includes(entry.videoId));
               const isManualThumbnail = !!selectedPlaylist?.manualThumbnailVideoId && selectedPlaylist.manualThumbnailVideoId === entry.videoId;
+              const downloadedEntry = getDownloadedEntry(entry);
+              const entryQueueLoading = queueLoadingIds.has(entry.videoId);
               return (
                 <ListItem
                   key={entry.videoId}
-                  // Reveals the "set as playlist thumbnail" button on hover --
-                  // a new pattern for this codebase, no existing hover-reveal
-                  // precedent elsewhere to match; scoped to this one class
-                  // rather than a broader row-hover style since nothing else
-                  // in the row needs it.
-                  sx={{ '&:hover .set-playlist-thumbnail-btn': { opacity: 1 } }}
+                  // Reveals the "set as playlist thumbnail" and "Add to
+                  // queue" buttons on hover -- same pattern LibraryScreen.tsx's
+                  // own VideoCard uses for its "Add to queue" button.
+                  sx={{
+                    '&:hover .set-playlist-thumbnail-btn': { opacity: 1 },
+                    '&:hover .playlist-entry-add-queue': { opacity: 1 },
+                  }}
                   secondaryAction={
                     <Stack direction="row" alignItems="center" spacing={0.5}>
-                      {/* Both slots are always rendered (blank when not
+                      {/* All three slots are always rendered (blank when not
                           applicable) so the checkbox column stays aligned
                           across rows regardless of whether an entry is
-                          unavailable or lacks a library link. */}
+                          unavailable, isn't queueable, or lacks a library
+                          link. */}
                       <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {!entry.unavailable &&
                           <Checkbox
@@ -627,6 +717,27 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
                             onChange={() => toggleVideoSelected(entry.videoId)}
                             inputProps={{ 'aria-label': `Select ${entry.title || entry.videoId}` }}
                           />}
+                      </Box>
+                      <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {downloadedEntry &&
+                          <Tooltip title="Add to queue">
+                            <span>
+                              <IconButton
+                                className="playlist-entry-add-queue"
+                                size="small"
+                                onClick={() => handleAddEntryToQueue(entry)}
+                                aria-label="Add to queue"
+                                disabled={entryQueueLoading}
+                                // Stays visible (not just hover-revealed)
+                                // while loading, so the spinner doesn't
+                                // disappear the moment the pointer leaves
+                                // the row after the click that started it.
+                                sx={{ opacity: entryQueueLoading ? 1 : 0, transition: 'opacity 0.1s' }}
+                              >
+                                {entryQueueLoading ? <CircularProgress size={16} /> : <FormatListBulletedAddIcon fontSize="small" />}
+                              </IconButton>
+                            </span>
+                          </Tooltip>}
                       </Box>
                       <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {videoDir &&

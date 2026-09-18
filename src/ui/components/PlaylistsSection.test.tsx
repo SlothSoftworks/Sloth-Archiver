@@ -6,9 +6,10 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import PlaylistsSection from './PlaylistsSection';
 import { BulkAddProvider } from '../hooks/useBulkAddQueue.tsx';
+import { BackgroundPlayerProvider } from '../hooks/useBackgroundPlayer.tsx';
 
 function render(ui: ReactElement) {
-  return rtlRender(<MemoryRouter><BulkAddProvider>{ui}</BulkAddProvider></MemoryRouter>);
+  return rtlRender(<MemoryRouter><BulkAddProvider><BackgroundPlayerProvider>{ui}</BackgroundPlayerProvider></BulkAddProvider></MemoryRouter>);
 }
 
 function makeEntry(overrides: Record<string, unknown> = {}) {
@@ -45,12 +46,17 @@ beforeEach(() => {
     ...window.electronAPI,
     listPlaylists: vi.fn().mockResolvedValue({ playlists: [{ playlistId: 'pl1', title: 'My Playlist', entryCount: 1, addedEpoch: 1, lastRefreshedEpoch: null, thumbnailUrl: null, thumbnailPath: null }] }),
     getPlaylist: vi.fn().mockResolvedValue({ playlist: makePlaylist() }),
-    getLibraryIndex: vi.fn().mockResolvedValue({ channels: [{ channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null, videos: [makeLibraryVideo()] }] }),
+    refreshLibraryIndex: vi.fn().mockResolvedValue({ channels: [{ channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null, videos: [makeLibraryVideo()] }] }),
     deleteLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
     deleteLocalFiles: vi.fn().mockResolvedValue({ success: true, results: [] }),
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
     listVideoTags: vi.fn().mockResolvedValue({ tags: {} }),
     tagVideos: vi.fn().mockResolvedValue({ success: true, tags: {} }),
+    // Default: fails, same as a non-native file with nothing this app can
+    // do for it -- individual "Add to queue" tests override this to
+    // succeed where they specifically exercise the preview-generation
+    // fallback.
+    ensurePlayablePreview: vi.fn().mockResolvedValue({ success: false }),
   };
   window.electronAPIPythonDownload = {
     startDownloadPython: vi.fn(),
@@ -82,7 +88,7 @@ describe('PlaylistsSection bulk select', () => {
         localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
       }),
     });
-    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080' } }] })],
@@ -111,7 +117,7 @@ describe('PlaylistsSection bulk select', () => {
   });
 
   it('hides "Download selected" once the selection includes an already-downloaded video', async () => {
-    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080' } }] })],
@@ -182,7 +188,7 @@ describe('PlaylistsSection bulk select', () => {
         localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
       }),
     });
-    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080' } }] })],
@@ -223,6 +229,122 @@ describe('PlaylistsSection bulk select', () => {
 
     await user.click(screen.getByRole('button', { name: 'Back to playlists' }));
     expect(onBulkBarUpdate).toHaveBeenLastCalledWith(null);
+  });
+});
+
+describe('PlaylistsSection Add to queue', () => {
+  it('"Play all" is disabled with no queueable entries, and hides "Add to queue" on rows with nothing downloaded', async () => {
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await userEvent.setup().click(await screen.findByText('My Playlist'));
+
+    expect(await screen.findByRole('button', { name: 'Play all' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Add to queue' })).not.toBeInTheDocument();
+  });
+
+  it('"Play all" enqueues every downloaded entry in order, skipping only ones with no library match at all', async () => {
+    (window.electronAPI.getPlaylist as ReturnType<typeof vi.fn>).mockResolvedValue({
+      playlist: makePlaylist({
+        entries: [
+          makeEntry({ videoId: 'vidA', title: 'Alpha Video' }),
+          makeEntry({ videoId: 'vidB', title: 'Beta Video' }), // no library match at all
+          makeEntry({ videoId: 'vidC', title: 'Gamma Video' }), // downloaded, MKV -- needs a preview
+        ],
+        localFiles: { vidA: '/lib/Channel A/vidA', vidB: null, vidC: '/lib/Channel A/vidC' },
+      }),
+    });
+    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+      channels: [{
+        channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+        videos: [
+          makeLibraryVideo({
+            videoDir: '/lib/Channel A/vidA',
+            epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080', channel: 'Channel A' } }],
+          }),
+          makeLibraryVideo({
+            videoDir: '/lib/Channel A/vidC', metadata: { videoId: 'vidC', channel: 'Channel A', title: 'Gamma Video' },
+            epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidC/1/video.mkv', downloadedResolution: '1080', channel: 'Channel A' } }],
+          }),
+        ],
+      }],
+    });
+    (window.electronAPI.ensurePlayablePreview as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true, previewPath: '/cache/vidC-preview.mp4' });
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+
+    await user.click(await screen.findByRole('button', { name: 'Play all' }));
+
+    // The first (native) item starts playing immediately -- confirmed via
+    // the background player's own hidden <video> src, since there's no
+    // other observable surface for the queue from this component.
+    await waitFor(() => {
+      expect(document.querySelector('video')?.getAttribute('src')).toContain('video.mp4');
+    });
+    // vidC (MKV) still made it into the queue, via the resolved preview --
+    // only vidB (never downloaded at all) was skipped.
+    await waitFor(() => expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/Channel A/vidC/1/video.mkv' }));
+  });
+
+  it('shows "Add to queue" on any downloaded entry (native or not), and enqueues it on click', async () => {
+    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+      channels: [{
+        channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+        videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080', channel: 'Channel A' } }] })],
+      }],
+    });
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+
+    await user.click(await screen.findByRole('button', { name: 'Add to queue' }));
+
+    await waitFor(() => {
+      expect(document.querySelector('video')?.getAttribute('src')).toContain('video.mp4');
+    });
+  });
+
+  it('queues a non-native (MKV) entry via the on-the-fly preview generation, showing a loading spinner meanwhile', async () => {
+    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+      channels: [{
+        channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+        videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mkv', downloadedResolution: '1080', channel: 'Channel A' } }] })],
+      }],
+    });
+    let resolvePreview!: (value: { success: boolean; previewPath?: string }) => void;
+    (window.electronAPI.ensurePlayablePreview as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Promise((resolve) => { resolvePreview = resolve; }),
+    );
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+    const addButton = await screen.findByRole('button', { name: 'Add to queue' });
+
+    await user.click(addButton);
+    expect(addButton).toBeDisabled();
+
+    resolvePreview({ success: true, previewPath: '/cache/vidA-preview.mp4' });
+
+    await waitFor(() => {
+      expect(document.querySelector('video')?.getAttribute('src')).toContain('vidA-preview.mp4');
+    });
+  });
+
+  it('shows a toast and doesn\'t enqueue when preview generation fails for a non-native entry', async () => {
+    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+      channels: [{
+        channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+        videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mkv', downloadedResolution: '1080', channel: 'Channel A' } }] })],
+      }],
+    });
+    // Default beforeEach mock already resolves ensurePlayablePreview to failure.
+    const user = userEvent.setup();
+    render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
+    await user.click(await screen.findByText('My Playlist'));
+
+    await user.click(await screen.findByRole('button', { name: 'Add to queue' }));
+
+    expect(await screen.findByText(/Couldn't prepare/)).toBeInTheDocument();
+    expect(document.querySelector('video')).not.toHaveAttribute('src');
   });
 });
 
@@ -396,7 +518,7 @@ describe('PlaylistsSection tag/system filter', () => {
         localFiles: { vidA: '/lib/Channel A/vidA', vidC: '/lib/Channel A/vidC' },
       }),
     });
-    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [

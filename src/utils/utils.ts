@@ -84,18 +84,34 @@ function buildAppVideoUrl(filePath: string, cacheBustKey = 0): string {
 // that case would misrepresent what's actually archived. Shared between
 // LibraryScreen.tsx (video grids) and PlaylistsSection.tsx (bulk-select
 // gating for in-library playlist entries) rather than duplicated.
-function getBestDownloadedQuality(epochs: { metadata: LibraryVideoMetadata }[]): { resolution: string; format: string | null } | null {
+// The single source of truth for "which epoch's downloaded video file
+// counts" -- shared by getBestDownloadedQuality (the resolution chip) below
+// and PlaylistsSection.tsx's own "Add to queue" gating, which used to
+// duplicate this exact selection independently. Two copies of the same
+// reduce() silently drifting apart was a live bug: whatever subtle
+// difference crept in made the queue button unpredictably disagree with the
+// quality chip about the very same entry. Returns null when no epoch has an
+// actual video file downloaded (an MP3-only capture doesn't count here --
+// see getBestDownloadedQuality's own MP3 fallback branch below, which is a
+// display-only concern the queue button doesn't share, since an mp3 isn't a
+// nativelyPlayableSource).
+function getBestDownloadedEpoch(epochs: { metadata: LibraryVideoMetadata }[]): { metadata: LibraryVideoMetadata } | null {
   const downloaded = epochs.filter((e) => e.metadata.downloadedFilePath);
-  if (downloaded.length > 0) {
-    // Prefer an actual video resolution over a legacy MP3-only capture (from
-    // before MP3 got its own downloadedAudioFilePath slot) when both exist.
-    const videoOnly = downloaded.filter((e) => e.metadata.downloadedResolution !== 'MP3');
-    const pool = videoOnly.length > 0 ? videoOnly : downloaded;
-    const best = pool.reduce((a, b) => (Number(b.metadata.downloadedResolution) > Number(a.metadata.downloadedResolution) ? b : a));
+  if (downloaded.length === 0) return null;
+  // Prefer an actual video resolution over a legacy MP3-only capture (from
+  // before MP3 got its own downloadedAudioFilePath slot) when both exist.
+  const videoOnly = downloaded.filter((e) => e.metadata.downloadedResolution !== 'MP3');
+  const pool = videoOnly.length > 0 ? videoOnly : downloaded;
+  return pool.reduce((a, b) => (Number(b.metadata.downloadedResolution) > Number(a.metadata.downloadedResolution) ? b : a));
+}
+
+function getBestDownloadedQuality(epochs: { metadata: LibraryVideoMetadata }[]): { resolution: string; format: string | null } | null {
+  const best = getBestDownloadedEpoch(epochs);
+  if (best) {
     // SAFETY: recordLibraryDownload/swapLibraryDownload (library.mjs) always
     // pass a real resolution string alongside downloadedFilePath; it's only
-    // null for entries with no downloaded file at all, which the filter above
-    // already excludes.
+    // null for entries with no downloaded file at all, which
+    // getBestDownloadedEpoch already excludes.
     return { resolution: best.metadata.downloadedResolution as string, format: best.metadata.downloadedFormat };
   }
   // No video download in any version -- a separately-downloaded MP3 still
@@ -167,5 +183,5 @@ function cleanElectronErrorMessage(message: string): string {
   return message.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '');
 }
 
-export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage, isLongVideoForPostprocess };
+export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, getBestDownloadedEpoch, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage, isLongVideoForPostprocess };
 

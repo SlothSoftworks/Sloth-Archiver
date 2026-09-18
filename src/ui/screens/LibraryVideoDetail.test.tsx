@@ -741,7 +741,7 @@ describe('LibraryVideoDetail', () => {
         </BackgroundPlayerProvider>,
       );
       act(() => {
-        bgRef.play({
+        bgRef.enqueue({
           videoId: playingVideo.metadata.videoId, title: playingVideo.metadata.title, channel: playingVideo.metadata.channel,
           thumbnailPath: null, sourcePath: '/lib/Channel A/vidA/100/video.mp4', mimeType: 'video/mp4',
         });
