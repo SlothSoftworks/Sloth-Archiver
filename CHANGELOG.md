@@ -4,6 +4,34 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [1.2.0] — 2026-09-18
+- **Play anything in the background, and queue up more.** A new mini-player
+  bar at the bottom of the app lets you keep listening (or watching) while
+  you browse the library, start a download, or adjust Options — without
+  losing your place. Add a video to the queue from a hover button on the
+  player, the library grid, or a playlist's own entries; a "Play all" button
+  queues an entire playlist back-to-back. Queued items play through
+  automatically, with previous/next controls right in the mini bar.
+  - Click the queue counter to open the full side panel: see everything
+    queued, remove an item on hover, click a row to jump to it, or click a
+    thumbnail to open that video's own page. It defaults to audio-only, with
+    a toggle to switch to watching the video, and the panel itself is
+    resizable.
+  - Works for videos that need extra processing to play (like MKV
+    downloads) too — the queue prepares them the same way the regular
+    player already does, automatically.
+  - Adding something that's already in the queue is now blocked with a
+    quick heads-up instead of silently duplicating it.
+- **Playlist view improvements.**
+  - Search within an open playlist, not just across your saved playlists.
+  - A playlist's thumbnail no longer gets stuck on a video that's since
+    gone private or been deleted, and you can manually pick which video's
+    thumbnail represents the playlist.
+  - Refreshing a playlist now actually pulls in the full data for any newly
+    found videos, not just their title and thumbnail.
+- **A small icon in the header now shows when cookies are loaded** for
+  sending to yt-dlp, with a quick way to clear them right from there.
+
 ## [1.1.1] — 2026-09-11
 - **Fixed the Windows build failing to fetch its bundled Deno runtime.**
   Deno's own release pipeline generates the checksum file for its Windows
