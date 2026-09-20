@@ -106,6 +106,46 @@ describe('MiniPlayerBar', () => {
     expect(await screen.findByText('Video One')).toBeInTheDocument();
   });
 
+  it('the volume popover opens on click, closes on a second click, and its mute button toggles muted', async () => {
+    const user = userEvent.setup();
+    const { container } = renderBar();
+    await user.click(screen.getByRole('button', { name: 'start playing (test)' }));
+    await screen.findByText('Video One');
+    const video = container.querySelector('video')!;
+
+    expect(screen.queryByRole('button', { name: 'Mute' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Show volume' }));
+    expect(await screen.findByRole('button', { name: 'Mute' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Mute' }));
+    expect(video.muted).toBe(true);
+    expect(await screen.findByRole('button', { name: 'Unmute' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Unmute' }));
+    expect(video.muted).toBe(false);
+
+    // hidden: true -- MUI's Popover marks everything outside itself
+    // aria-hidden while open, including this same anchor button, which is
+    // otherwise perfectly real and clickable.
+    await user.click(screen.getByRole('button', { name: 'Hide volume', hidden: true }));
+    expect(screen.queryByRole('button', { name: 'Unmute' })).not.toBeInTheDocument();
+  });
+
+  it('the volume popover\'s slider drives the underlying element\'s volume', async () => {
+    const user = userEvent.setup();
+    const { container } = renderBar();
+    await user.click(screen.getByRole('button', { name: 'start playing (test)' }));
+    await screen.findByText('Video One');
+    const video = container.querySelector('video')!;
+
+    await user.click(screen.getByRole('button', { name: 'Show volume' }));
+    const slider = await screen.findByRole('slider', { name: 'Volume' });
+    slider.focus();
+    await user.keyboard('{ArrowDown}');
+
+    expect(video.volume).toBeLessThan(1);
+  });
+
   it('the close button stops playback, hiding the bar', async () => {
     const user = userEvent.setup();
     renderBar();
