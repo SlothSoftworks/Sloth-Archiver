@@ -447,12 +447,16 @@ describe('clips (recordClip / listClips / deleteClip)', () => {
     fs.mkdirSync(path.dirname(clipPath), { recursive: true });
     fs.writeFileSync(clipPath, 'fake clip bytes');
 
-    const clip = recordClip({ libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 12 });
+    const clip = recordClip({
+      libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 12,
+      clipTimestamps: { start: '00:00:01', end: '00:00:13' },
+    });
 
     expect(clip.id).toBeTruthy();
     expect(clip.createdAt).toBeTypeOf('number');
     expect(clip.fileName).toBe('My Clip.mp4');
     expect(clip.durationSeconds).toBe(12);
+    expect(clip.clipTimestamps).toEqual({ start: '00:00:01', end: '00:00:13' });
     expect(listClips({ libraryDir, videoDir })).toEqual([clip]);
   });
 
@@ -539,6 +543,18 @@ describe('clips (recordClip / listClips / deleteClip)', () => {
 
     expect(updated).toEqual({ ...clip, fileName: 'My Clip.mkv', durationSeconds: 6 });
     expect(listClips({ libraryDir, videoDir })).toEqual([]); // file on disk is still the old one in this unit test
+  });
+
+  it('updateClipFile preserves clipTimestamps across a format conversion', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clip = recordClip({
+      libraryDir, videoDir, fileName: 'My Clip.mp4', title: 'My Clip', durationSeconds: 5,
+      clipTimestamps: { start: '00:00:05', end: '00:00:10' },
+    });
+
+    const updated = updateClipFile({ libraryDir, videoDir, clipId: clip.id, fileName: 'My Clip.mkv', durationSeconds: 5 });
+
+    expect(updated.clipTimestamps).toEqual({ start: '00:00:05', end: '00:00:10' });
   });
 
   it('updateClipFile throws when the new fileName collides with a different clip', () => {

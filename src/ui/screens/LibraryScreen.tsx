@@ -40,6 +40,7 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns } from '../../utils/utils.ts';
 import { useBackgroundPlayer, resolvePlayableSource } from '../hooks/useBackgroundPlayer.tsx';
+import { parseClipTimestampSeconds } from './FfmpegUtilitiesPanel';
 import LibraryVideoDetail from './LibraryVideoDetail';
 import PlaylistsSection, { type PlaylistBulkBar } from '../components/PlaylistsSection';
 import LibrarySearchBar from '../components/LibrarySearchBar';
@@ -156,13 +157,22 @@ export default function LibraryScreen() {
   // the background already selected.
   const [deepLinkView, setDeepLinkView] = useState<'video' | 'clips' | undefined>(undefined);
   const [deepLinkClipId, setDeepLinkClipId] = useState<string | null>(null);
+  // Set from the deep-link's own ?clipStart=/?clipEnd= query params (see the
+  // effect below) -- ClipCollectionView's "Mark clip on original video" uses
+  // these to reopen the video's normal player with that clip's exact in/out
+  // points already marked, as a base to adjust or re-clip from.
+  const [deepLinkClipStartSeconds, setDeepLinkClipStartSeconds] = useState<number | null>(null);
+  const [deepLinkClipEndSeconds, setDeepLinkClipEndSeconds] = useState<number | null>(null);
   // A normal (non-deep-link) video selection -- clears any stale
-  // deepLinkView/deepLinkClipId left over from a previous mini-player-bar
-  // deep link, so picking a different video afterward doesn't wrongly reopen
-  // it straight into Clip Collection.
+  // deepLinkView/deepLinkClipId/deepLinkClipStartSeconds/deepLinkClipEndSeconds
+  // left over from a previous deep link, so picking a different video
+  // afterward doesn't wrongly reopen it straight into Clip Collection or with
+  // a stale clip range marked.
   const handleSelectVideo = (video: LibraryVideo) => {
     setDeepLinkView(undefined);
     setDeepLinkClipId(null);
+    setDeepLinkClipStartSeconds(null);
+    setDeepLinkClipEndSeconds(null);
     setSelectedVideo(video);
   };
   const [selectedVideoDirs, setSelectedVideoDirs] = useState<Set<string>>(new Set());
@@ -507,6 +517,11 @@ export default function LibraryScreen() {
   const libraryTagToOpen = searchParams.get('tag');
   const viewToOpen = searchParams.get('view');
   const clipIdToOpen = searchParams.get('clip');
+  // Set by ClipCollectionView's "Mark clip on original video" -- raw
+  // HH:MM:SS strings, converted to seconds below before being handed to
+  // LibraryVideoDetail.
+  const clipStartToOpen = searchParams.get('clipStart');
+  const clipEndToOpen = searchParams.get('clipEnd');
   useEffect(() => {
     if (!videoIdToOpen) return;
     (async () => {
@@ -540,6 +555,8 @@ export default function LibraryScreen() {
         setSelectedVideo(targetVideo);
         setDeepLinkView(viewToOpen === 'clips' ? 'clips' : undefined);
         setDeepLinkClipId(clipIdToOpen);
+        setDeepLinkClipStartSeconds(clipStartToOpen ? parseClipTimestampSeconds(clipStartToOpen) : null);
+        setDeepLinkClipEndSeconds(clipEndToOpen ? parseClipTimestampSeconds(clipEndToOpen) : null);
       } else {
         setDeepLinkError('This video is no longer in your library.');
       }
@@ -595,6 +612,8 @@ export default function LibraryScreen() {
       onVideoTagsChanged={refreshVideoTags}
       initialActiveView={deepLinkView}
       initialClipId={deepLinkClipId}
+      initialClipStartSeconds={deepLinkClipStartSeconds}
+      initialClipEndSeconds={deepLinkClipEndSeconds}
     />
   ) : selectedChannel ? (
     <VideoGrid

@@ -2044,6 +2044,7 @@ ipcMain.handle('library:createClip', async (e, { videoDir, inputPath, start, end
             fileName: path.basename(outputPath),
             title: clipName,
             durationSeconds,
+            clipTimestamps: { start, end },
         });
         return { success: true, clip };
     } catch (err) {

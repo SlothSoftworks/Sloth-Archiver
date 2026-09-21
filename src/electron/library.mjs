@@ -328,7 +328,12 @@ export function videoFolderName(videoId) {
 // Kept minimal: title/extension are derivable from the clip's own filename;
 // this only holds what scanLibrary/ClipCollectionView need cheaply without
 // re-invoking ffprobe on every scan.
-// Record shape: { id, fileName, title, createdAt, durationSeconds }
+// Record shape: { id, fileName, title, createdAt, durationSeconds, clipTimestamps }
+// clipTimestamps holds the exact start/end timestamp strings ffmpeg was
+// invoked with to produce the clip -- not recomputed from durationSeconds,
+// since that's a post-hoc length, not the original in/out points -- so
+// ClipCollectionView can hand them back to the original video's player
+// (see "Mark clip on original video").
 function clipsManifestPath(videoDir) {
     return path.join(videoDir, CLIPS_DIR_NAME, 'clips.json');
 }
@@ -373,7 +378,7 @@ export function listClips({ libraryDir, videoDir }) {
 // Throws on a duplicate fileName rather than silently overwriting or
 // auto-renaming (product decision); the IPC handler turns this into an
 // inline dialog error for the renderer.
-export function recordClip({ libraryDir, videoDir, fileName, title, durationSeconds }) {
+export function recordClip({ libraryDir, videoDir, fileName, title, durationSeconds, clipTimestamps }) {
     const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
     if (!resolvedVideoDir) {
         throw new Error('Refusing to record a clip outside the configured library folder.');
@@ -382,7 +387,7 @@ export function recordClip({ libraryDir, videoDir, fileName, title, durationSeco
     if (manifest.some((c) => c.fileName === fileName)) {
         throw new Error('A clip with this name already exists for this video.');
     }
-    const clip = { id: crypto.randomUUID(), fileName, title, createdAt: Date.now(), durationSeconds };
+    const clip = { id: crypto.randomUUID(), fileName, title, createdAt: Date.now(), durationSeconds, clipTimestamps };
     writeClipsManifest(resolvedVideoDir, [...manifest, clip]);
     return clip;
 }

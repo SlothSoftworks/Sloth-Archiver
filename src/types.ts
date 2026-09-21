@@ -47,6 +47,10 @@ export type LibraryClip = {
     title: string;
     createdAt: number;
     durationSeconds: number;
+    // The exact start/end timestamp strings ffmpeg was invoked with to
+    // produce this clip -- absent on clips created before this field
+    // existed.
+    clipTimestamps?: { start: string; end: string };
 }
 
 export type PlaylistEntry = {

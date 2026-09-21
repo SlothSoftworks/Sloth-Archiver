@@ -55,7 +55,7 @@ const CURRENT_VIDEO_SCHEMA_VERSION = 4;
 
 export default function LibraryVideoDetail({
   video, onBack, onLibraryChanged, onDeleted, onVersionsChanged, videoTags, onVideoTagsChanged,
-  initialActiveView, initialClipId,
+  initialActiveView, initialClipId, initialClipStartSeconds, initialClipEndSeconds,
 }: {
   video: LibraryVideo;
   onBack: () => void;
@@ -73,6 +73,12 @@ export default function LibraryVideoDetail({
   // the default video view.
   initialActiveView?: 'video' | 'clips';
   initialClipId?: string | null;
+  // Set by LibraryScreen.tsx's deep-link effect when this video was opened
+  // via ClipCollectionView's "Mark clip on original video" -- a one-shot
+  // handoff into the player's own clip markers, same pattern
+  // resumeFromBackgroundSeconds/initialSeekSeconds already use below.
+  initialClipStartSeconds?: number | null;
+  initialClipEndSeconds?: number | null;
 }) {
   const [selectedEpoch, setSelectedEpoch] = useState(video.latestEpoch);
   const [metadata, setMetadata] = useState(video.metadata);
@@ -189,6 +195,18 @@ export default function LibraryVideoDetail({
   const [activeView, setActiveView] = useState<'video' | 'clips'>(initialActiveView ?? 'video');
   const [clips, setClips] = useState<LibraryClip[]>([]);
   const [clipsLoaded, setClipsLoaded] = useState(false);
+
+  // "Mark clip on original video" (ClipCollectionView) re-navigates to this
+  // *same* video with fresh initialClipStartSeconds/EndSeconds -- since
+  // LibraryScreen.tsx renders this component without a key, that doesn't
+  // remount it, so activeView's useState initializer above never re-runs.
+  // Force it back to 'video' here instead, so the click actually leaves the
+  // Clip Collection tab and lands on the marked player.
+  useEffect(() => {
+    if (initialClipStartSeconds != null || initialClipEndSeconds != null) {
+      setActiveView('video');
+    }
+  }, [initialClipStartSeconds, initialClipEndSeconds]);
 
   useEffect(() => {
     if (activeView === 'clips' && !clipsLoaded) {
@@ -844,6 +862,8 @@ export default function LibraryVideoDetail({
             existingClipTitles={clips.map((c) => c.title)}
             convertFormatOptions={convertFormatOptions}
             initialSeekSeconds={resumeFromBackgroundSeconds}
+            initialClipStartSeconds={initialClipStartSeconds}
+            initialClipEndSeconds={initialClipEndSeconds}
             onClipCreated={(clip) => {
               setClips((prev) => [...prev, clip]);
               onVersionsChanged();

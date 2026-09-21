@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import LibraryVideoDetail from './LibraryVideoDetail';
 import { BackgroundPlayerProvider, useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import type { LibraryClip, DownloadProgressMessage } from '../../types';
@@ -142,18 +143,20 @@ function renderDetail(
   const onVersionsChanged = vi.fn().mockResolvedValue(undefined);
   const onVideoTagsChanged = vi.fn().mockResolvedValue(undefined);
   const utils = render(
-    <BackgroundPlayerProvider>
-      <LibraryVideoDetail
-        video={video}
-        onBack={onBack}
-        onLibraryChanged={onLibraryChanged}
-        onDeleted={onDeleted}
-        onVersionsChanged={onVersionsChanged}
-        videoTags={videoTags}
-        onVideoTagsChanged={onVideoTagsChanged}
-        {...deepLinkOverrides}
-      />
-    </BackgroundPlayerProvider>,
+    <MemoryRouter>
+      <BackgroundPlayerProvider>
+        <LibraryVideoDetail
+          video={video}
+          onBack={onBack}
+          onLibraryChanged={onLibraryChanged}
+          onDeleted={onDeleted}
+          onVersionsChanged={onVersionsChanged}
+          videoTags={videoTags}
+          onVideoTagsChanged={onVideoTagsChanged}
+          {...deepLinkOverrides}
+        />
+      </BackgroundPlayerProvider>
+    </MemoryRouter>,
   );
   return { ...utils, onBack, onLibraryChanged, onDeleted, onVersionsChanged, onVideoTagsChanged };
 }
@@ -720,6 +723,45 @@ describe('LibraryVideoDetail', () => {
       // confirms ClipCollectionView picked clip2 as active, not just that
       // clip2 appears somewhere in the sidebar list.
       expect(await screen.findByTestId('fake-player-override-path')).toHaveAttribute('data-override-file-path', expect.stringContaining('Clip Two.mp4'));
+    });
+
+    // Regression test: ClipCollectionView's "Mark clip on original video"
+    // re-navigates to this *same* video with fresh initialClipStartSeconds/
+    // EndSeconds -- LibraryScreen.tsx renders this component without a key,
+    // so it doesn't remount, and activeView's own useState initializer
+    // never re-runs on its own. Without the dedicated effect that watches
+    // these two props, the user stayed stuck on the Clip Collection tab.
+    it('switches back to the video view when a "mark clip on original video" deep link arrives while Clip Collection is open', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' }, { clipCount: 1 });
+      window.electronAPI.getClips = vi.fn().mockResolvedValue({
+        success: true,
+        clips: [{ id: 'clip1', fileName: 'Clip One.mp4', title: 'Clip One', createdAt: 0, durationSeconds: 5 }],
+      });
+      const { rerender } = renderDetail(video, {}, { initialActiveView: 'clips' });
+
+      expect(await screen.findByText('Clip One')).toBeInTheDocument();
+
+      rerender(
+        <MemoryRouter>
+          <BackgroundPlayerProvider>
+            <LibraryVideoDetail
+              video={video}
+              onBack={vi.fn()}
+              onLibraryChanged={vi.fn()}
+              onDeleted={vi.fn()}
+              onVersionsChanged={vi.fn()}
+              videoTags={{}}
+              onVideoTagsChanged={vi.fn()}
+              initialActiveView="clips"
+              initialClipStartSeconds={5}
+              initialClipEndSeconds={12}
+            />
+          </BackgroundPlayerProvider>
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByRole('button', { name: 'Fake save clip' })).toBeInTheDocument();
+      expect(screen.queryByText('Clip One')).not.toBeInTheDocument();
     });
   });
 
