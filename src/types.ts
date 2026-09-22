@@ -35,6 +35,50 @@ export type LibraryVideoMetadata = {
     downloadedFormat: string | null;
     downloadedAudioFilePath: string | null;
     lastPlaybackPositionSeconds: number | null;
+    // Added in schemaVersion 5 (see SlothArchiver-dossier's non-YouTube
+    // platform support plan) -- null/absent means YouTube, for backward
+    // compat with every entry written before this field existed; new
+    // YouTube writes also set it explicitly now. channelId stays
+    // YouTube-only (always null for a generic entry) -- a generic entry's
+    // "who made this" is channel/uploaderId instead.
+    platform?: string | null;
+    uploaderId?: string | null;
+    timestamp?: number | null;
+    license?: string | null;
+    categories?: string[] | null;
+    tags?: string[] | null;
+    music?: { track: string | null; artist: string | null; album: string | null; genre: string | null } | null;
+}
+
+export type LibraryVideoEpoch = {
+    epoch: string;
+    metadata: LibraryVideoMetadata;
+}
+
+// Mirrors the shape returned by window.electronAPI.getLibraryIndex() et al.
+// (see library.mjs's scanLibrary) -- previously redeclared identically in
+// LibraryVideoDetail.tsx, LibraryScreen.tsx, and VideoQualityDownload.tsx.
+export type LibraryVideo = {
+    videoFolderName: string;
+    videoDir: string;
+    latestEpoch: string | null;
+    metadata: LibraryVideoMetadata;
+    epochs: LibraryVideoEpoch[];
+    thumbnailPath: string | null;
+    clipCount: number;
+}
+
+export type LibraryChannel = {
+    channelFolderName: string;
+    displayName: string;
+    channelIconPath: string | null;
+    videos: LibraryVideo[];
+    // Set by scanLibrary's NonYT walk (library.mjs) -- a synthetic "channel"
+    // grouping every non-YouTube entry by platform rather than by uploader.
+    // channelFolderName for one of these is the full relative path
+    // (NonYT/<platform>), not a bare folder name.
+    isPlatformGroup?: boolean;
+    platform?: string;
 }
 
 // Video-level (not epoch-level) -- a clip is derived from whichever version

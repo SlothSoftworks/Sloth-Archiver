@@ -160,6 +160,83 @@ describe('LibraryVideoPlayer', () => {
     await waitFor(() => expect(container.querySelector('[data-testid="PlayCircleOutlineIcon"]')).not.toBeInTheDocument());
   });
 
+  it('hides the poster once playback starts for a real video, but keeps it up for the whole time on an audio-only source', async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4', thumbnail: 'https://example.com/thumb.jpg' })} />,
+    );
+    await findSourceEl(container);
+    const overlayButton = container.querySelector('[data-testid="PlayCircleOutlineIcon"]')?.closest('button');
+    await user.click(overlayButton!);
+
+    const video = container.querySelector('video') as HTMLVideoElement;
+    // Real browsers report the decoded frame size here once loadedmetadata
+    // fires; jsdom never decodes anything, so this has to be stubbed the
+    // same way fireDecodeError above stubs video.error -- Vidstack's own
+    // viewType derives from these, 'audio' whenever they're 0.
+    Object.defineProperty(video, 'videoWidth', { value: 1280, configurable: true });
+    Object.defineProperty(video, 'videoHeight', { value: 720, configurable: true });
+    fireReadinessCascade(video);
+    fireEvent.play(video);
+
+    await waitFor(() => expect(container.querySelector('img[alt=""]')).not.toBeInTheDocument());
+  });
+
+  it('keeps the poster visible through playback for an audio-only source', async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/track.mp4', thumbnail: 'https://example.com/thumb.jpg' })} />,
+    );
+    await findSourceEl(container);
+    const overlayButton = container.querySelector('[data-testid="PlayCircleOutlineIcon"]')?.closest('button');
+    await user.click(overlayButton!);
+
+    const video = container.querySelector('video') as HTMLVideoElement;
+    // jsdom's videoWidth/videoHeight already default to 0 (no real decode
+    // pipeline), matching a genuine audio-only source's own dimensions in a
+    // real browser -- left unstubbed here on purpose, unlike the "real
+    // video" test above.
+    fireReadinessCascade(video);
+    fireEvent.play(video);
+
+    await waitFor(() => expect(container.querySelector('[data-testid="PlayCircleOutlineIcon"]')).not.toBeInTheDocument());
+    expect(container.querySelector('img[alt=""]')).toBeInTheDocument();
+  });
+
+  // Regression test: the poster used to be a sibling of <MediaPlayer>
+  // itself, rendered after it -- since neither has an explicit z-index,
+  // plain (later-wins) DOM-order stacking meant it covered the *entire*
+  // player, controls included, for as long as it stayed up. That was
+  // invisible before an audio-only source could keep the poster up during
+  // real playback (see the previous test) -- now it has to sit inside
+  // <MediaPlayer>, above the video/background but below the click-overlay,
+  // queue button, and controls bar that follow it in DOM order.
+  it('keeps the poster behind the player controls in DOM order, not covering them', async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/track.mp4', thumbnail: 'https://example.com/thumb.jpg' })} />,
+    );
+    await findSourceEl(container);
+    const overlayButton = container.querySelector('[data-testid="PlayCircleOutlineIcon"]')?.closest('button');
+    await user.click(overlayButton!);
+    const video = container.querySelector('video') as HTMLVideoElement;
+    fireReadinessCascade(video);
+    fireEvent.play(video);
+    await waitFor(() => expect(container.querySelector('img[alt=""]')).toBeInTheDocument());
+
+    const poster = container.querySelector('img[alt=""]') as HTMLElement;
+    // A real element from inside the controls bar (LibraryVideoPlayerControls)
+    // -- stands in for "the controls," which have no single wrapping
+    // data-attribute of their own to query directly.
+    const controls = container.querySelector('[data-testid="time-current"]') as HTMLElement;
+    expect(poster).toBeInTheDocument();
+    expect(controls).toBeInTheDocument();
+    // DOCUMENT_POSITION_FOLLOWING (4) means `controls` comes after `poster`
+    // in the tree -- the poster has to be earlier, not later, to stay behind
+    // it once both are visible at the same time.
+    expect(poster.compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('asks the backend for a playable preview for a non-native extension, and plays the generated preview once ready', async () => {
     const { container } = render(
       <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mkv' })} />,

@@ -26,6 +26,12 @@ export const PLAYLISTS_DIR_NAME = 'playlists';
 // root).
 export const CLIPS_DIR_NAME = 'clips';
 
+// Top-level reserved folder name for non-YouTube library entries (see
+// SlothArchiver-dossier plan for non-YouTube platform support), a sibling of
+// real per-uploader channel folders -- same reserved-name pattern as
+// PLAYLISTS_DIR_NAME/CLIPS_DIR_NAME above.
+export const NONYT_DIR_NAME = 'NonYT';
+
 // SubLibrary / tag library feature (see
 // SlothArchiver-dossier/futureSpecsFeedback.md's decided design): every tag,
 // including the default untagged case, is a same-filesystem subfolder
@@ -271,7 +277,7 @@ export function transferVideoTags(libraryDir, sourceTag, targetTag, videoIds) {
 // today" and surface a "this entry predates newer features, refresh it"
 // notice -- see LibraryVideoDetail.tsx/PlaylistsSection.tsx's own duplicated
 // copy of these two numbers.
-export const CURRENT_VIDEO_SCHEMA_VERSION = 4;
+export const CURRENT_VIDEO_SCHEMA_VERSION = 5;
 export const CURRENT_PLAYLIST_SCHEMA_VERSION = 2;
 
 // One cross-platform sanitizer using Windows' illegal-character set as the
@@ -322,6 +328,17 @@ export function channelFolderName(channel) {
 // remain unbounded.
 export function videoFolderName(videoId) {
     return sanitizeForFilesystem(videoId);
+}
+
+// Non-YouTube video identity/path hash: sha256("${extractorKey}:${id}"),
+// truncated to 16 hex chars (64 bits) -- short enough to keep the deeper
+// NonYT/<platform>/<hash>/<epoch>/ path well under Windows' MAX_PATH=260,
+// and 64 bits is far past any realistic collision risk for a single user's
+// personal archive. Falls back to hashing originalUrl when id is missing,
+// since id uniqueness isn't guaranteed by every yt-dlp extractor.
+export function nonYoutubeVideoHash(extractorKey, id, originalUrl) {
+    const input = id ? `${extractorKey}:${id}` : originalUrl;
+    return crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
 }
 
 // <videoDir>/clips/clips.json -- one JSON array of clip records per video.
@@ -447,15 +464,18 @@ export function deleteClip({ libraryDir, videoDir, clipId }) {
     return { success: true };
 }
 
-// Shared by writeLibraryEntry (new video) and addLibraryVersion (new version
-// of an existing video) so both ever build exactly one metadata shape --
-// two independent inline copies would be free to drift apart over time.
-function buildEpochMetadata(videoMetaData, addedEpoch) {
-    const { id, title, fullTitle, description, thumbnail, originalUrl, duration, durationString, uploadDate, channelId, uploader, resolutions } = videoMetaData;
+// Fields every entry shares regardless of platform -- factored out so
+// buildYoutubeEpochMetadata/buildGenericEpochMetadata below build on the same
+// base instead of two independently drifting copies. uploaderId/timestamp/
+// license/categories/tags/music are schemaVersion 5 additions (see
+// SlothArchiver-dossier's non-YouTube platform support plan) captured
+// uniformly off reshapeVideoInfo's own shape for every platform, YouTube
+// included, even though only generic entries' UI surfaces them today.
+function buildCommonEpochMetadata(videoMetaData, addedEpoch) {
+    const { id, title, fullTitle, description, thumbnail, originalUrl, duration, durationString, uploadDate, uploader, resolutions, uploaderId, timestamp, license, categories, tags, music } = videoMetaData;
     return {
         schemaVersion: CURRENT_VIDEO_SCHEMA_VERSION,
         videoId: id,
-        channelId: channelId || null,
         channel: uploader || null,
         title: title || null,
         fullTitle: fullTitle || null,
@@ -467,8 +487,8 @@ function buildEpochMetadata(videoMetaData, addedEpoch) {
         uploadDate: uploadDate || null,
         addedEpoch,
         // Captured at add-time, not fetched live at download-time -- can go
-        // stale if YouTube changes available qualities later. Entries written
-        // before this field existed just won't have it.
+        // stale if the source changes available qualities later. Entries
+        // written before this field existed just won't have it.
         resolutions: resolutions || [],
         // Adding a video/version and downloading its file are separate
         // actions -- filled in by recordLibraryDownload() once a download
@@ -476,15 +496,57 @@ function buildEpochMetadata(videoMetaData, addedEpoch) {
         downloadedFilePath: null,
         downloadedResolution: null,
         downloadedFormat: null,
-        // MP3 is a separate, coexisting artifact -- its own slot (audio.mp3,
-        // alongside video.<ext>), independent of the video fields above.
-        downloadedAudioFilePath: null,
         lastPlaybackPositionSeconds: null,
+        uploaderId: uploaderId || null,
+        timestamp: timestamp || null,
+        license: license || null,
+        categories: categories || null,
+        tags: tags || null,
+        music: music || null,
     };
 }
 
+// YouTube entries keep channelId -- the one identity field genuinely
+// YouTube-specific -- and MP3 as a separate, coexisting artifact (its own
+// downloadedAudioFilePath slot, audio.mp3 alongside video.<ext>).
+function buildYoutubeEpochMetadata(videoMetaData, addedEpoch) {
+    return {
+        ...buildCommonEpochMetadata(videoMetaData, addedEpoch),
+        platform: videoMetaData.platform || 'youtube',
+        channelId: videoMetaData.channelId || null,
+        downloadedAudioFilePath: null,
+    };
+}
+
+// Generic (non-YouTube) entries have no channelId concept -- "who made this"
+// is channel/uploaderId instead -- and no separate audio slot: an audio-only
+// download (e.g. SoundCloud's only option) writes into the same
+// downloadedFilePath/downloadedResolution/downloadedFormat fields any other
+// resolution choice would, so it plays through the one real library player
+// instead of a bare native <audio> element.
+function buildGenericEpochMetadata(videoMetaData, addedEpoch) {
+    return {
+        ...buildCommonEpochMetadata(videoMetaData, addedEpoch),
+        platform: videoMetaData.platform,
+        channelId: null,
+        downloadedAudioFilePath: null,
+    };
+}
+
+// Shared by writeLibraryEntry (new video) and addLibraryVersion (new version
+// of an existing video) so both ever build exactly one metadata shape per
+// platform -- dispatches on videoMetaData.platform so every caller
+// (writeLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata,
+// overrideLibraryEntry) stays platform-agnostic. Falsy/'youtube' is the
+// YouTube branch (backward compatible with entries that predate this field);
+// anything else is generic.
+function buildEpochMetadata(videoMetaData, addedEpoch) {
+    const isYoutube = !videoMetaData.platform || videoMetaData.platform === 'youtube';
+    return isYoutube ? buildYoutubeEpochMetadata(videoMetaData, addedEpoch) : buildGenericEpochMetadata(videoMetaData, addedEpoch);
+}
+
 export function writeLibraryEntry({ libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAME, videoMetaData }) {
-    const { id, uploader } = videoMetaData;
+    const { id, uploader, platform, extractorKey, originalUrl } = videoMetaData;
     if (!id) {
         throw new Error('videoMetaData.id is required to add a library entry');
     }
@@ -493,8 +555,21 @@ export function writeLibraryEntry({ libraryDir, libraryTag = DEFAULT_LIBRARY_DIR
     }
 
     ensureLibraryTagMetadata(libraryDir, libraryTag);
-    const channelDir = path.join(libraryTagDir(libraryDir, libraryTag), channelFolderName(uploader));
-    const videoDir = path.join(channelDir, videoFolderName(id));
+    // Non-YouTube entries live under a reserved NonYT/<platform>/ subtree,
+    // grouped by platform instead of by uploader (see NONYT_DIR_NAME's own
+    // comment) -- <hash> replaces the usual videoId folder name since a raw
+    // id/URL isn't guaranteed filesystem-safe or collision-free across
+    // extractors the way a YouTube videoId is. Every other write function
+    // (addLibraryVersion/refreshLibraryEntryMetadata/overrideLibraryEntry)
+    // takes an already-resolved videoDir, so only this path-computing
+    // function needs the branch.
+    const isGeneric = !!platform && platform !== 'youtube';
+    const channelDir = isGeneric
+        ? path.join(libraryTagDir(libraryDir, libraryTag), NONYT_DIR_NAME, platform)
+        : path.join(libraryTagDir(libraryDir, libraryTag), channelFolderName(uploader));
+    const videoDir = isGeneric
+        ? path.join(channelDir, nonYoutubeVideoHash(extractorKey, id, originalUrl))
+        : path.join(channelDir, videoFolderName(id));
     const addedEpoch = Date.now();
     const epochDir = path.join(videoDir, String(addedEpoch));
     fs.mkdirSync(epochDir, { recursive: true });
@@ -959,12 +1034,108 @@ export function findVideoThumbnailPath(videoDir, entries = null) {
     return thumbnailEntry ? path.join(videoDir, thumbnailEntry.name) : null;
 }
 
+// Inner video/epoch walk, one level down from a channel-shaped folder --
+// shared by scanLibrary's two directory shapes below (a real per-uploader
+// channel folder, and a NonYT/<platform> synthetic one) so the walk logic
+// exists in exactly one place. Returns null when the folder is unreadable or
+// has no valid video in it, so both callers can just `continue` on a falsy
+// result the same way the old single inline loop did.
+async function scanChannelLikeFolder(channelPath) {
+    let videoEntries;
+    try {
+        videoEntries = await fsp.readdir(channelPath, { withFileTypes: true });
+    } catch {
+        return null;
+    }
+
+    const videos = [];
+    for (const videoEntry of videoEntries) {
+        if (!videoEntry.isDirectory()) continue;
+        const videoPath = path.join(channelPath, videoEntry.name);
+
+        let epochEntries;
+        try {
+            epochEntries = await fsp.readdir(videoPath, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+
+        // Epoch folder names are Date.now() timestamps -- numeric descending
+        // sort puts the most recent attempt first. clips/ is a reserved
+        // sibling directory (CLIPS_DIR_NAME), explicitly excluded here the
+        // same way PLAYLISTS_DIR_NAME is excluded one level up -- without
+        // this it would fall into this filter, sort unpredictably
+        // (Number('clips') is NaN), and only be skipped by the
+        // metadata.json read below happening to fail.
+        const epochNames = epochEntries
+            .filter((e) => e.isDirectory() && e.name !== CLIPS_DIR_NAME)
+            .map((e) => e.name)
+            .sort((a, b) => Number(b) - Number(a));
+
+        let metadata = null;
+        let latestEpoch = null;
+        const epochs = [];
+        for (const epochName of epochNames) {
+            try {
+                const raw = await fsp.readFile(path.join(videoPath, epochName, 'metadata.json'), 'utf-8');
+                const epochMetadata = JSON.parse(raw);
+                epochs.push({ epoch: epochName, metadata: epochMetadata });
+                if (!metadata) {
+                    metadata = epochMetadata;
+                    latestEpoch = epochName;
+                }
+            } catch {
+                continue;
+            }
+        }
+
+        if (!metadata) continue;
+
+        // Cheap (one JSON parse) -- only the count rides along in the main
+        // index; the full per-clip list is fetched lazily via
+        // library:getClips when the Clip Collection view actually opens.
+        const clipCount = readClipsManifest(videoPath).length;
+
+        videos.push({
+            videoFolderName: videoEntry.name,
+            videoDir: videoPath,
+            latestEpoch,
+            metadata,
+            epochs,
+            thumbnailPath: findVideoThumbnailPath(videoPath, epochEntries),
+            clipCount,
+        });
+    }
+
+    if (videos.length === 0) return null;
+    videos.sort((a, b) => (b.metadata.addedEpoch || 0) - (a.metadata.addedEpoch || 0));
+
+    // Cached by ensureChannelIcon (main.mjs) the first time a video from
+    // this channel gets added -- videoEntries already lists everything
+    // directly inside channelPath (files included), so this is a free
+    // lookup rather than a second readdir. Meaningless for a NonYT platform
+    // group (no per-uploader avatar concept), whose caller below ignores it.
+    const iconEntry = videoEntries.find((e) => e.isFile() && e.name.startsWith('channel-icon.'));
+
+    return { videos, iconEntry };
+}
+
 // Bounded 3-level walk (channel/video/epoch), tolerant of partial or corrupt
 // folders -- a missing or unparseable metadata.json is skipped rather than
 // failing the whole scan, since an interrupted write is always conceivable.
 // Collects every valid epoch into `epochs` (newest first) for the
 // version-control UI; `latestEpoch`/`metadata` stay pointed at the newest
 // valid one, which every other consumer reads.
+//
+// NONYT_DIR_NAME gets one extra level of recursion: instead of being a real
+// channel folder, it's a container of per-platform folders, each flattened
+// into this same top-level `channels` array as its own synthetic
+// isPlatformGroup entry (see NONYT_DIR_NAME's own comment). channelFolderName
+// for one of these is the full NonYT/<platform> relative path (via
+// path.join), not a bare folder name -- every consumer (moveLibraryEntry,
+// library:refreshChannelIcon in main.mjs) builds an absolute path via
+// path.join(libraryTagDir(...), channelFolderName) directly, and only the
+// full relative path resolves correctly through that.
 export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAME) {
     const index = { channels: [] };
     if (!libraryDir) {
@@ -990,88 +1161,41 @@ export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_N
     for (const channelEntry of channelEntries) {
         if (!channelEntry.isDirectory()) continue;
         if (channelEntry.name === PLAYLISTS_DIR_NAME) continue;
-        const channelPath = path.join(scanRoot, channelEntry.name);
 
-        let videoEntries;
-        try {
-            videoEntries = await fsp.readdir(channelPath, { withFileTypes: true });
-        } catch {
-            continue;
-        }
-
-        const videos = [];
-        for (const videoEntry of videoEntries) {
-            if (!videoEntry.isDirectory()) continue;
-            const videoPath = path.join(channelPath, videoEntry.name);
-
-            let epochEntries;
+        if (channelEntry.name === NONYT_DIR_NAME) {
+            const nonytRoot = path.join(scanRoot, channelEntry.name);
+            let platformEntries;
             try {
-                epochEntries = await fsp.readdir(videoPath, { withFileTypes: true });
+                platformEntries = await fsp.readdir(nonytRoot, { withFileTypes: true });
             } catch {
                 continue;
             }
-
-            // Epoch folder names are Date.now() timestamps -- numeric descending
-            // sort puts the most recent attempt first. clips/ is a reserved
-            // sibling directory (CLIPS_DIR_NAME), explicitly excluded here the
-            // same way PLAYLISTS_DIR_NAME is excluded one level up -- without
-            // this it would fall into this filter, sort unpredictably
-            // (Number('clips') is NaN), and only be skipped by the
-            // metadata.json read below happening to fail.
-            const epochNames = epochEntries
-                .filter((e) => e.isDirectory() && e.name !== CLIPS_DIR_NAME)
-                .map((e) => e.name)
-                .sort((a, b) => Number(b) - Number(a));
-
-            let metadata = null;
-            let latestEpoch = null;
-            const epochs = [];
-            for (const epochName of epochNames) {
-                try {
-                    const raw = await fsp.readFile(path.join(videoPath, epochName, 'metadata.json'), 'utf-8');
-                    const epochMetadata = JSON.parse(raw);
-                    epochs.push({ epoch: epochName, metadata: epochMetadata });
-                    if (!metadata) {
-                        metadata = epochMetadata;
-                        latestEpoch = epochName;
-                    }
-                } catch {
-                    continue;
-                }
+            for (const platformEntry of platformEntries) {
+                if (!platformEntry.isDirectory()) continue;
+                const platformPath = path.join(nonytRoot, platformEntry.name);
+                const result = await scanChannelLikeFolder(platformPath);
+                if (!result) continue;
+                index.channels.push({
+                    channelFolderName: path.join(NONYT_DIR_NAME, platformEntry.name),
+                    displayName: platformEntry.name,
+                    channelIconPath: null,
+                    isPlatformGroup: true,
+                    platform: platformEntry.name,
+                    videos: result.videos,
+                });
             }
-
-            if (!metadata) continue;
-
-            // Cheap (one JSON parse) -- only the count rides along in the main
-            // index; the full per-clip list is fetched lazily via
-            // library:getClips when the Clip Collection view actually opens.
-            const clipCount = readClipsManifest(videoPath).length;
-
-            videos.push({
-                videoFolderName: videoEntry.name,
-                videoDir: videoPath,
-                latestEpoch,
-                metadata,
-                epochs,
-                thumbnailPath: findVideoThumbnailPath(videoPath, epochEntries),
-                clipCount,
-            });
+            continue;
         }
 
-        if (videos.length === 0) continue;
-        videos.sort((a, b) => (b.metadata.addedEpoch || 0) - (a.metadata.addedEpoch || 0));
-
-        // Cached by ensureChannelIcon (main.mjs) the first time a video from
-        // this channel gets added -- videoEntries already lists everything
-        // directly inside channelPath (files included), so this is a free
-        // lookup rather than a second readdir.
-        const iconEntry = videoEntries.find((e) => e.isFile() && e.name.startsWith('channel-icon.'));
+        const channelPath = path.join(scanRoot, channelEntry.name);
+        const result = await scanChannelLikeFolder(channelPath);
+        if (!result) continue;
 
         index.channels.push({
             channelFolderName: channelEntry.name,
-            displayName: videos[0]?.metadata.channel || channelEntry.name,
-            channelIconPath: iconEntry ? path.join(channelPath, iconEntry.name) : null,
-            videos,
+            displayName: result.videos[0]?.metadata.channel || channelEntry.name,
+            channelIconPath: result.iconEntry ? path.join(channelPath, result.iconEntry.name) : null,
+            videos: result.videos,
         });
     }
 
@@ -1110,9 +1234,22 @@ export function refreshLibraryIndex(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR
 // Keyed by videoId specifically (not folder name/title) -- it's the one field
 // guaranteed unique per video regardless of which channel folder it landed
 // under, same reasoning already applied to the folder-collision fix.
-export function findVideoInIndex(index, videoId) {
+//
+// platform is optional and backward compatible: existing call sites that
+// don't pass it are unaffected (matches on videoId alone, same as before).
+// When given, it also disambiguates videos whose raw id happens to collide
+// across two different extractors -- id uniqueness is only guaranteed
+// *within* one extractor, not across all of them. A video's own
+// metadata.platform being null/absent (an entry written before this field
+// existed) is treated as 'youtube' for this comparison, same backward-compat
+// default buildEpochMetadata uses.
+export function findVideoInIndex(index, videoId, platform) {
     for (const channel of index.channels) {
-        const video = channel.videos.find((v) => v.metadata.videoId === videoId);
+        const video = channel.videos.find((v) => {
+            if (v.metadata.videoId !== videoId) return false;
+            if (!platform) return true;
+            return (v.metadata.platform || 'youtube') === platform;
+        });
         if (video) {
             return { channel, video };
         }

@@ -35,23 +35,13 @@ import VideoQualityDownload from './VideoQualityDownload';
 import FfmpegUtilitiesPanel, { OTHER_FORMAT_VALUE } from './FfmpegUtilitiesPanel';
 import ClipCollectionView from '../components/ClipCollectionView';
 import LibraryVideoPlayerWithTools from '../components/LibraryVideoPlayerWithTools';
-import type { LibraryVideoMetadata, LibraryClip } from '../../types';
-
-type LibraryVideo = {
-  videoFolderName: string;
-  videoDir: string;
-  latestEpoch: string | null;
-  metadata: LibraryVideoMetadata;
-  epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
-  thumbnailPath: string | null;
-  clipCount: number;
-};
+import type { LibraryClip, LibraryVideo } from '../../types';
 
 // Mirrors library.mjs's own CURRENT_VIDEO_SCHEMA_VERSION (main process and
 // renderer never cross-import here). An entry whose stored schemaVersion is
 // older than this predates a metadata-shape change and won't have whatever
 // that change added -- "Refresh from YouTube" is what fixes it.
-const CURRENT_VIDEO_SCHEMA_VERSION = 4;
+const CURRENT_VIDEO_SCHEMA_VERSION = 5;
 
 export default function LibraryVideoDetail({
   video, onBack, onLibraryChanged, onDeleted, onVersionsChanged, videoTags, onVideoTagsChanged,
@@ -646,8 +636,16 @@ export default function LibraryVideoDetail({
     // Embeds into whichever of the video/audio files this version has --
     // either, or both, since they're independent coexisting slots. kind
     // tells main.mjs which stream index the cover art lands at.
+    // downloadedFilePath isn't always a real video: a generic (non-YouTube)
+    // entry has no separate downloadedAudioFilePath slot, so an audio-only
+    // download (resolution 'MP3') lands right in downloadedFilePath instead
+    // -- kind has to reflect that, not just assume "downloadedFilePath means
+    // video," or main.mjs's embed step tries to map a nonexistent video
+    // stream (0:v:0) and fails outright.
     const targets: { path: string; kind: 'video' | 'audio' }[] = [
-      metadata.downloadedFilePath ? { path: metadata.downloadedFilePath, kind: 'video' as const } : null,
+      metadata.downloadedFilePath
+        ? { path: metadata.downloadedFilePath, kind: metadata.downloadedResolution === 'MP3' ? 'audio' as const : 'video' as const }
+        : null,
       metadata.downloadedAudioFilePath ? { path: metadata.downloadedAudioFilePath, kind: 'audio' as const } : null,
     ].filter((t): t is { path: string; kind: 'video' | 'audio' } => !!t);
     if (targets.length === 0) return;
@@ -724,11 +722,18 @@ export default function LibraryVideoDetail({
   // Gates the whole FFMPEG utilities section -- every tool there operates on
   // the video file, not the separate MP3 slot.
   const isVideoDownloaded = !!metadata.downloadedFilePath;
+  const isGeneric = !!metadata.platform && metadata.platform !== 'youtube';
   const resolutions = metadata.resolutions || [];
   // MP3 is rendered in its own Audio sub-section, not mixed into the video
-  // quality grid.
-  const videoResolutions = resolutions.filter((r) => r.resolution !== 'MP3');
-  const mp3Resolution = resolutions.find((r) => r.resolution === 'MP3');
+  // quality grid -- except for a generic (non-YouTube) entry, where MP3 may
+  // be the *only* option (e.g. SoundCloud) and needs to go through the main
+  // player rather than the separate <audio> widget the Audio section renders
+  // (that widget was only ever designed as a convenience preview next to a
+  // real video already playing above, not as a video's sole player). So a
+  // generic entry keeps its MP3 resolution in the main grid and never gets
+  // one split out into mp3Resolution.
+  const videoResolutions = isGeneric ? resolutions : resolutions.filter((r) => r.resolution !== 'MP3');
+  const mp3Resolution = isGeneric ? undefined : resolutions.find((r) => r.resolution === 'MP3');
   const isSchemaOutdated = (metadata.schemaVersion ?? 0) < CURRENT_VIDEO_SCHEMA_VERSION;
 
   return (

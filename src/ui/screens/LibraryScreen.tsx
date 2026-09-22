@@ -54,7 +54,7 @@ import TagFilterPopover, { type SystemFilterKey } from '../components/TagFilterP
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
 import { useLibraryTags } from '../hooks/useLibraryTags.tsx';
-import type { LibraryVideoMetadata } from '../../types';
+import type { LibraryVideo, LibraryChannel } from '../../types';
 
 type LibraryViewMode = 'channel' | 'video';
 // Top-level split within the Library tab -- "Videos" is everything this
@@ -63,23 +63,6 @@ type LibraryViewMode = 'channel' | 'video';
 // the channel/video LibraryViewMode above. Plain local state, not
 // URL-routed, same as the LibraryViewMode toggle below.
 type LibrarySection = 'videos' | 'playlists';
-
-type LibraryVideo = {
-  videoFolderName: string;
-  videoDir: string;
-  latestEpoch: string | null;
-  metadata: LibraryVideoMetadata;
-  epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
-  thumbnailPath: string | null;
-  clipCount: number;
-};
-
-type LibraryChannel = {
-  channelFolderName: string;
-  displayName: string;
-  channelIconPath: string | null;
-  videos: LibraryVideo[];
-};
 
 // Only the flat by-video list gets a sort control -- the channel view's own
 // ordering is alphabetical-by-channel and isn't in scope here.

@@ -26,16 +26,7 @@ import { pink } from '@mui/material/colors';
 import { buildAppVideoUrl, formatEpochLabel, isLongVideoForPostprocess } from '../../utils/utils.ts';
 import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
 import VideoTagsPopover from '../components/VideoTagsPopover';
-import type { LibraryVideoMetadata, Resolution } from '../../types';
-
-type LibraryVideo = {
-  videoFolderName: string;
-  videoDir: string;
-  latestEpoch: string | null;
-  metadata: LibraryVideoMetadata;
-  epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
-  thumbnailPath: string | null;
-};
+import type { LibraryVideo, LibraryVideoMetadata, Resolution } from '../../types';
 
 // Shared between the first-download and "download different quality" flows
 // -- excludeResolution blocks re-picking whatever's already downloaded
@@ -70,7 +61,7 @@ function ResolutionPicker({ resolutions, excludeResolution, onSelect, selectedFo
             >
               <Stack spacing={0} direction="column" divider={<Divider flexItem sx={{ mx: 1 }} orientation="horizontal" />}>
                 <Typography variant="button" textTransform="none">
-                  {res.resolution}p{res.resolution === excludeResolution ? ' (current)' : ''}
+                  {res.resolution === 'MP3' ? 'MP3' : `${res.resolution}p`}{res.resolution === excludeResolution ? ' (current)' : ''}
                 </Typography>
                 <Typography variant="caption">{res.filesizeMb}Mb</Typography>
               </Stack>
@@ -271,7 +262,7 @@ export default function VideoQualityDownload({
             <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Chip
                 color="success"
-                label={`${metadata.downloadedResolution}p`}
+                label={metadata.downloadedResolution === 'MP3' ? 'MP3' : `${metadata.downloadedResolution}p`}
               />
               <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap" sx={{ justifyContent: 'flex-end' }}>
                 {appliedTagNames.map((tag) => (
@@ -328,7 +319,7 @@ export default function VideoQualityDownload({
         <Stack spacing={1} sx={{ p: 1 }}>
           <Typography variant="subtitle1" textAlign="center">
             {downloadStatus === 'Postprocessing...' ? 'Postprocessing' : 'Downloading'}
-            {selectedResolution && ` (${selectedResolution}p)`}
+            {selectedResolution && ` (${selectedResolution}${selectedResolution.toLowerCase() === 'mp3' ? '' : 'p'})`}
           </Typography>
           <LinearProgressWithLabel value={postprocessProgress} valueBuffer={downloadProgress} indeterminate={postprocessIndeterminate} />
           <LongVideoPostprocessWarning duration={metadata.duration} />

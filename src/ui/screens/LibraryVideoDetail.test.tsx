@@ -353,6 +353,59 @@ describe('LibraryVideoDetail', () => {
     }));
   });
 
+  describe('generic (non-YouTube) audio-only entry', () => {
+    it('routes its MP3-only download through the main resolution grid, not the separate Audio section', async () => {
+      const video = makeVideo({
+        platform: 'soundcloud',
+        resolutions: [{ resolution: 'MP3', filesizeMb: 5 }],
+      });
+      const { onVersionsChanged } = renderDetail(video);
+      const user = userEvent.setup();
+
+      // The separate Audio section's "Download MP3" button never renders --
+      // only the main grid's MP3 button does.
+      expect(screen.queryByRole('button', { name: /Download MP3/ })).not.toBeInTheDocument();
+      const mp3Button = screen.getByRole('button', { name: /^MP3/ });
+      expect(mp3Button).toHaveTextContent('MP3');
+      expect(mp3Button).not.toHaveTextContent('MP3p');
+
+      await user.click(mp3Button);
+
+      // Same flow as a normal video quality pick (handleDownload), not
+      // handleAudioDownload -- lands toward downloadedFilePath, not
+      // downloadedAudioFilePath.
+      expect(window.electronAPIPythonDownload.startDownloadPython).toHaveBeenCalledWith(
+        expect.objectContaining({ outputPath: '/lib/Channel A/vidA/100/video', resolution: 'MP3' }),
+      );
+
+      emit({ type: 'done', payload: { filename: '/lib/Channel A/vidA/100/video.mp3' } as DownloadProgressMessage['payload'] });
+
+      await waitFor(() => expect(window.electronAPI.recordLibraryDownload).toHaveBeenCalledWith({
+        videoDir: '/lib/Channel A/vidA',
+        epoch: '100',
+        filePath: '/lib/Channel A/vidA/100/video.mp3',
+        resolution: 'MP3',
+        format: 'dflt',
+        kind: 'video',
+      }));
+      await waitFor(() => expect(onVersionsChanged).toHaveBeenCalled());
+
+      // The plain native <audio controls> widget from the old MP3 section
+      // never renders for this flow.
+      expect(document.querySelector('audio')).not.toBeInTheDocument();
+    });
+
+    it('leaves a real YouTube entry with both a video resolution and a separate MP3 resolution unaffected', async () => {
+      const video = makeVideo({ downloadedAudioFilePath: '/v/audio.mp3' });
+      renderDetail(video);
+
+      // The Audio section's own "Download MP3"/<audio> flow still works
+      // exactly as before -- untouched by the generic-entry routing change.
+      expect(screen.getByRole('button', { name: /^720p/ })).toBeInTheDocument();
+      expect(document.querySelector('audio')).toBeInTheDocument();
+    });
+  });
+
   it('switching versions swaps the displayed metadata', async () => {
     const meta100 = baseMetadata({ downloadedFilePath: '/v/100.mp4', downloadedResolution: '720', downloadedFormat: 'dflt' });
     const meta50 = baseMetadata({ downloadedFilePath: '/v/50.mp4', downloadedResolution: '480', downloadedFormat: 'dflt' });
@@ -533,6 +586,25 @@ describe('LibraryVideoDetail', () => {
       inputPath: '/v/audio.mp3', kind: 'audio',
     }));
     expect(await screen.findByText('Metadata embedded')).toBeInTheDocument();
+  });
+
+  // Regression test: a generic (non-YouTube) entry has no separate
+  // downloadedAudioFilePath slot, so an audio-only download (resolution
+  // 'MP3') lands directly in downloadedFilePath -- kind must reflect that
+  // it's audio, not assume "downloadedFilePath means video" the way a real
+  // YouTube video+separate-MP3 entry always can.
+  it('embeds metadata with kind "audio" when downloadedFilePath itself holds an MP3-resolution download', async () => {
+    const video = makeVideo({
+      downloadedFilePath: '/v/track.mp3', downloadedResolution: 'MP3', downloadedFormat: 'dflt',
+    });
+    renderDetail(video);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Embed metadata into local file' }));
+
+    await waitFor(() => expect(window.electronAPI.embedFileMetadata).toHaveBeenCalledWith(expect.objectContaining({
+      inputPath: '/v/track.mp3', kind: 'audio',
+    })));
   });
 
   it('deletes the last remaining version and bounces out via onDeleted', async () => {

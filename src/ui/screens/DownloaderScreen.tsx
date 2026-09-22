@@ -272,7 +272,6 @@ export default function DownloaderScreen() {
               </FormControl>}
             <Tooltip title={
               !videoInfo ? 'Load a video first' :
-              !isYouTube ? 'Only YouTube videos can be added to the library' :
               libraryAddStatus === 'saving' ? 'Adding...' :
               libraryAddStatus === 'error' ? 'Failed to add -- click to retry' :
               'Add to library'
@@ -280,7 +279,7 @@ export default function DownloaderScreen() {
               <span>
                 <IconButton
                   onClick={handleAddToLibrary}
-                  disabled={!videoInfo || !isYouTube || libraryAddStatus === 'saving'}
+                  disabled={!videoInfo || libraryAddStatus === 'saving'}
                   sx={{
                     width: 56,
                     height: 56,
@@ -288,7 +287,7 @@ export default function DownloaderScreen() {
                     // Only colored once a video is loaded -- applying this override
                     // unconditionally (including while disabled) fought MUI's own
                     // disabled-button styling and rendered the button invisible.
-                    ...(videoInfo && isYouTube && {
+                    ...(videoInfo && {
                       bgcolor: libraryAddStatus === 'error' ? 'error.main' : 'primary.main',
                       color: 'primary.contrastText',
                       '&:hover': { bgcolor: libraryAddStatus === 'error' ? 'error.dark' : 'primary.dark' },

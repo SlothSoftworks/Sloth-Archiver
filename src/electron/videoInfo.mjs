@@ -2,6 +2,7 @@ import fs from 'fs';
 import { spawn } from 'child_process';
 import { isYouTubeUrl } from './utils/youtube.mjs';
 import { ERROR_KINDS, classifyDownloadError } from './downloadErrors.mjs';
+import { sanitizeForFilesystem } from './library.mjs';
 
 // Matches runFfmpegWithProgress's own '-b:a 192k' for the MP3 extraction
 // pass -- the estimate has to agree with what really gets encoded.
@@ -46,8 +47,10 @@ export function buildResolutions(info) {
     }
 
     // A real, audio-only estimate, computed independently of the video
-    // resolutions above.
-    if (resolutions.length > 0) {
+    // resolutions above -- gated on bestAudio existing (not on
+    // resolutions.length), since a pure-audio source like SoundCloud has no
+    // video-height formats at all and would otherwise return [] entirely.
+    if (bestAudio) {
         const mp3Size = info.duration ? (MP3_BITRATE_KBPS * 1000 * info.duration) / 8 : null;
         resolutions.push({
             resolution: 'MP3',
@@ -57,6 +60,35 @@ export function buildResolutions(info) {
     }
 
     return resolutions;
+}
+
+// yt-dlp's own extractor_key ('Youtube', 'Dailymotion', 'Soundcloud', ...) is
+// the identity signal here, not the URL hostname isYouTubeUrl checks -- this
+// runs on already-fetched info, where the canonical extractor name is more
+// reliable than re-deriving it from originalUrl. 'youtube' is kept as a
+// literal, stable value distinct from whatever casing yt-dlp happens to use
+// for its own extractor_key (currently 'Youtube').
+function derivePlatform(extractorKey) {
+    if (!extractorKey) return null;
+    if (extractorKey.toLowerCase() === 'youtube') return 'youtube';
+    // Sanitized/lowercased for use as a library folder name (see
+    // library.mjs's NonYT/<platform>/ layout) -- reuses the same sanitizer
+    // every other on-disk folder name in this app goes through.
+    return sanitizeForFilesystem(extractorKey).toLowerCase();
+}
+
+// track/artist/album/genre only ever come from a genuinely music-shaped
+// source (e.g. SoundCloud) -- grouped into one music object rather than left
+// as four separate top-level fields, and left null entirely rather than an
+// object of all-nulls when none of them are present.
+function buildMusicInfo(info) {
+    if (!info.track && !info.artist && !info.album && !info.genre) return null;
+    return {
+        track: info.track || null,
+        artist: info.artist || null,
+        album: info.album || null,
+        genre: info.genre || null,
+    };
 }
 
 export function reshapeVideoInfo(info) {
@@ -83,6 +115,11 @@ export function reshapeVideoInfo(info) {
         fullTitle: info.fulltitle,
         sourceFormat: info.ext,
         language: info.language,
+        extractorKey: info.extractor_key,
+        platform: derivePlatform(info.extractor_key),
+        license: info.license || null,
+        timestamp: info.timestamp || null,
+        music: buildMusicInfo(info),
     };
 }
 
