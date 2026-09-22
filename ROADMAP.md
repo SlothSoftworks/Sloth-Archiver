@@ -12,7 +12,6 @@ What's being developed right now? These are some of the topic that I'm working o
 - **Custom player improvements** - new playback features and general
   improvements to the app's built-in player.
 - **More Library flexibility** - More options to tag and explore libraries in different partitions so you can save and catalogue your downloads in different library navigation views if you choose.
-- **Expanded library** - Expanding the library function from only youtube to more platforms and adding more flexibility so all your videos can use the built in ffmpeg tools
 
 Got a feature you'd like to see? Check the README's FAQ for how to raise it
 as an issue.
