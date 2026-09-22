@@ -23,6 +23,15 @@ export type BulkAddEntry = {
   // BulkAddDialog tags each expanded playlist's own entries with its own
   // playlistId rather than assuming the whole batch came from one playlist.
   playlistId?: string;
+  // Already-known thumbnail for an entry that's already in the library (the
+  // Library tab's "Download selected" action) -- start() below prefers this
+  // over its own videoId-based guess, since that guess is a YouTube-only CDN
+  // URL pattern that's wrong for any other platform, and this flow's items
+  // skip the processItem fetch step entirely (see videoDir/epoch/resolution/
+  // kind above), so nothing would ever correct a wrong guess later. Never
+  // set by the URL/playlist-paste flow (BulkAddDialog), which relies on that
+  // guess (or the later fetch) instead.
+  thumbnailUrl?: string;
 };
 
 export type BulkAddItem = {
@@ -434,11 +443,16 @@ function useBulkAddQueueState() {
       resolution: entry.resolution,
       kind: entry.kind,
       playlistId: entry.playlistId,
-      // YouTube's thumbnail CDN URL is a stable, public, unauthenticated
-      // pattern keyed on videoId -- free to construct for playlist-sourced
-      // entries with no extra fetch; list-sourced entries pick this up once
-      // processItem fetches their info.
-      thumbnailUrl: entry.videoId ? `https://i.ytimg.com/vi/${entry.videoId}/mqdefault.jpg` : undefined,
+      // entry.thumbnailUrl (set by the Library tab's "Download selected"
+      // action -- see BulkAddEntry's own comment) wins outright: those items
+      // never reach processItem's fetch step, so this is the only chance to
+      // get it right, and the YouTube CDN guess below is wrong for anything
+      // but YouTube anyway. Otherwise, YouTube's thumbnail CDN URL is a
+      // stable, public, unauthenticated pattern keyed on videoId -- free to
+      // construct for playlist-sourced entries with no extra fetch;
+      // list-sourced entries pick up a real one once processItem fetches
+      // their info.
+      thumbnailUrl: entry.thumbnailUrl ?? (entry.videoId ? `https://i.ytimg.com/vi/${entry.videoId}/mqdefault.jpg` : undefined),
     }));
     itemsRef.current = [...itemsRef.current, ...newItems];
     setItems(itemsRef.current);

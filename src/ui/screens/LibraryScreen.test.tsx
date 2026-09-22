@@ -5,7 +5,7 @@ import { render as rtlRender, screen, waitFor, within } from '@testing-library/r
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import LibraryScreen from './LibraryScreen';
-import { BulkAddProvider } from '../hooks/useBulkAddQueue.tsx';
+import { BulkAddProvider, useBulkAddQueue, type BulkAddItem } from '../hooks/useBulkAddQueue.tsx';
 import { LibraryTagsProvider } from '../hooks/useLibraryTags.tsx';
 import { BackgroundPlayerProvider } from '../hooks/useBackgroundPlayer.tsx';
 
@@ -96,6 +96,10 @@ beforeEach(() => {
     setLibraryViewMode: vi.fn().mockResolvedValue({ success: true, libraryViewMode: 'video' }),
     getLibrarySort: vi.fn().mockResolvedValue({ sortField: 'title', sortDirection: 'asc' }),
     setLibrarySort: vi.fn().mockResolvedValue({ success: true, sortField: 'title', sortDirection: 'asc' }),
+    getLibraryDisplayMode: vi.fn().mockResolvedValue({ libraryDisplayMode: 'grid' }),
+    setLibraryDisplayMode: vi.fn().mockResolvedValue({ success: true, libraryDisplayMode: 'list' }),
+    getLibraryListColumns: vi.fn().mockResolvedValue({ libraryListColumns: 1 }),
+    setLibraryListColumns: vi.fn().mockResolvedValue({ success: true, libraryListColumns: 2 }),
     getThumbnailSize: vi.fn().mockResolvedValue({ thumbnailSize: 220 }),
     setThumbnailSize: vi.fn().mockResolvedValue({ success: true, thumbnailSize: 220 }),
     refreshLibraryIndex: vi.fn().mockResolvedValue({ channels: makeChannels() }),
@@ -309,6 +313,128 @@ describe('LibraryScreen', () => {
     await user.keyboard('{ArrowRight}');
 
     expect(window.electronAPI.setThumbnailSize).toHaveBeenCalled();
+  });
+
+  describe('grid/list display mode', () => {
+    it('shows the grid/list toggle only on the flat by-video list, not a single channel\'s own video grid', async () => {
+      const user = userEvent.setup();
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('Channel A'));
+
+      // Channel drill-down (VideoGrid) shares LibraryBottomBar's render call
+      // site with the flat video view, but has no list layout of its own --
+      // the thumbnail slider still shows, the display-mode toggle doesn't.
+      expect(screen.getByRole('slider', { name: 'Thumbnail size' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'List view' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Grid view' })).not.toBeInTheDocument();
+    });
+
+    it('shows the grid/list toggle on the flat by-video list, defaulting to grid (VideoCard)', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      expect(screen.getByRole('button', { name: 'Grid view' })).toBeInTheDocument();
+      expect(screen.getByText('Alpha Video').closest('.MuiCard-root')).not.toBeNull();
+    });
+
+    it('switching to list view renders compact rows instead of cards, and persists the choice', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'List view' }));
+
+      expect(window.electronAPI.setLibraryDisplayMode).toHaveBeenCalledWith('list');
+      expect(screen.getByText('Alpha Video').closest('.MuiCard-root')).toBeNull();
+      expect(screen.getByText('Alpha Video').closest('.MuiListItem-root')).not.toBeNull();
+    });
+
+    it('loads directly into list mode when that is the persisted setting, and shows the key fields per row', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      expect(screen.getByRole('button', { name: 'List view' })).toHaveAttribute('aria-pressed', 'true');
+      const row = screen.getByText('Alpha Video').closest('.MuiListItem-root');
+      expect(row).not.toBeNull();
+      expect(within(row as HTMLElement).getByText('Not downloaded')).toBeInTheDocument();
+      expect(within(row as HTMLElement).getByText(/2026/)).toBeInTheDocument();
+    });
+
+    it('selection and "Add to queue" still work identically in list mode', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({ metadata: { ...makeVideo().metadata, downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4' } })],
+        }],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      expect(screen.getByText('1 item selected')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Add to queue' }));
+      expect(screen.queryByText('Detail: vidA')).not.toBeInTheDocument();
+    });
+
+    // Regression test: the thumbnail-size slider does nothing useful once
+    // list mode is active (there's no grid to size) -- it swaps for a
+    // discrete 1/2/3 "list columns" slider in the same bottom-bar slot
+    // instead, defaulting to 1 column.
+    it('swaps the thumbnail-size slider for a discrete 1/2/3 list-columns slider once list mode is active', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'grid' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      expect(screen.getByRole('slider', { name: 'Thumbnail size' })).toBeInTheDocument();
+      expect(screen.queryByRole('slider', { name: 'List columns' })).not.toBeInTheDocument();
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'List view' }));
+
+      expect(screen.queryByRole('slider', { name: 'Thumbnail size' })).not.toBeInTheDocument();
+      const columnsSlider = screen.getByRole('slider', { name: 'List columns' });
+      expect(columnsSlider).toBeInTheDocument();
+      expect(columnsSlider).toHaveAttribute('aria-valuenow', '1');
+      expect(columnsSlider).toHaveAttribute('aria-valuemin', '1');
+      expect(columnsSlider).toHaveAttribute('aria-valuemax', '3');
+    });
+
+    it('changing the list-columns slider persists the choice and lays the rows out in that many columns', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      const columnsSlider = screen.getByRole('slider', { name: 'List columns' });
+      columnsSlider.focus();
+      await user.keyboard('{ArrowRight}');
+
+      expect(window.electronAPI.setLibraryListColumns).toHaveBeenCalledWith(2);
+      const list = screen.getByText('Alpha Video').closest('.MuiList-root') as HTMLElement;
+      expect(list).toHaveStyle({ gridTemplateColumns: 'repeat(2, 1fr)' });
+    });
+
+    it('loads directly into the persisted column count', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      (window.electronAPI.getLibraryListColumns as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryListColumns: 3 });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      expect(screen.getByRole('slider', { name: 'List columns' })).toHaveAttribute('aria-valuenow', '3');
+      const list = screen.getByText('Alpha Video').closest('.MuiList-root') as HTMLElement;
+      expect(list).toHaveStyle({ gridTemplateColumns: 'repeat(3, 1fr)' });
+    });
   });
 
   describe('Add to queue (video card)', () => {
@@ -554,6 +680,54 @@ describe('LibraryScreen', () => {
 
       expect(screen.queryByText('Download 1 selected video')).not.toBeInTheDocument();
       expect(screen.queryByText('1 item selected')).not.toBeInTheDocument();
+    });
+
+    // Regression test: bulk-downloading an already-in-library video (this
+    // exact flow -- select it, then "Download selected") built its queue
+    // entry with no thumbnailUrl at all, so BulkAddSidePanel's item preview
+    // (which only renders an <img> when thumbnailUrl is truthy) fell back to
+    // its plain placeholder -- unlike a fresh bulk-add paste, which always
+    // has one. The already-in-library video's local thumbnailPath should be
+    // preferred as the source, since it's normally already cached by the
+    // time this flow is even reachable.
+    it('carries the already-cached local thumbnail into the queued entry for "Download selected"', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({
+            thumbnailPath: '/lib/Channel A/vidA/video-thumbnail.jpg',
+            metadata: { ...makeVideo().metadata, originalUrl: 'https://youtube.com/watch?v=vidA' },
+          })],
+        }],
+      });
+      let queuedItems: BulkAddItem[] = [];
+      function QueueProbe() {
+        queuedItems = useBulkAddQueue().items;
+        return null;
+      }
+      rtlRender(
+        <MemoryRouter>
+          <LibraryTagsProvider>
+            <BulkAddProvider>
+              <BackgroundPlayerProvider>
+                <LibraryScreen />
+                <QueueProbe />
+              </BackgroundPlayerProvider>
+            </BulkAddProvider>
+          </LibraryTagsProvider>
+        </MemoryRouter>,
+      );
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('button', { name: /Download selected/ }));
+      await screen.findByText('Download 1 selected video');
+      await user.click(screen.getByRole('button', { name: 'Queue Download' }));
+
+      await waitFor(() => expect(queuedItems).toHaveLength(1));
+      expect(queuedItems[0].thumbnailUrl).toBe(`app-video://local/${encodeURIComponent('/lib/Channel A/vidA/video-thumbnail.jpg')}?v=0`);
     });
 
     it('hides "Move selected" when only one sublibrary exists', async () => {
@@ -878,7 +1052,7 @@ describe('LibraryScreen', () => {
     // both in the flat "all videos" list (viewMode 'video', exercised here)
     // and the per-channel grid (VideoCard is shared by both, so this covers
     // both call sites without a second test).
-    it('shows a platform chip on the video card itself, next to the resolution chip', async () => {
+    it('shows a platform chip on the video card itself, in the row below the title (not next to it)', async () => {
       (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
       (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: makeChannelsWithOneNonYoutube() });
       render(<LibraryScreen />);
@@ -888,6 +1062,25 @@ describe('LibraryScreen', () => {
       // Beta Video's platform is explicitly 'youtube' -- no chip for it.
       const betaCard = screen.getByText('Beta Video').closest('.MuiCard-root') as HTMLElement;
       expect(within(betaCard).queryByText('youtube')).not.toBeInTheDocument();
+    });
+
+    // Regression test: the platform name used to show up twice on a generic
+    // entry's card -- once as the new platform chip, once as the plain-text
+    // channel-name caption underneath (which, for a platform-grouped entry,
+    // is that same platform string). The channel-name caption is only
+    // meaningful for a real YouTube channel; a generic entry should show it
+    // nowhere near the card, not even duplicated.
+    it('hides the plain-text channel name for a generic entry (avoiding duplicating the platform chip), but keeps it for a real YouTube channel', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: makeChannelsWithOneNonYoutube() });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      const alphaCard = screen.getByText('Alpha Video').closest('.MuiCard-root') as HTMLElement;
+      expect(within(alphaCard).queryByText('Channel A')).not.toBeInTheDocument();
+
+      const betaCard = screen.getByText('Beta Video').closest('.MuiCard-root') as HTMLElement;
+      expect(within(betaCard).getByText('Channel B')).toBeInTheDocument();
     });
   });
 

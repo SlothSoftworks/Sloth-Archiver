@@ -43,6 +43,29 @@ export function clampLibrarySortDirection(value) {
     return value === 'desc' ? 'desc' : 'asc';
 }
 
+// The flat video view's card-grid vs. compact-list layout -- kept separate
+// from libraryViewMode (channel vs. video grouping) since the two are
+// orthogonal.
+export const LIBRARY_DISPLAY_MODES = ['grid', 'list'];
+export const LIBRARY_DISPLAY_MODE_DEFAULT = 'grid';
+
+export function clampLibraryDisplayMode(value) {
+    return LIBRARY_DISPLAY_MODES.includes(value) ? value : LIBRARY_DISPLAY_MODE_DEFAULT;
+}
+
+// How many columns the flat video view's compact list lays its rows out in
+// -- only meaningful once libraryDisplayMode is 'list' (grid mode uses
+// thumbnailSize for its own column count instead, via thumbnailGridTemplateColumns).
+// A small closed set (not a free-form number) since a list row is
+// information-dense -- past 3 columns it stops reading as a "list" at all.
+export const LIBRARY_LIST_COLUMNS = [1, 2, 3];
+export const LIBRARY_LIST_COLUMNS_DEFAULT = 1;
+
+export function clampLibraryListColumns(value) {
+    const n = Number(value);
+    return LIBRARY_LIST_COLUMNS.includes(n) ? n : LIBRARY_LIST_COLUMNS_DEFAULT;
+}
+
 // The overall theme (color palette/typography), independent of light/dark
 // mode -- 'default' is this app's original plain-MUI look, 'slothui' is the
 // palette pulled from SlothArchiver-info's landing page (see theme.ts).

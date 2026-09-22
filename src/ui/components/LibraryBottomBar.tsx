@@ -1,30 +1,52 @@
-import { Box, Button, Paper, Slider, Stack, Typography } from '@mui/material';
+import { Box, Button, Paper, Slider, Stack, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material';
 import PhotoSizeSelectSmallIcon from '@mui/icons-material/PhotoSizeSelectSmall';
 import PhotoSizeSelectLargeIcon from '@mui/icons-material/PhotoSizeSelectLarge';
+import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 import DownloadIcon from '@mui/icons-material/Download';
 import FolderDeleteIcon from '@mui/icons-material/FolderDelete';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import DriveFileMoveIcon from '@mui/icons-material/DriveFileMove';
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
+import ViewModuleIcon from '@mui/icons-material/ViewModule';
+import ViewListIcon from '@mui/icons-material/ViewList';
 
 export const THUMBNAIL_SIZE_MIN = 160;
 export const THUMBNAIL_SIZE_MAX = 360;
 export const THUMBNAIL_SIZE_STEP = 10;
+
+// Mirrors settings.mjs's own LIBRARY_LIST_COLUMNS -- kept as plain numbers
+// here (not imported from the Node module) since this is renderer code.
+const LIST_COLUMNS_MIN = 1;
+const LIST_COLUMNS_MAX = 3;
 
 // Purely presentational/controlled -- the caller owns the state and any
 // settings IPC round-trip. Thumbnail-size props are optional: the Playlists
 // view has no thumbnail grid to size, so omitting them hides that section
 // entirely rather than showing an irrelevant control.
 export default function LibraryBottomBar({
+  displayMode, onDisplayModeChange,
   thumbnailSize, onThumbnailSizeChange, onThumbnailSizeCommit,
+  listColumns, onListColumnsChange,
   selectedCount, canBulkDownload, onDownloadSelected,
   canDeleteLocalFiles, onDeleteLocalFiles, onDeleteFromLibrary,
   canMove, onMoveSelected,
   canTag, onTagSelected,
 }: {
+  // Optional, same reason as thumbnailSize below -- only the flat video
+  // view has a grid/list layout to switch between; the Playlists view (and
+  // a single channel's own video grid) omit these, which hides the toggle.
+  displayMode?: 'grid' | 'list';
+  onDisplayModeChange?: (mode: 'grid' | 'list') => void;
   thumbnailSize?: number;
   onThumbnailSizeChange?: (size: number) => void;
   onThumbnailSizeCommit?: (size: number) => void;
+  // Same slot as the thumbnail-size slider above, swapped in instead of it
+  // whenever displayMode is 'list' (see the render logic below) -- the
+  // thumbnail size has nothing to size once the grid isn't rendered at all.
+  // Optional for the same reason as thumbnailSize -- omitted wherever
+  // displayMode itself is omitted.
+  listColumns?: number;
+  onListColumnsChange?: (columns: number) => void;
   selectedCount: number;
   canBulkDownload: boolean;
   onDownloadSelected: () => void;
@@ -79,24 +101,62 @@ export default function LibraryBottomBar({
             </Button>
           </>}
       </Box>
-      {thumbnailSize !== undefined && onThumbnailSizeChange && onThumbnailSizeCommit &&
-        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ width: 220 }}>
-          <PhotoSizeSelectSmallIcon fontSize="small" color="action" />
-          <Slider
+      <Stack direction="row" spacing={1.5} alignItems="center">
+        {displayMode !== undefined && onDisplayModeChange &&
+          <ToggleButtonGroup
+            value={displayMode}
+            exclusive
             size="small"
-            value={thumbnailSize}
-            min={THUMBNAIL_SIZE_MIN}
-            max={THUMBNAIL_SIZE_MAX}
-            step={THUMBNAIL_SIZE_STEP}
-            // SAFETY: this Slider has a single scalar `value`, never a
-            // [min, max] range, so MUI's value callback is always a number.
-            onChange={(_e, value) => onThumbnailSizeChange(value as number)}
-            // SAFETY: same single-scalar `value` as onChange above.
-            onChangeCommitted={(_e, value) => onThumbnailSizeCommit(value as number)}
-            aria-label="Thumbnail size"
-          />
-          <PhotoSizeSelectLargeIcon fontSize="small" color="action" />
-        </Stack>}
+            onChange={(_e, value: 'grid' | 'list' | null) => value && onDisplayModeChange(value)}
+            aria-label="Library display mode"
+          >
+            <ToggleButton value="grid" aria-label="Grid view">
+              <Tooltip title="Grid view">
+                <ViewModuleIcon fontSize="small" />
+              </Tooltip>
+            </ToggleButton>
+            <ToggleButton value="list" aria-label="List view">
+              <Tooltip title="List view">
+                <ViewListIcon fontSize="small" />
+              </Tooltip>
+            </ToggleButton>
+          </ToggleButtonGroup>}
+        {displayMode === 'list' && listColumns !== undefined && onListColumnsChange ? (
+          <Stack direction="row" spacing={1.5} alignItems="center" sx={{ width: 220 }}>
+            <ViewColumnIcon fontSize="small" color="action" />
+            <Slider
+              size="small"
+              value={listColumns}
+              min={LIST_COLUMNS_MIN}
+              max={LIST_COLUMNS_MAX}
+              step={1}
+              marks
+              // SAFETY: this Slider has a single scalar `value`, never a
+              // [min, max] range, so MUI's value callback is always a number.
+              onChange={(_e, value) => onListColumnsChange(value as number)}
+              aria-label="List columns"
+            />
+          </Stack>
+        ) : thumbnailSize !== undefined && onThumbnailSizeChange && onThumbnailSizeCommit && (
+          <Stack direction="row" spacing={1.5} alignItems="center" sx={{ width: 220 }}>
+            <PhotoSizeSelectSmallIcon fontSize="small" color="action" />
+            <Slider
+              size="small"
+              value={thumbnailSize}
+              min={THUMBNAIL_SIZE_MIN}
+              max={THUMBNAIL_SIZE_MAX}
+              step={THUMBNAIL_SIZE_STEP}
+              // SAFETY: this Slider has a single scalar `value`, never a
+              // [min, max] range, so MUI's value callback is always a number.
+              onChange={(_e, value) => onThumbnailSizeChange(value as number)}
+              // SAFETY: same single-scalar `value` as onChange above.
+              onChangeCommitted={(_e, value) => onThumbnailSizeCommit(value as number)}
+              aria-label="Thumbnail size"
+            />
+            <PhotoSizeSelectLargeIcon fontSize="small" color="action" />
+          </Stack>
+        )}
+      </Stack>
     </Paper>
   );
 }
