@@ -4,12 +4,17 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { buildResolutions, reshapeVideoInfo } from './videoInfo.mjs';
 
-// Real yt-dlp -J output captured per-platform, not hand-constructed --
-// exercises reshapeVideoInfo's new fields (platform/extractorKey/license/
-// timestamp/music) against what yt-dlp actually reports for each extractor.
+// Trimmed down from real yt-dlp -J output captured per-platform, not
+// hand-constructed from scratch -- exercises reshapeVideoInfo's new fields
+// (platform/extractorKey/license/timestamp/music) against what yt-dlp
+// actually reports for each extractor, keeping only the fields these tests
+// read. Committed inside the repo (unlike the original full captures, which
+// briefly lived outside it under 0tempFiles/ -- a sibling scratch folder
+// that's never checked out on CI, so loading fixtures from there passed
+// locally but failed every CI run trying to read a path that doesn't exist).
 const FIXTURES_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  '../../../0tempFiles/ytdlp-metadata-experiment',
+  '__fixtures__/ytdlp-info',
 );
 
 function loadFixture(name) {
