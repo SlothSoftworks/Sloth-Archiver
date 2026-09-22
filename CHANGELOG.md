@@ -4,6 +4,42 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [1.3.0] — 2026-09-22
+- **Add videos from virtually any yt-dlp-supported site to your library, not
+  just YouTube.** SoundCloud, Dailymotion, archive.org, PeerTube, and the rest
+  of the [1800+ sites yt-dlp supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
+  can now be added to your permanent library the same way a YouTube video
+  can — versioned, labelled, and organized by platform instead of by
+  channel. "Add to library" is no longer greyed out for anything other than
+  YouTube.
+  - Every entry plays through the same full-featured player as your YouTube
+    library — including audio-only sources (SoundCloud, Bandcamp, etc.),
+    which now show their thumbnail/album art for the whole time they're
+    playing instead of a blank black screen, and can still be clipped like
+    any video.
+  - Each entry shows a color-coded platform label (SoundCloud orange,
+    Dailymotion blue, Vimeo cyan, Twitch purple, and so on) next to its
+    title, both on its own page and on its card in the library grid, plus a
+    new "Non-YouTube" filter to find them all at once.
+  - A video's page now shows an "Extra data" section with whatever the
+    source actually provides — uploader, upload date, license, categories,
+    tags, and, for music platforms, track/artist/album/genre.
+  - Embed metadata now works for these too, including music tags where
+    available, and MP3-only sources get their MP3 option folded into
+    "Convert to" instead of a separate, now-redundant Extract MP3 button.
+- **Volume controls in the mini player and queue panel.** Both now have a
+  volume button that opens a small popover with a vertical slider, so you
+  can adjust background playback without needing the full player open.
+- **Clips now remember their exact start/end timestamps**, and a new
+  "Mark clip on original video" button jumps back to the source video with
+  those same timestamps already marked — a quick way to re-clip or adjust
+  an existing clip without hunting for where it was cut from.
+- **Fixed an audio/video sync bug when clipping.** A fast clip could end up
+  with its audio and video very slightly out of phase — hard to notice on
+  most content, but obvious on anything music-driven. Clips that need it now
+  get a quick, targeted re-encode of just the video stream (audio stays a
+  lossless copy either way) to keep the two in sync.
+
 ## [1.2.0] — 2026-09-18
 - **Play anything in the background, and queue up more.** A new mini-player
   bar at the bottom of the app lets you keep listening (or watching) while
