@@ -336,6 +336,15 @@ export default function LibraryScreen() {
         epoch: v.latestEpoch!,
         resolution: isMp3 ? 'mp3' : targetResolution,
         kind: isMp3 ? 'audio' : 'video',
+        // Unlike a fresh bulk-add paste, this video is already in the
+        // library -- its thumbnail is almost always already cached locally
+        // (ensureVideoThumbnail ran when it was added), so prefer that over
+        // re-hitting the remote URL, falling back to the remote URL only if
+        // the local cache genuinely isn't there yet. Without this,
+        // BulkAddSidePanel's item preview (which only renders an <img> when
+        // thumbnailUrl is truthy) fell back to its plain placeholder for
+        // every single item from this flow.
+        thumbnailUrl: v.thumbnailPath ? buildAppVideoUrl(v.thumbnailPath) : (v.metadata.thumbnail || undefined),
       }));
     start(entries, { download: true, targetResolution });
     setBulkDownloadDialogOpen(false);
@@ -825,6 +834,7 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
   videoTags: Record<string, string[]>;
 }) {
   const bestQuality = getBestDownloadedQuality(video.epochs);
+  const isGeneric = !!video.metadata.platform && video.metadata.platform !== 'youtube';
   const appliedTags = Object.keys(videoTags).filter((name) => videoTags[name].includes(video.metadata.videoId));
   const { enqueue, showToast } = useBackgroundPlayer();
   const [queueLoading, setQueueLoading] = useState(false);
@@ -911,10 +921,16 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
           sx={{ aspectRatio: '16 / 9', backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
         />
         <Box sx={{ p: 1.5 }}>
-          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
-            <Typography variant="body1" noWrap sx={{ minWidth: 0 }}>{video.metadata.title || video.videoFolderName}</Typography>
+          <Typography variant="body1" noWrap sx={{ minWidth: 0 }}>{video.metadata.title || video.videoFolderName}</Typography>
+          {/* Channel name (real channels only -- see isGeneric below) and the
+              platform/resolution chips share this one row rather than sitting
+              beside the title, so the title itself gets the full card width
+              instead of competing with 1-2 chips for space. */}
+          <Stack direction="row" alignItems="center" spacing={1}>
+            {channelLabel && !isGeneric &&
+              <Typography variant="caption" color="text.secondary" noWrap sx={{ flexShrink: 0 }}>{channelLabel}</Typography>}
             <Stack direction="row" spacing={0.5} flexShrink={0}>
-              {video.metadata.platform && video.metadata.platform !== 'youtube' &&
+              {isGeneric &&
                 <Chip
                   size="small"
                   variant="outlined"
@@ -932,8 +948,6 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
               )}
             </Stack>
           </Stack>
-          {channelLabel &&
-            <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>{channelLabel}</Typography>}
           {appliedTags.length > 0 &&
             <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ my: 0.5 }}>
               {appliedTags.map((tag) => (

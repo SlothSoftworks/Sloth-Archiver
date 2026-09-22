@@ -5,7 +5,7 @@ import { render as rtlRender, screen, waitFor, within } from '@testing-library/r
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import LibraryScreen from './LibraryScreen';
-import { BulkAddProvider } from '../hooks/useBulkAddQueue.tsx';
+import { BulkAddProvider, useBulkAddQueue, type BulkAddItem } from '../hooks/useBulkAddQueue.tsx';
 import { LibraryTagsProvider } from '../hooks/useLibraryTags.tsx';
 import { BackgroundPlayerProvider } from '../hooks/useBackgroundPlayer.tsx';
 
@@ -556,6 +556,54 @@ describe('LibraryScreen', () => {
       expect(screen.queryByText('1 item selected')).not.toBeInTheDocument();
     });
 
+    // Regression test: bulk-downloading an already-in-library video (this
+    // exact flow -- select it, then "Download selected") built its queue
+    // entry with no thumbnailUrl at all, so BulkAddSidePanel's item preview
+    // (which only renders an <img> when thumbnailUrl is truthy) fell back to
+    // its plain placeholder -- unlike a fresh bulk-add paste, which always
+    // has one. The already-in-library video's local thumbnailPath should be
+    // preferred as the source, since it's normally already cached by the
+    // time this flow is even reachable.
+    it('carries the already-cached local thumbnail into the queued entry for "Download selected"', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({
+            thumbnailPath: '/lib/Channel A/vidA/video-thumbnail.jpg',
+            metadata: { ...makeVideo().metadata, originalUrl: 'https://youtube.com/watch?v=vidA' },
+          })],
+        }],
+      });
+      let queuedItems: BulkAddItem[] = [];
+      function QueueProbe() {
+        queuedItems = useBulkAddQueue().items;
+        return null;
+      }
+      rtlRender(
+        <MemoryRouter>
+          <LibraryTagsProvider>
+            <BulkAddProvider>
+              <BackgroundPlayerProvider>
+                <LibraryScreen />
+                <QueueProbe />
+              </BackgroundPlayerProvider>
+            </BulkAddProvider>
+          </LibraryTagsProvider>
+        </MemoryRouter>,
+      );
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      await user.click(screen.getByRole('button', { name: /Download selected/ }));
+      await screen.findByText('Download 1 selected video');
+      await user.click(screen.getByRole('button', { name: 'Queue Download' }));
+
+      await waitFor(() => expect(queuedItems).toHaveLength(1));
+      expect(queuedItems[0].thumbnailUrl).toBe(`app-video://local/${encodeURIComponent('/lib/Channel A/vidA/video-thumbnail.jpg')}?v=0`);
+    });
+
     it('hides "Move selected" when only one sublibrary exists', async () => {
       const user = userEvent.setup();
       (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
@@ -878,7 +926,7 @@ describe('LibraryScreen', () => {
     // both in the flat "all videos" list (viewMode 'video', exercised here)
     // and the per-channel grid (VideoCard is shared by both, so this covers
     // both call sites without a second test).
-    it('shows a platform chip on the video card itself, next to the resolution chip', async () => {
+    it('shows a platform chip on the video card itself, in the row below the title (not next to it)', async () => {
       (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
       (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: makeChannelsWithOneNonYoutube() });
       render(<LibraryScreen />);
@@ -888,6 +936,25 @@ describe('LibraryScreen', () => {
       // Beta Video's platform is explicitly 'youtube' -- no chip for it.
       const betaCard = screen.getByText('Beta Video').closest('.MuiCard-root') as HTMLElement;
       expect(within(betaCard).queryByText('youtube')).not.toBeInTheDocument();
+    });
+
+    // Regression test: the platform name used to show up twice on a generic
+    // entry's card -- once as the new platform chip, once as the plain-text
+    // channel-name caption underneath (which, for a platform-grouped entry,
+    // is that same platform string). The channel-name caption is only
+    // meaningful for a real YouTube channel; a generic entry should show it
+    // nowhere near the card, not even duplicated.
+    it('hides the plain-text channel name for a generic entry (avoiding duplicating the platform chip), but keeps it for a real YouTube channel', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: makeChannelsWithOneNonYoutube() });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      const alphaCard = screen.getByText('Alpha Video').closest('.MuiCard-root') as HTMLElement;
+      expect(within(alphaCard).queryByText('Channel A')).not.toBeInTheDocument();
+
+      const betaCard = screen.getByText('Beta Video').closest('.MuiCard-root') as HTMLElement;
+      expect(within(betaCard).getByText('Channel B')).toBeInTheDocument();
     });
   });
 
