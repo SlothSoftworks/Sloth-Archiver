@@ -98,6 +98,8 @@ beforeEach(() => {
     setLibrarySort: vi.fn().mockResolvedValue({ success: true, sortField: 'title', sortDirection: 'asc' }),
     getLibraryDisplayMode: vi.fn().mockResolvedValue({ libraryDisplayMode: 'grid' }),
     setLibraryDisplayMode: vi.fn().mockResolvedValue({ success: true, libraryDisplayMode: 'list' }),
+    getLibraryListColumns: vi.fn().mockResolvedValue({ libraryListColumns: 1 }),
+    setLibraryListColumns: vi.fn().mockResolvedValue({ success: true, libraryListColumns: 2 }),
     getThumbnailSize: vi.fn().mockResolvedValue({ thumbnailSize: 220 }),
     setThumbnailSize: vi.fn().mockResolvedValue({ success: true, thumbnailSize: 220 }),
     refreshLibraryIndex: vi.fn().mockResolvedValue({ channels: makeChannels() }),
@@ -380,6 +382,58 @@ describe('LibraryScreen', () => {
 
       await user.click(screen.getByRole('button', { name: 'Add to queue' }));
       expect(screen.queryByText('Detail: vidA')).not.toBeInTheDocument();
+    });
+
+    // Regression test: the thumbnail-size slider does nothing useful once
+    // list mode is active (there's no grid to size) -- it swaps for a
+    // discrete 1/2/3 "list columns" slider in the same bottom-bar slot
+    // instead, defaulting to 1 column.
+    it('swaps the thumbnail-size slider for a discrete 1/2/3 list-columns slider once list mode is active', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'grid' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      expect(screen.getByRole('slider', { name: 'Thumbnail size' })).toBeInTheDocument();
+      expect(screen.queryByRole('slider', { name: 'List columns' })).not.toBeInTheDocument();
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'List view' }));
+
+      expect(screen.queryByRole('slider', { name: 'Thumbnail size' })).not.toBeInTheDocument();
+      const columnsSlider = screen.getByRole('slider', { name: 'List columns' });
+      expect(columnsSlider).toBeInTheDocument();
+      expect(columnsSlider).toHaveAttribute('aria-valuenow', '1');
+      expect(columnsSlider).toHaveAttribute('aria-valuemin', '1');
+      expect(columnsSlider).toHaveAttribute('aria-valuemax', '3');
+    });
+
+    it('changing the list-columns slider persists the choice and lays the rows out in that many columns', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      const columnsSlider = screen.getByRole('slider', { name: 'List columns' });
+      columnsSlider.focus();
+      await user.keyboard('{ArrowRight}');
+
+      expect(window.electronAPI.setLibraryListColumns).toHaveBeenCalledWith(2);
+      const list = screen.getByText('Alpha Video').closest('.MuiList-root') as HTMLElement;
+      expect(list).toHaveStyle({ gridTemplateColumns: 'repeat(2, 1fr)' });
+    });
+
+    it('loads directly into the persisted column count', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      (window.electronAPI.getLibraryListColumns as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryListColumns: 3 });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      expect(screen.getByRole('slider', { name: 'List columns' })).toHaveAttribute('aria-valuenow', '3');
+      const list = screen.getByText('Alpha Video').closest('.MuiList-root') as HTMLElement;
+      expect(list).toHaveStyle({ gridTemplateColumns: 'repeat(3, 1fr)' });
     });
   });
 

@@ -99,6 +99,8 @@ declare global {
             setLibrarySort: (payload: { sortField: LibrarySortField; sortDirection: LibrarySortDirection }) => Promise<{ success: boolean; sortField: LibrarySortField; sortDirection: LibrarySortDirection }>
             getLibraryDisplayMode: () => Promise<{ libraryDisplayMode: 'grid' | 'list' }>
             setLibraryDisplayMode: (mode: 'grid' | 'list') => Promise<{ success: boolean; libraryDisplayMode: 'grid' | 'list' }>
+            getLibraryListColumns: () => Promise<{ libraryListColumns: number }>
+            setLibraryListColumns: (columns: number) => Promise<{ success: boolean; libraryListColumns: number }>
             getThemeMode: () => Promise<{ themeMode: 'light' | 'dark' }>
             setThemeMode: (mode: 'light' | 'dark') => Promise<{ success: boolean; themeMode: 'light' | 'dark' }>
             getThemeName: () => Promise<{ themeName: 'default' | 'slothui' }>

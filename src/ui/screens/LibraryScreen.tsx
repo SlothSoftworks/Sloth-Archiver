@@ -141,6 +141,7 @@ export default function LibraryScreen() {
   const [librarySection, setLibrarySection] = useState<LibrarySection>('videos');
   const [thumbnailSize, setThumbnailSize] = useState(220); // overwritten by load()
   const [displayMode, setDisplayMode] = useState<'grid' | 'list'>('grid'); // overwritten by load()
+  const [listColumns, setListColumns] = useState(1); // overwritten by load()
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
   // Set from the deep-link's own ?view=/?clip= query params (see the effect
   // below) -- the mini-player bar (MiniPlayerBar.tsx) uses these to reopen a
@@ -198,12 +199,13 @@ export default function LibraryScreen() {
   // still this screen's own to own.
   const load = async () => {
     setLoading(true);
-    const [{ libraryDir }, index, { libraryViewMode }, { thumbnailSize }, { libraryDisplayMode }, { tags: videoTags }] = await Promise.all([
+    const [{ libraryDir }, index, { libraryViewMode }, { thumbnailSize }, { libraryDisplayMode }, { libraryListColumns }, { tags: videoTags }] = await Promise.all([
       window.electronAPI.getLibraryDir(),
       window.electronAPI.getLibraryIndex(),
       window.electronAPI.getLibraryViewMode(),
       window.electronAPI.getThumbnailSize(),
       window.electronAPI.getLibraryDisplayMode(),
+      window.electronAPI.getLibraryListColumns(),
       window.electronAPI.listVideoTags(),
     ]);
     setLibraryDir(libraryDir);
@@ -211,6 +213,7 @@ export default function LibraryScreen() {
     setViewMode(libraryViewMode);
     setThumbnailSize(thumbnailSize);
     setDisplayMode(libraryDisplayMode);
+    setListColumns(libraryListColumns);
     setVideoTags(videoTags);
     setLoading(false);
   };
@@ -285,6 +288,14 @@ export default function LibraryScreen() {
   const handleDisplayModeChange = (mode: 'grid' | 'list') => {
     setDisplayMode(mode);
     window.electronAPI.setLibraryDisplayMode(mode);
+  };
+
+  // Same fire-and-forget pattern -- unlike handleThumbnailSizeChange/Commit's
+  // drag-vs-release split, a discrete 1/2/3 slider has no intermediate drag
+  // ticks worth debouncing a write for.
+  const handleListColumnsChange = (columns: number) => {
+    setListColumns(columns);
+    window.electronAPI.setLibraryListColumns(columns);
   };
 
   const toggleVideoSelected = (videoDir: string) => {
@@ -642,6 +653,7 @@ export default function LibraryScreen() {
       viewMode={viewMode}
       thumbnailSize={thumbnailSize}
       displayMode={displayMode}
+      listColumns={listColumns}
       selectedVideoDirs={selectedVideoDirs}
       onToggleSelect={toggleVideoSelected}
       onSelectAll={(dirs) => setSelectedVideoDirs(new Set(dirs))}
@@ -721,7 +733,9 @@ export default function LibraryScreen() {
           // view -- a single channel's own VideoGrid (selectedChannel truthy)
           // shares this same bottom-bar render but has no list layout of its
           // own, so these two props stay undefined there.
-          {...(!selectedChannel && viewMode === 'video' ? { displayMode, onDisplayModeChange: handleDisplayModeChange } : {})}
+          {...(!selectedChannel && viewMode === 'video'
+            ? { displayMode, onDisplayModeChange: handleDisplayModeChange, listColumns, onListColumnsChange: handleListColumnsChange }
+            : {})}
           thumbnailSize={thumbnailSize}
           onThumbnailSizeChange={handleThumbnailSizeChange}
           onThumbnailSizeCommit={handleThumbnailSizeCommit}
@@ -1121,12 +1135,16 @@ function VideoListRow({ video, onSelect, channelLabel, selected, selectionActive
   );
 }
 
-function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, displayMode, selectedVideoDirs, onToggleSelect, onSelectAll, onViewModeChange, onSelectVideo, onRefresh, videoTags }: {
+function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, displayMode, listColumns, selectedVideoDirs, onToggleSelect, onSelectAll, onViewModeChange, onSelectVideo, onRefresh, videoTags }: {
   channels: LibraryChannel[];
   openFolderDir: string;
   viewMode: LibraryViewMode;
   thumbnailSize: number;
   displayMode: 'grid' | 'list';
+  // Only meaningful once displayMode is 'list' -- how many columns the
+  // compact rows lay out in (LibraryBottomBar's own slider, swapped in for
+  // the thumbnail-size one in list mode, controls this).
+  listColumns: number;
   selectedVideoDirs: Set<string>;
   onToggleSelect: (videoDir: string) => void;
   // Replaces the whole selection at once with exactly the given videoDirs
@@ -1339,7 +1357,7 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, displ
         onClear={() => { setSelectedFilterTags(new Set()); setSelectedSystemFilters(new Set()); }}
       />
       {displayMode === 'list' ? (
-        <List dense>
+        <List dense sx={{ display: 'grid', gridTemplateColumns: `repeat(${listColumns}, 1fr)`, gap: 1 }}>
           {filtered.map(({ video, channelName }) => (
             <VideoListRow
               key={video.videoDir}
