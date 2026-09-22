@@ -108,6 +108,12 @@ function useBackgroundPlayerState() {
   const [paused, setPaused] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  // Shared between MiniPlayerBar.tsx and QueueDrawer.tsx's own volume
+  // controls, same reason paused/currentTime/duration are lifted here rather
+  // than each surface tracking its own -- both must always show/drive the
+  // same number, since they control the same <video> element.
+  const [volume, setVolumeState] = useState(1);
+  const [muted, setMutedState] = useState(false);
   // Set by QueueDrawer.tsx while it's open -- see the Provider below, which
   // manually reparents (via a raw DOM appendChild, not React reconciliation)
   // the one real <video> element into this container instead of its default
@@ -135,6 +141,12 @@ function useBackgroundPlayerState() {
     const el = videoRef.current;
     if (!el) return;
     el.src = buildAppVideoUrl(video.sourcePath);
+    // Reapplied on every load even though it's the same persistent element
+    // (see the module-level comment above) -- keeps a freshly-loaded source
+    // from ever briefly starting at the browser's own default volume/muted
+    // before this hook's own state has a chance to reassert itself.
+    el.volume = volume;
+    el.muted = muted;
     // .catch(() => {}) -- an interrupted/rejected play promise (e.g. a
     // pause() racing it) is expected, routine behavior for a <video>
     // element, not a real error; same convention LibraryVideoPlayer.tsx's
@@ -268,6 +280,14 @@ function useBackgroundPlayerState() {
   const seek = (seconds: number) => {
     if (videoRef.current) videoRef.current.currentTime = seconds;
   };
+  const setVolume = (next: number) => {
+    setVolumeState(next);
+    if (videoRef.current) videoRef.current.volume = next;
+  };
+  const setMuted = (next: boolean) => {
+    setMutedState(next);
+    if (videoRef.current) videoRef.current.muted = next;
+  };
   // Clears the whole queue (hiding the mini-bar) rather than just pausing
   // -- explicit "I'm done with this," distinct from pause/resume.
   const stop = () => {
@@ -278,6 +298,7 @@ function useBackgroundPlayerState() {
 
   return {
     videoRef, queue, currentIndex, current, paused, currentTime, duration,
+    volume, muted, setVolume, setMuted,
     visibleContainer, setVisibleContainer,
     toastMessage, showToast, dismissToast: () => setToastMessage(null),
     enqueue, next, previous, playAt, removeAt, pause, resume, seek, stop,

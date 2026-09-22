@@ -25,6 +25,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import type { SvgIconProps } from '@mui/material';
 import { pink } from '@mui/material/colors';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -40,6 +41,7 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
 import { convertYYYYMMDDStringToDate, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns } from '../../utils/utils.ts';
 import { useBackgroundPlayer, resolvePlayableSource } from '../hooks/useBackgroundPlayer.tsx';
+import { parseClipTimestampSeconds } from './FfmpegUtilitiesPanel';
 import LibraryVideoDetail from './LibraryVideoDetail';
 import PlaylistsSection, { type PlaylistBulkBar } from '../components/PlaylistsSection';
 import LibrarySearchBar from '../components/LibrarySearchBar';
@@ -50,10 +52,11 @@ import CreateSubLibraryDialog from '../components/CreateSubLibraryDialog';
 import MoveToSubLibraryDialog from '../components/MoveToSubLibraryDialog';
 import TagSelectedDialog from '../components/TagSelectedDialog';
 import TagFilterPopover, { type SystemFilterKey } from '../components/TagFilterPopover';
+import { getPlatformIcon, getPlatformColor } from '../utils/platformIcons';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
 import { useLibraryTags } from '../hooks/useLibraryTags.tsx';
-import type { LibraryVideoMetadata } from '../../types';
+import type { LibraryVideo, LibraryChannel } from '../../types';
 
 type LibraryViewMode = 'channel' | 'video';
 // Top-level split within the Library tab -- "Videos" is everything this
@@ -62,23 +65,6 @@ type LibraryViewMode = 'channel' | 'video';
 // the channel/video LibraryViewMode above. Plain local state, not
 // URL-routed, same as the LibraryViewMode toggle below.
 type LibrarySection = 'videos' | 'playlists';
-
-type LibraryVideo = {
-  videoFolderName: string;
-  videoDir: string;
-  latestEpoch: string | null;
-  metadata: LibraryVideoMetadata;
-  epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
-  thumbnailPath: string | null;
-  clipCount: number;
-};
-
-type LibraryChannel = {
-  channelFolderName: string;
-  displayName: string;
-  channelIconPath: string | null;
-  videos: LibraryVideo[];
-};
 
 // Only the flat by-video list gets a sort control -- the channel view's own
 // ordering is alphabetical-by-channel and isn't in scope here.
@@ -156,13 +142,22 @@ export default function LibraryScreen() {
   // the background already selected.
   const [deepLinkView, setDeepLinkView] = useState<'video' | 'clips' | undefined>(undefined);
   const [deepLinkClipId, setDeepLinkClipId] = useState<string | null>(null);
+  // Set from the deep-link's own ?clipStart=/?clipEnd= query params (see the
+  // effect below) -- ClipCollectionView's "Mark clip on original video" uses
+  // these to reopen the video's normal player with that clip's exact in/out
+  // points already marked, as a base to adjust or re-clip from.
+  const [deepLinkClipStartSeconds, setDeepLinkClipStartSeconds] = useState<number | null>(null);
+  const [deepLinkClipEndSeconds, setDeepLinkClipEndSeconds] = useState<number | null>(null);
   // A normal (non-deep-link) video selection -- clears any stale
-  // deepLinkView/deepLinkClipId left over from a previous mini-player-bar
-  // deep link, so picking a different video afterward doesn't wrongly reopen
-  // it straight into Clip Collection.
+  // deepLinkView/deepLinkClipId/deepLinkClipStartSeconds/deepLinkClipEndSeconds
+  // left over from a previous deep link, so picking a different video
+  // afterward doesn't wrongly reopen it straight into Clip Collection or with
+  // a stale clip range marked.
   const handleSelectVideo = (video: LibraryVideo) => {
     setDeepLinkView(undefined);
     setDeepLinkClipId(null);
+    setDeepLinkClipStartSeconds(null);
+    setDeepLinkClipEndSeconds(null);
     setSelectedVideo(video);
   };
   const [selectedVideoDirs, setSelectedVideoDirs] = useState<Set<string>>(new Set());
@@ -507,6 +502,11 @@ export default function LibraryScreen() {
   const libraryTagToOpen = searchParams.get('tag');
   const viewToOpen = searchParams.get('view');
   const clipIdToOpen = searchParams.get('clip');
+  // Set by ClipCollectionView's "Mark clip on original video" -- raw
+  // HH:MM:SS strings, converted to seconds below before being handed to
+  // LibraryVideoDetail.
+  const clipStartToOpen = searchParams.get('clipStart');
+  const clipEndToOpen = searchParams.get('clipEnd');
   useEffect(() => {
     if (!videoIdToOpen) return;
     (async () => {
@@ -540,6 +540,8 @@ export default function LibraryScreen() {
         setSelectedVideo(targetVideo);
         setDeepLinkView(viewToOpen === 'clips' ? 'clips' : undefined);
         setDeepLinkClipId(clipIdToOpen);
+        setDeepLinkClipStartSeconds(clipStartToOpen ? parseClipTimestampSeconds(clipStartToOpen) : null);
+        setDeepLinkClipEndSeconds(clipEndToOpen ? parseClipTimestampSeconds(clipEndToOpen) : null);
       } else {
         setDeepLinkError('This video is no longer in your library.');
       }
@@ -595,6 +597,8 @@ export default function LibraryScreen() {
       onVideoTagsChanged={refreshVideoTags}
       initialActiveView={deepLinkView}
       initialClipId={deepLinkClipId}
+      initialClipStartSeconds={deepLinkClipStartSeconds}
+      initialClipEndSeconds={deepLinkClipEndSeconds}
     />
   ) : selectedChannel ? (
     <VideoGrid
@@ -909,15 +913,24 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
         <Box sx={{ p: 1.5 }}>
           <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
             <Typography variant="body1" noWrap sx={{ minWidth: 0 }}>{video.metadata.title || video.videoFolderName}</Typography>
-            {bestQuality ? (
-              <Chip
-                size="small"
-                color="success"
-                label={bestQuality.resolution === 'MP3' ? 'MP3' : `${bestQuality.resolution}p`}
-              />
-            ) : (
-              <Chip size="small" variant="outlined" label="Not downloaded" />
-            )}
+            <Stack direction="row" spacing={0.5} flexShrink={0}>
+              {video.metadata.platform && video.metadata.platform !== 'youtube' &&
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={video.metadata.platform}
+                  sx={{ borderColor: getPlatformColor(video.metadata.platform), color: getPlatformColor(video.metadata.platform) }}
+                />}
+              {bestQuality ? (
+                <Chip
+                  size="small"
+                  color="success"
+                  label={bestQuality.resolution === 'MP3' ? 'MP3' : `${bestQuality.resolution}p`}
+                />
+              ) : (
+                <Chip size="small" variant="outlined" label="Not downloaded" />
+              )}
+            </Stack>
           </Stack>
           {channelLabel &&
             <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>{channelLabel}</Typography>}
@@ -1021,6 +1034,7 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
   const tagFilteredVideos = useMemo(() => flatVideos.filter(({ video }) => {
     if (selectedSystemFilters.has('downloaded') && getBestDownloadedQuality(video.epochs) === null) return false;
     if (selectedSystemFilters.has('notDownloaded') && getBestDownloadedQuality(video.epochs) !== null) return false;
+    if (selectedSystemFilters.has('nonYoutube') && (!video.metadata.platform || video.metadata.platform === 'youtube')) return false;
     if (selectedFilterTags.size > 0 && ![...selectedFilterTags].every((tag) => videoTags[tag]?.includes(video.metadata.videoId))) return false;
     return true;
   }), [flatVideos, selectedFilterTags, selectedSystemFilters, videoTags]);
@@ -1147,6 +1161,13 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
   );
 }
 
+// Thin wrapper so callers can use getPlatformIcon's result as JSX without
+// each one destructuring/aliasing the returned component by hand.
+function PlatformIcon({ platform, ...props }: { platform?: string | null } & SvgIconProps) {
+  const Icon = getPlatformIcon(platform);
+  return <Icon {...props} />;
+}
+
 function ChannelList({ channels, openFolderDir, viewMode, onViewModeChange, onSelectChannel, onRefresh }: {
   channels: LibraryChannel[];
   openFolderDir: string;
@@ -1188,7 +1209,9 @@ function ChannelList({ channels, openFolderDir, viewMode, onViewModeChange, onSe
           <Card variant="outlined" key={channel.channelFolderName}>
             <CardActionArea onClick={() => onSelectChannel(channel)} sx={{ p: 2 }}>
               <Stack direction="row" spacing={1.5} alignItems="center">
-                {channel.channelIconPath ? (
+                {channel.isPlatformGroup ? (
+                  <PlatformIcon platform={channel.platform} color="primary" />
+                ) : channel.channelIconPath ? (
                   <Avatar src={buildAppVideoUrl(channel.channelIconPath)} alt={channel.displayName} />
                 ) : (
                   <FolderIcon color="primary" />
@@ -1252,8 +1275,11 @@ function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, 
             <ArrowBackIcon fontSize="small" />
           </IconButton>
           <Typography variant="h6">{channel.displayName}</Typography>
-          {channel.channelIconPath &&
-            <Avatar src={buildAppVideoUrl(channel.channelIconPath)} alt={channel.displayName} sx={{ width: 28, height: 28 }} />}
+          {channel.isPlatformGroup ? (
+            <PlatformIcon platform={channel.platform} color="primary" fontSize="small" />
+          ) : channel.channelIconPath && (
+            <Avatar src={buildAppVideoUrl(channel.channelIconPath)} alt={channel.displayName} sx={{ width: 28, height: 28 }} />
+          )}
         </Stack>
         <Stack direction="row" spacing={1} alignItems="center">
           <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
@@ -1268,13 +1294,15 @@ function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, 
             }
             label="Select all"
           />
-          <Tooltip title="Refresh channel icon">
-            <span>
-              <IconButton onClick={handleRefreshIcon} disabled={refreshingIcon} size="small" aria-label="Refresh channel icon">
-                {refreshingIcon ? <CircularProgress size={18} /> : <FaceRetouchingNaturalIcon fontSize="small" />}
-              </IconButton>
-            </span>
-          </Tooltip>
+          {!channel.isPlatformGroup && (
+            <Tooltip title="Refresh channel icon">
+              <span>
+                <IconButton onClick={handleRefreshIcon} disabled={refreshingIcon} size="small" aria-label="Refresh channel icon">
+                  {refreshingIcon ? <CircularProgress size={18} /> : <FaceRetouchingNaturalIcon fontSize="small" />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
         </Stack>
       </Stack>
       {isSearching && filtered.length === 0 &&

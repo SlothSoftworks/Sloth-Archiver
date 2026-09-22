@@ -819,6 +819,133 @@ describe('LibraryScreen', () => {
     });
   });
 
+  describe('system filter (non-YouTube)', () => {
+    function makeChannelsWithOneNonYoutube() {
+      const channels = makeChannels();
+      return [
+        {
+          ...channels[0],
+          videos: [{ ...channels[0].videos[0], metadata: { ...channels[0].videos[0].metadata, platform: 'soundcloud' } }],
+        },
+        {
+          ...channels[1],
+          videos: [{ ...channels[1].videos[0], metadata: { ...channels[1].videos[0].metadata, platform: 'youtube' } }],
+        },
+      ];
+    }
+
+    it('shows a "Non-YouTube" checkbox in the filter popover', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+
+      expect(screen.getByRole('checkbox', { name: 'Non-YouTube' })).toBeInTheDocument();
+    });
+
+    it('narrows to only videos whose platform is set and not youtube', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: makeChannelsWithOneNonYoutube() });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Non-YouTube' }));
+
+      expect(screen.getByText('Alpha Video')).toBeInTheDocument();
+      expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
+    });
+
+    it('excludes videos with no platform at all (plain YouTube backward-compat case)', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      // Default makeChannels() fixtures carry no `platform` field at all.
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Filter by tag' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Non-YouTube' }));
+
+      expect(screen.queryByText('Alpha Video')).not.toBeInTheDocument();
+      expect(screen.queryByText('Beta Video')).not.toBeInTheDocument();
+    });
+
+    // Regression test: the platform label was only shown on the video's own
+    // detail page at first -- it needs to show up on the card itself too,
+    // both in the flat "all videos" list (viewMode 'video', exercised here)
+    // and the per-channel grid (VideoCard is shared by both, so this covers
+    // both call sites without a second test).
+    it('shows a platform chip on the video card itself, next to the resolution chip', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: makeChannelsWithOneNonYoutube() });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      expect(screen.getByText('soundcloud')).toBeInTheDocument();
+      // Beta Video's platform is explicitly 'youtube' -- no chip for it.
+      const betaCard = screen.getByText('Beta Video').closest('.MuiCard-root') as HTMLElement;
+      expect(within(betaCard).queryByText('youtube')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('platform-group channel (non-YouTube)', () => {
+    function makeChannelsWithPlatformGroup() {
+      const channels = makeChannels();
+      return [
+        {
+          channelFolderName: 'NonYT/soundcloud', displayName: 'soundcloud', channelIconPath: null,
+          isPlatformGroup: true, platform: 'soundcloud',
+          videos: [makeVideo({
+            videoFolderName: 'vidC', videoDir: '/lib/NonYT/soundcloud/vidC',
+            metadata: { ...makeVideo().metadata, videoId: 'vidC', channel: 'Some Uploader', title: 'Gamma Track', platform: 'soundcloud' },
+          })],
+        },
+        ...channels,
+      ];
+    }
+
+    it('renders the platform icon for an isPlatformGroup channel, not an Avatar or the plain FolderIcon fallback', async () => {
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: makeChannelsWithPlatformGroup() });
+      render(<LibraryScreen />);
+      await screen.findByText('soundcloud');
+
+      const card = screen.getByText('soundcloud').closest('.MuiCard-root');
+      expect(card).not.toBeNull();
+      expect(within(card as HTMLElement).getByTestId('AudiotrackIcon')).toBeInTheDocument();
+      expect(within(card as HTMLElement).queryByTestId('FolderIcon')).not.toBeInTheDocument();
+      expect(within(card as HTMLElement).queryByRole('img')).not.toBeInTheDocument(); // no Avatar
+
+      // A real per-uploader channel (channelIconPath: null) is unaffected --
+      // still falls back to the plain folder icon, not a platform icon.
+      const channelACard = screen.getByText('Channel A').closest('.MuiCard-root');
+      expect(channelACard).not.toBeNull();
+      expect(within(channelACard as HTMLElement).getByTestId('FolderIcon')).toBeInTheDocument();
+    });
+
+    it('shows the platform icon in the video grid header and hides "Refresh channel icon" for a platform-group channel', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: makeChannelsWithPlatformGroup() });
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('soundcloud'));
+
+      expect(await screen.findByText('Gamma Track')).toBeInTheDocument();
+      expect(screen.getByTestId('AudiotrackIcon')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Refresh channel icon' })).not.toBeInTheDocument();
+    });
+
+    it('a real channel still shows its "Refresh channel icon" button in the video grid, unaffected', async () => {
+      const user = userEvent.setup();
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('Channel A'));
+
+      expect(screen.getByRole('button', { name: 'Refresh channel icon' })).toBeInTheDocument();
+      expect(screen.queryByTestId('AudiotrackIcon')).not.toBeInTheDocument();
+    });
+  });
+
   describe('select all (flat video list)', () => {
     it('starts unchecked, and checking it selects every currently visible video', async () => {
       const user = userEvent.setup();

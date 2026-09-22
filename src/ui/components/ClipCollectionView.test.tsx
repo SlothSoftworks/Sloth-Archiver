@@ -2,9 +2,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter, useLocation } from 'react-router';
 import ClipCollectionView from './ClipCollectionView';
 import { BackgroundPlayerProvider, useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import type { LibraryClip } from '../../types';
+
+// A sibling that reports the router's current location -- lets tests assert
+// what a navigate() call inside ClipCollectionView actually landed on,
+// mirroring this file's own renderWithBgProbe pattern for the background
+// player.
+function LocationProbe({ onLocation }: { onLocation: (pathname: string, search: string) => void }) {
+  const location = useLocation();
+  onLocation(location.pathname, location.search);
+  return null;
+}
 
 // Same one-shot readiness sequence LibraryVideoPlayer.test.tsx fires --
 // Vidstack won't treat the <video> as playable (and offer "Add to queue")
@@ -28,31 +39,33 @@ function renderWithBgProbe(overrides: Partial<Parameters<typeof ClipCollectionVi
   const onClipsChanged = vi.fn();
   const onEmptied = vi.fn();
   const utils = render(
-    <BackgroundPlayerProvider>
-      <ClipCollectionView
-        videoDir="/lib/c/v1"
-        clips={[makeClip()]}
-        onClipsChanged={onClipsChanged}
-        onEmptied={onEmptied}
-        onOpenFileLocation={vi.fn()}
-        onExtractMp3={vi.fn()}
-        extractingMp3={false}
-        extractMp3Disabled={false}
-        extractMp3Progress={0}
-        extractMp3Error={null}
-        convertFormatOptions={['mp4', 'mov', 'mkv', 'webm', 'avi']}
-        onConvertClip={vi.fn()}
-        convertingClip={false}
-        convertClipDisabled={false}
-        convertClipProgress={0}
-        convertClipError={null}
-        parentVideoId="video1"
-        parentVideoTitle="Parent Video"
-        parentThumbnailPath="/lib/c/v1/thumb.jpg"
-        {...overrides}
-      />
-      <Probe />
-    </BackgroundPlayerProvider>,
+    <MemoryRouter>
+      <BackgroundPlayerProvider>
+        <ClipCollectionView
+          videoDir="/lib/c/v1"
+          clips={[makeClip()]}
+          onClipsChanged={onClipsChanged}
+          onEmptied={onEmptied}
+          onOpenFileLocation={vi.fn()}
+          onExtractMp3={vi.fn()}
+          extractingMp3={false}
+          extractMp3Disabled={false}
+          extractMp3Progress={0}
+          extractMp3Error={null}
+          convertFormatOptions={['mp4', 'mov', 'mkv', 'webm', 'avi']}
+          onConvertClip={vi.fn()}
+          convertingClip={false}
+          convertClipDisabled={false}
+          convertClipProgress={0}
+          convertClipError={null}
+          parentVideoId="video1"
+          parentVideoTitle="Parent Video"
+          parentThumbnailPath="/lib/c/v1/thumb.jpg"
+          {...overrides}
+        />
+        <Probe />
+      </BackgroundPlayerProvider>
+    </MemoryRouter>,
   );
   return { ...utils, getBg: () => bgRef };
 }
@@ -67,33 +80,37 @@ function renderView(overrides: Partial<Parameters<typeof ClipCollectionView>[0]>
   const onOpenFileLocation = vi.fn();
   const onExtractMp3 = vi.fn();
   const onConvertClip = vi.fn();
+  let location = { pathname: '', search: '' };
   const utils = render(
-    <BackgroundPlayerProvider>
-      <ClipCollectionView
-        videoDir="/lib/c/v1"
-        clips={[makeClip()]}
-        onClipsChanged={onClipsChanged}
-        onEmptied={onEmptied}
-        onOpenFileLocation={onOpenFileLocation}
-        onExtractMp3={onExtractMp3}
-        extractingMp3={false}
-        extractMp3Disabled={false}
-        extractMp3Progress={0}
-        extractMp3Error={null}
-        convertFormatOptions={['mp4', 'mov', 'mkv', 'webm', 'avi']}
-        onConvertClip={onConvertClip}
-        convertingClip={false}
-        convertClipDisabled={false}
-        convertClipProgress={0}
-        convertClipError={null}
-        parentVideoId="video1"
-        parentVideoTitle="Parent Video"
-        parentThumbnailPath={null}
-        {...overrides}
-      />
-    </BackgroundPlayerProvider>,
+    <MemoryRouter>
+      <BackgroundPlayerProvider>
+        <ClipCollectionView
+          videoDir="/lib/c/v1"
+          clips={[makeClip()]}
+          onClipsChanged={onClipsChanged}
+          onEmptied={onEmptied}
+          onOpenFileLocation={onOpenFileLocation}
+          onExtractMp3={onExtractMp3}
+          extractingMp3={false}
+          extractMp3Disabled={false}
+          extractMp3Progress={0}
+          extractMp3Error={null}
+          convertFormatOptions={['mp4', 'mov', 'mkv', 'webm', 'avi']}
+          onConvertClip={onConvertClip}
+          convertingClip={false}
+          convertClipDisabled={false}
+          convertClipProgress={0}
+          convertClipError={null}
+          parentVideoId="video1"
+          parentVideoTitle="Parent Video"
+          parentThumbnailPath={null}
+          {...overrides}
+        />
+        <LocationProbe onLocation={(pathname, search) => { location = { pathname, search }; }} />
+      </BackgroundPlayerProvider>
+    </MemoryRouter>,
   );
-  return { ...utils, onClipsChanged, onEmptied, onOpenFileLocation, onExtractMp3, onConvertClip };
+  return { ...utils, onClipsChanged, onEmptied, onOpenFileLocation, onExtractMp3, onConvertClip, getLocation: () => location };
 }
 
 beforeEach(() => {
@@ -165,6 +182,23 @@ describe('ClipCollectionView', () => {
     const { onOpenFileLocation } = renderView();
     await user.click(screen.getByRole('button', { name: 'Open clip file location' }));
     expect(onOpenFileLocation).toHaveBeenCalled();
+  });
+
+  it('navigates back to the parent video with the clip\'s timestamps when "Mark clip on original video" is clicked', async () => {
+    const user = userEvent.setup();
+    const clips = [makeClip({ clipTimestamps: { start: '00:00:05', end: '00:00:12' } })];
+    const { getLocation } = renderView({ clips });
+
+    await user.click(screen.getByRole('button', { name: 'Mark clip on original video' }));
+
+    expect(getLocation()).toEqual({ pathname: '/library/video/video1', search: '?clipStart=00%3A00%3A05&clipEnd=00%3A00%3A12' });
+  });
+
+  it('disables "Mark clip on original video" when the active clip has no saved timestamps', async () => {
+    const clips = [makeClip()];
+    renderView({ clips });
+
+    expect(screen.getByRole('button', { name: 'Mark clip on original video' })).toBeDisabled();
   });
 
   it('calls onExtractMp3 with the active clip when "Extract audio as MP3" is clicked', async () => {
@@ -281,30 +315,32 @@ describe('ClipCollectionView', () => {
     const clips = [makeClip(), makeClip({ id: 'clip2', fileName: 'Clip Two.mp4', title: 'Clip Two' })];
     const { container, rerender } = renderView({ clips: [], initialClipId: 'clip2' });
     rerender(
-      <BackgroundPlayerProvider>
-        <ClipCollectionView
-          videoDir="/lib/c/v1"
-          clips={clips}
-          onClipsChanged={vi.fn()}
-          onEmptied={vi.fn()}
-          onOpenFileLocation={vi.fn()}
-          onExtractMp3={vi.fn()}
-          extractingMp3={false}
-          extractMp3Disabled={false}
-          extractMp3Progress={0}
-          extractMp3Error={null}
-          convertFormatOptions={['mp4']}
-          onConvertClip={vi.fn()}
-          convertingClip={false}
-          convertClipDisabled={false}
-          convertClipProgress={0}
-          convertClipError={null}
-          parentVideoId="video1"
-          parentVideoTitle="Parent Video"
-          parentThumbnailPath={null}
-          initialClipId="clip2"
-        />
-      </BackgroundPlayerProvider>,
+      <MemoryRouter>
+        <BackgroundPlayerProvider>
+          <ClipCollectionView
+            videoDir="/lib/c/v1"
+            clips={clips}
+            onClipsChanged={vi.fn()}
+            onEmptied={vi.fn()}
+            onOpenFileLocation={vi.fn()}
+            onExtractMp3={vi.fn()}
+            extractingMp3={false}
+            extractMp3Disabled={false}
+            extractMp3Progress={0}
+            extractMp3Error={null}
+            convertFormatOptions={['mp4']}
+            onConvertClip={vi.fn()}
+            convertingClip={false}
+            convertClipDisabled={false}
+            convertClipProgress={0}
+            convertClipError={null}
+            parentVideoId="video1"
+            parentVideoTitle="Parent Video"
+            parentThumbnailPath={null}
+            initialClipId="clip2"
+          />
+        </BackgroundPlayerProvider>
+      </MemoryRouter>,
     );
     await waitFor(() => {
       expect(container.querySelector('video source')).toHaveAttribute('src', expect.stringContaining('Clip%20Two.mp4'));

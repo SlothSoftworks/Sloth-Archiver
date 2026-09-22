@@ -1014,7 +1014,7 @@ ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, 
     const metadata = recordLibraryDownload({ videoDir, epoch, filePath, resolution, format, kind });
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     await refreshLibraryIndex(libraryDir, activeLibraryTag);
-    const metadataTags = { title: metadata.title, artist: metadata.channel, date: metadata.uploadDate, description: metadata.description };
+    const metadataTags = buildEmbedMetadataTags(metadata);
     await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
     return { success: true };
 });
@@ -1029,7 +1029,7 @@ ipcMain.handle('library:swapDownload', async (e, { videoDir, epoch, tempFilePath
     const metadata = swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format, kind });
     await refreshLibraryIndex(libraryDir, activeLibraryTag);
     const filePath = kind === 'audio' ? metadata.downloadedAudioFilePath : metadata.downloadedFilePath;
-    const metadataTags = { title: metadata.title, artist: metadata.channel, date: metadata.uploadDate, description: metadata.description };
+    const metadataTags = buildEmbedMetadataTags(metadata);
     await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
     return metadata;
 });
@@ -2044,6 +2044,7 @@ ipcMain.handle('library:createClip', async (e, { videoDir, inputPath, start, end
             fileName: path.basename(outputPath),
             title: clipName,
             durationSeconds,
+            clipTimestamps: { start, end },
         });
         return { success: true, clip };
     } catch (err) {
@@ -2225,6 +2226,34 @@ ipcMain.handle('library:embedMetadata', async (e, { inputPath, metadataTags, thu
     const { libraryDir } = readSettings();
     return embedMetadataIntoFile({ inputPath, metadataTags, thumbnailPath, kind, libraryDir });
 });
+
+// Shared by library:recordDownload/swapDownload so the two IPC handlers
+// build the exact same {title, artist, date, description, ...} shape rather
+// than two independently drifting inline copies. artist: prefer the plain
+// channel/uploader name, falling back to uploaderId when there's none --
+// generic (non-YouTube) entries never have a channelId, so their "who made
+// this" is channel/uploaderId rather than a channel handle. When this entry
+// carries yt-dlp music tags (track/artist/album/genre, e.g. from SoundCloud),
+// spread those in and let music.artist override the plain artist fallback
+// when present, since a music source's own artist tag is more specific than
+// its uploader account name. LibraryVideoDetail.tsx's own handleEmbedMetadata
+// (not touched in this pass) should mirror this same precedence once its
+// frontend fix lands.
+function buildEmbedMetadataTags(metadata) {
+    const tags = {
+        title: metadata.title,
+        artist: metadata.channel || metadata.uploaderId,
+        date: metadata.uploadDate,
+        description: metadata.description,
+    };
+    if (metadata.music) {
+        if (metadata.music.track) tags.track = metadata.music.track;
+        if (metadata.music.album) tags.album = metadata.music.album;
+        if (metadata.music.genre) tags.genre = metadata.music.genre;
+        if (metadata.music.artist) tags.artist = metadata.music.artist;
+    }
+    return tags;
+}
 
 // Best-effort, matching enrichPlaylistEntry's own precedent for a
 // background step riding along an already-succeeded action. Shared by the

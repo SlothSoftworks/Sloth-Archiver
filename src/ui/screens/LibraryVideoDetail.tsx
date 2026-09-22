@@ -29,33 +29,25 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { convertYYYYMMDDStringToDate, cleanElectronErrorMessage } from '../../utils/utils.ts';
 import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
+import { getPlatformColor } from '../utils/platformIcons';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import { useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import VideoQualityDownload from './VideoQualityDownload';
 import FfmpegUtilitiesPanel, { OTHER_FORMAT_VALUE } from './FfmpegUtilitiesPanel';
+import ExtraDataTable from './ExtraDataTable';
 import ClipCollectionView from '../components/ClipCollectionView';
 import LibraryVideoPlayerWithTools from '../components/LibraryVideoPlayerWithTools';
-import type { LibraryVideoMetadata, LibraryClip } from '../../types';
-
-type LibraryVideo = {
-  videoFolderName: string;
-  videoDir: string;
-  latestEpoch: string | null;
-  metadata: LibraryVideoMetadata;
-  epochs: { epoch: string; metadata: LibraryVideoMetadata }[];
-  thumbnailPath: string | null;
-  clipCount: number;
-};
+import type { LibraryClip, LibraryVideo } from '../../types';
 
 // Mirrors library.mjs's own CURRENT_VIDEO_SCHEMA_VERSION (main process and
 // renderer never cross-import here). An entry whose stored schemaVersion is
 // older than this predates a metadata-shape change and won't have whatever
 // that change added -- "Refresh from YouTube" is what fixes it.
-const CURRENT_VIDEO_SCHEMA_VERSION = 4;
+const CURRENT_VIDEO_SCHEMA_VERSION = 5;
 
 export default function LibraryVideoDetail({
   video, onBack, onLibraryChanged, onDeleted, onVersionsChanged, videoTags, onVideoTagsChanged,
-  initialActiveView, initialClipId,
+  initialActiveView, initialClipId, initialClipStartSeconds, initialClipEndSeconds,
 }: {
   video: LibraryVideo;
   onBack: () => void;
@@ -73,6 +65,12 @@ export default function LibraryVideoDetail({
   // the default video view.
   initialActiveView?: 'video' | 'clips';
   initialClipId?: string | null;
+  // Set by LibraryScreen.tsx's deep-link effect when this video was opened
+  // via ClipCollectionView's "Mark clip on original video" -- a one-shot
+  // handoff into the player's own clip markers, same pattern
+  // resumeFromBackgroundSeconds/initialSeekSeconds already use below.
+  initialClipStartSeconds?: number | null;
+  initialClipEndSeconds?: number | null;
 }) {
   const [selectedEpoch, setSelectedEpoch] = useState(video.latestEpoch);
   const [metadata, setMetadata] = useState(video.metadata);
@@ -189,6 +187,18 @@ export default function LibraryVideoDetail({
   const [activeView, setActiveView] = useState<'video' | 'clips'>(initialActiveView ?? 'video');
   const [clips, setClips] = useState<LibraryClip[]>([]);
   const [clipsLoaded, setClipsLoaded] = useState(false);
+
+  // "Mark clip on original video" (ClipCollectionView) re-navigates to this
+  // *same* video with fresh initialClipStartSeconds/EndSeconds -- since
+  // LibraryScreen.tsx renders this component without a key, that doesn't
+  // remount it, so activeView's useState initializer above never re-runs.
+  // Force it back to 'video' here instead, so the click actually leaves the
+  // Clip Collection tab and lands on the marked player.
+  useEffect(() => {
+    if (initialClipStartSeconds != null || initialClipEndSeconds != null) {
+      setActiveView('video');
+    }
+  }, [initialClipStartSeconds, initialClipEndSeconds]);
 
   useEffect(() => {
     if (activeView === 'clips' && !clipsLoaded) {
@@ -628,8 +638,16 @@ export default function LibraryVideoDetail({
     // Embeds into whichever of the video/audio files this version has --
     // either, or both, since they're independent coexisting slots. kind
     // tells main.mjs which stream index the cover art lands at.
+    // downloadedFilePath isn't always a real video: a generic (non-YouTube)
+    // entry has no separate downloadedAudioFilePath slot, so an audio-only
+    // download (resolution 'MP3') lands right in downloadedFilePath instead
+    // -- kind has to reflect that, not just assume "downloadedFilePath means
+    // video," or main.mjs's embed step tries to map a nonexistent video
+    // stream (0:v:0) and fails outright.
     const targets: { path: string; kind: 'video' | 'audio' }[] = [
-      metadata.downloadedFilePath ? { path: metadata.downloadedFilePath, kind: 'video' as const } : null,
+      metadata.downloadedFilePath
+        ? { path: metadata.downloadedFilePath, kind: metadata.downloadedResolution === 'MP3' ? 'audio' as const : 'video' as const }
+        : null,
       metadata.downloadedAudioFilePath ? { path: metadata.downloadedAudioFilePath, kind: 'audio' as const } : null,
     ].filter((t): t is { path: string; kind: 'video' | 'audio' } => !!t);
     if (targets.length === 0) return;
@@ -706,11 +724,26 @@ export default function LibraryVideoDetail({
   // Gates the whole FFMPEG utilities section -- every tool there operates on
   // the video file, not the separate MP3 slot.
   const isVideoDownloaded = !!metadata.downloadedFilePath;
+  const isGeneric = !!metadata.platform && metadata.platform !== 'youtube';
+  // Generic entries have no dedicated Extract MP3 button (see
+  // FfmpegUtilitiesPanel's own isGeneric), so 'mp3' is added to Convert-to
+  // as the only way to get an MP3 out of them. Kept out of
+  // POPULAR_CONVERT_FORMATS itself since YouTube entries already have that
+  // dedicated button and shouldn't get a redundant convert-to option.
+  const genericConvertFormatOptions = isGeneric && !convertFormatOptions.includes('mp3')
+    ? [...convertFormatOptions, 'mp3']
+    : convertFormatOptions;
   const resolutions = metadata.resolutions || [];
   // MP3 is rendered in its own Audio sub-section, not mixed into the video
-  // quality grid.
-  const videoResolutions = resolutions.filter((r) => r.resolution !== 'MP3');
-  const mp3Resolution = resolutions.find((r) => r.resolution === 'MP3');
+  // quality grid -- except for a generic (non-YouTube) entry, where MP3 may
+  // be the *only* option (e.g. SoundCloud) and needs to go through the main
+  // player rather than the separate <audio> widget the Audio section renders
+  // (that widget was only ever designed as a convenience preview next to a
+  // real video already playing above, not as a video's sole player). So a
+  // generic entry keeps its MP3 resolution in the main grid and never gets
+  // one split out into mp3Resolution.
+  const videoResolutions = isGeneric ? resolutions : resolutions.filter((r) => r.resolution !== 'MP3');
+  const mp3Resolution = isGeneric ? undefined : resolutions.find((r) => r.resolution === 'MP3');
   const isSchemaOutdated = (metadata.schemaVersion ?? 0) < CURRENT_VIDEO_SCHEMA_VERSION;
 
   return (
@@ -734,6 +767,13 @@ export default function LibraryVideoDetail({
             label={convertYYYYMMDDStringToDate(metadata.uploadDate || '') || metadata.uploadDate}
             sx={{ flexShrink: 0, fontWeight: 'bolder' }}
           />
+          {isGeneric &&
+            <Chip
+              size="small"
+              variant="outlined"
+              label={metadata.platform}
+              sx={{ flexShrink: 0, borderColor: getPlatformColor(metadata.platform), color: getPlatformColor(metadata.platform) }}
+            />}
           {isSchemaOutdated &&
             <Tooltip title="This version's saved data predates newer features -- use Refresh from YouTube to pick them up">
               <Chip
@@ -844,6 +884,8 @@ export default function LibraryVideoDetail({
             existingClipTitles={clips.map((c) => c.title)}
             convertFormatOptions={convertFormatOptions}
             initialSeekSeconds={resumeFromBackgroundSeconds}
+            initialClipStartSeconds={initialClipStartSeconds}
+            initialClipEndSeconds={initialClipEndSeconds}
             onClipCreated={(clip) => {
               setClips((prev) => [...prev, clip]);
               onVersionsChanged();
@@ -912,9 +954,10 @@ export default function LibraryVideoDetail({
                 ffmpegError={ffmpegError}
                 isVideoDownloaded={isVideoDownloaded}
                 hasAudioFile={!!metadata.downloadedAudioFilePath}
+                isGeneric={isGeneric}
                 convertFormat={convertFormat}
                 setConvertFormat={setConvertFormat}
-                convertFormatOptions={convertFormatOptions}
+                convertFormatOptions={genericConvertFormatOptions}
                 otherFormatInput={otherFormatInput}
                 setOtherFormatInput={setOtherFormatInput}
                 forceReencode={forceReencode}
@@ -923,6 +966,8 @@ export default function LibraryVideoDetail({
                 onConvertFormat={handleConvertFormat}
                 onEmbedMetadata={handleEmbedMetadata}
               />
+
+              {isGeneric && <ExtraDataTable metadata={metadata} />}
             </Stack>
           </Card>
         </Stack>

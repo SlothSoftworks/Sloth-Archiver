@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router';
 import {
   Box, Card, Checkbox, Chip, Divider, FormControlLabel, IconButton, List, ListItem, ListItemButton, ListItemText,
   MenuItem, Select, Stack, TextField, Tooltip, Typography,
 } from '@mui/material';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
+import HistoryToggleOffIcon from '@mui/icons-material/HistoryToggleOff';
 import AudiotrackIcon from '@mui/icons-material/Audiotrack';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
@@ -85,6 +87,18 @@ export default function ClipCollectionView({
 
   const activeClip = clips.find((c) => c.id === activeClipId) || null;
   const resolvedConvertFormat = convertFormat === OTHER_FORMAT_VALUE ? otherFormatInput.trim().toLowerCase() : convertFormat;
+  const navigate = useNavigate();
+
+  // Deep-links back into the parent video's own player, pre-marked with this
+  // clip's original in/out points -- follows the same ?query-param
+  // deep-link convention videoDetailPathFor (useBackgroundPlayer.tsx)
+  // already uses for the Clip Collection view itself, read back out by
+  // LibraryScreen.tsx's deep-link effect.
+  const handleMarkOnOriginalVideo = () => {
+    if (!activeClip?.clipTimestamps) return;
+    const params = new URLSearchParams({ clipStart: activeClip.clipTimestamps.start, clipEnd: activeClip.clipTimestamps.end });
+    navigate(`/library/video/${parentVideoId}?${params.toString()}`);
+  };
 
   const handleConvert = () => {
     if (!activeClip || !resolvedConvertFormat) return;
@@ -148,6 +162,18 @@ export default function ClipCollectionView({
                   <IconButton size="small" aria-label="Open clip file location" onClick={onOpenFileLocation}>
                     <FolderOpenIcon fontSize="small" />
                   </IconButton>
+                </Tooltip>
+                <Tooltip title={activeClip?.clipTimestamps ? 'Mark clip on original video' : 'This clip has no saved timestamps'}>
+                  <span>
+                    <IconButton
+                      size="small"
+                      aria-label="Mark clip on original video"
+                      onClick={handleMarkOnOriginalVideo}
+                      disabled={!activeClip?.clipTimestamps}
+                    >
+                      <HistoryToggleOffIcon fontSize="small" />
+                    </IconButton>
+                  </span>
                 </Tooltip>
               </Stack>
 

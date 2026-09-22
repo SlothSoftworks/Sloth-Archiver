@@ -117,6 +117,12 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // One-time "you can start playback here" affordance -- gone for good once
   // playback has ever started (native controls take over from there).
   const [hasStartedPlayback, setHasStartedPlayback] = useState(false);
+  // Set once the player actually knows (Vidstack's own viewType, populated by
+  // 'can-play') -- an audio-only source (no video track at all, e.g. a
+  // SoundCloud download) would otherwise leave the poster gone and the user
+  // staring at MediaPlayer's plain black background for the entire playback,
+  // not just the brief moment before it starts.
+  const [isAudioOnly, setIsAudioOnly] = useState(false);
   const [loopEnabled, setLoopEnabled] = useState(false);
   const [loopSequenceEnabled, setLoopSequenceEnabled] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ top: number; left: number } | null>(null);
@@ -137,6 +143,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // silently-broken black player.
   useEffect(() => {
     setHasStartedPlayback(false);
+    setIsAudioOnly(false);
     if (!filePath) return;
 
     if (isNativePlayable) {
@@ -246,6 +253,18 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   };
 
   const handleCanPlay = () => {
+    // Reads the native <video> element directly rather than Vidstack's own
+    // state.viewType/mediaWidth/mediaHeight -- viewType is derived from the
+    // declared src `type` (always 'video/mp4'/'video/webm' here, see
+    // mimeTypeForExtension, since this app never has a real "this is audio"
+    // MIME hint to give it), not the actual decoded content, so it never
+    // reflects whether the file secretly has no video track; Vidstack's own
+    // mediaWidth/mediaHeight need a 'resize' event this app never fires. A
+    // real browser reports videoWidth/videoHeight as 0 directly on the
+    // element itself for an audio-only source regardless of the declared
+    // type, immediately once 'loadedmetadata' fires -- no extra event needed.
+    const videoEl = playerRef.current?.el?.querySelector('video');
+    if (videoEl) setIsAudioOnly(videoEl.videoWidth === 0 && videoEl.videoHeight === 0);
     if (initialSeekSeconds == null || appliedInitialSeekRef.current || !playerRef.current) return;
     appliedInitialSeekRef.current = true;
     playerRef.current.currentTime = initialSeekSeconds;
@@ -266,6 +285,36 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     if (overrideFilePath !== undefined) {
       // Clip context: if there's genuinely nothing to play, there's nothing to show.
       return null;
+    }
+    // A generic (non-YouTube) entry has no real YouTube video id to embed --
+    // videoId here is whatever platform-native id the source actually uses
+    // (e.g. a Dailymotion/SoundCloud id), so YouTubeEmbed would just try (and
+    // fail) to load an unrelated or nonexistent YouTube video. Embedding each
+    // platform's own online player is a real future improvement, but until
+    // then this is honest about there being nothing playable yet, rather than
+    // silently showing a broken YouTube frame.
+    if (metadata.platform && metadata.platform !== 'youtube') {
+      return (
+        <ResizableMediaContainer sx={containerSx}>
+          <Box sx={{ ...fillSx, position: 'relative' }}>
+            <CardMedia
+              component="div"
+              image={posterSrc}
+              sx={{ ...fillSx, backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
+            />
+            <Typography
+              variant="caption"
+              sx={{
+                position: 'absolute', bottom: 8, left: 8, right: 8,
+                color: 'common.white', bgcolor: 'rgba(0, 0, 0, 0.6)',
+                px: 1, py: 0.5, borderRadius: 1,
+              }}
+            >
+              Video isn't downloaded.
+            </Typography>
+          </Box>
+        </ResizableMediaContainer>
+      );
     }
     return (
       <ResizableMediaContainer sx={containerSx}>
@@ -296,6 +345,30 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             onPause={() => onPlaybackStateChange?.(false)}
           >
             <MediaProvider />
+            {/* Vidstack's own <Poster> component hard-rejects any src scheme
+                outside http/https/data/blob -- our custom app-video:// scheme
+                throws at render time, so it can never be used for a local
+                thumbnail file here. A plain <img>, painted only until
+                playback starts, does the same job without going through
+                Vidstack's media-loading pipeline at all. Stays up for the
+                *entire* playback when the source is audio-only, though --
+                there's no video frame to reveal underneath, so removing it
+                would just leave MediaPlayer's plain black background for the
+                whole time the user is listening. Placed here (a MediaPlayer
+                child, right after the provider) rather than as a sibling of
+                the whole player -- neither this nor anything else below has
+                an explicit z-index, so plain DOM order decides stacking: this
+                needs to sit above the raw video/black background but below
+                the click-overlay/queue-button/controls that follow it, not
+                covering them the way a later, outside-MediaPlayer sibling
+                would. */}
+            {(!hasStartedPlayback || isAudioOnly) && posterSrc &&
+              <Box
+                component="img"
+                src={posterSrc}
+                alt=""
+                sx={{ ...fillSx, position: 'absolute', top: 0, left: 0, objectFit: 'cover', pointerEvents: 'none' }}
+              />}
             {/* Click-anywhere-on-the-video-to-toggle. Deliberately NOT
                 Vidstack's own <Gesture> primitive: it unconditionally waits
                 250ms before firing (to disambiguate from a double-tap
@@ -351,19 +424,6 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             // normal videoId/metadata-derived payload above.
             onAddToQueue={handleAddToQueue}
           />
-          {/* Vidstack's own <Poster> component hard-rejects any src scheme
-              outside http/https/data/blob -- our custom app-video:// scheme
-              throws at render time, so it can never be used for a local
-              thumbnail file here. A plain <img>, painted only until
-              playback starts, does the same job without going through
-              Vidstack's media-loading pipeline at all. */}
-          {!hasStartedPlayback && posterSrc &&
-            <Box
-              component="img"
-              src={posterSrc}
-              alt=""
-              sx={{ ...fillSx, position: 'absolute', top: 0, left: 0, objectFit: 'cover', pointerEvents: 'none' }}
-            />}
           {!hasStartedPlayback &&
             <IconButton
               onClick={safePlay}

@@ -61,10 +61,11 @@ beforeEach(() => {
 });
 
 describe('clipAndConvert', () => {
-  it('stream-copies (fast path) when the keyframe rounding error is negligible relative to the clip length', async () => {
-    // 10-minute clip, nearest keyframe just 2s before the requested start --
-    // 2/600 is nowhere near either risk threshold.
-    stubSpawn({ keyframeTimes: [598], streams: [{ codecType: 'video', codecName: 'h264' }] });
+  it('stream-copies (fast path) when the keyframe rounding error is negligible for both A/V sync and content loss', async () => {
+    // 10-minute clip, nearest keyframe just 0.05s before the requested start
+    // -- under the fixed A/V-sync threshold, and 0.05/600 is nowhere near
+    // the content-loss ratio threshold either.
+    stubSpawn({ keyframeTimes: [599.95], streams: [{ codecType: 'video', codecName: 'h264' }] });
     const { clipAndConvert } = createFfmpegRunner({ ffmpegBinaryPath: FFMPEG_BIN, ffprobeBinaryPath: FFPROBE_BIN });
 
     await clipAndConvert({
@@ -76,9 +77,10 @@ describe('clipAndConvert', () => {
     expect(ffmpegCallArgs()).not.toEqual(expect.arrayContaining(['-c:v']));
   });
 
-  it('auto-upgrades to a re-encode when the keyframe rounding error would eat a large fraction of a short clip', async () => {
+  it('auto-upgrades to a video-only re-encode (audio still copied) when the keyframe rounding error would eat a large fraction of a short clip', async () => {
     // 12-second clip, nearest keyframe 8s before the requested start -- 8/12
-    // is a large majority of the clip.
+    // is a large majority of the clip (and also well past the fixed A/V-sync
+    // threshold on its own).
     stubSpawn({ keyframeTimes: [2], streams: [{ codecType: 'video', codecName: 'h264' }] });
     const { clipAndConvert } = createFfmpegRunner({ ffmpegBinaryPath: FFMPEG_BIN, ffprobeBinaryPath: FFPROBE_BIN });
 
@@ -87,11 +89,23 @@ describe('clipAndConvert', () => {
       format: 'source', totalDurationSeconds: 12,
     });
 
-    expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c:v', 'libx264', '-c:a', 'aac']));
-    expect(ffmpegCallArgs()).not.toEqual(expect.arrayContaining(['-c', 'copy']));
+    // Audio is never actually at risk from keyframe rounding (see
+    // isKeyframeRoundingRisky's own comment), so only video gets re-encoded
+    // -- audio stays a stream copy, made accurate via the fine output-side
+    // seek rather than by decoding it.
+    expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c:v', 'libx264', '-c:a', 'copy']));
+    expect(ffmpegCallArgs()).not.toEqual(expect.arrayContaining(['-c:a', 'aac']));
+    // Split-seek: a coarse input-side -ss (10 - 15 clamped to 0, i.e. no
+    // input seek needed here since the buffer already covers the whole
+    // clip) plus an exact fine seek of the remainder, placed as an output
+    // option (after -i).
+    const args = ffmpegCallArgs();
+    const iIndex = args.indexOf('-i');
+    expect(args.slice(0, iIndex)).not.toEqual(expect.arrayContaining(['-ss']));
+    expect(args.slice(iIndex)).toEqual(expect.arrayContaining(['-ss', '10']));
   });
 
-  it('matches the source codec (not a fixed default) when auto-upgrading a "same as source" VP9 clip', async () => {
+  it('matches the source video codec (not a fixed default) when auto-upgrading a "same as source" VP9 clip, still copying audio', async () => {
     stubSpawn({ keyframeTimes: [2], streams: [{ codecType: 'video', codecName: 'vp9' }, { codecType: 'audio', codecName: 'opus' }] });
     const { clipAndConvert } = createFfmpegRunner({ ffmpegBinaryPath: FFMPEG_BIN, ffprobeBinaryPath: FFPROBE_BIN });
 
@@ -100,7 +114,26 @@ describe('clipAndConvert', () => {
       format: 'source', totalDurationSeconds: 12,
     });
 
-    expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c:v', 'libvpx-vp9', '-c:a', 'libopus']));
+    expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c:v', 'libvpx-vp9', '-c:a', 'copy']));
+  });
+
+  it('splits the seek across a coarse input-side seek and an exact output-side seek when the requested start is past the coarse-seek buffer', async () => {
+    // 40-minute-in clip, keyframe risk tripped by a 1s offset alone --
+    // exercises the non-zero coarse-seek branch of buildSplitSeekArgs (2400 -
+    // 15 = 2385 coarse, 15 fine), unlike the other risky-path test above
+    // where startSeconds is too small for the buffer to matter.
+    stubSpawn({ keyframeTimes: [2399], streams: [{ codecType: 'video', codecName: 'h264' }] });
+    const { clipAndConvert } = createFfmpegRunner({ ffmpegBinaryPath: FFMPEG_BIN, ffprobeBinaryPath: FFPROBE_BIN });
+
+    await clipAndConvert({
+      inputPath: '/in.mp4', outputPath: '/out.mp4', start: '00:40:00', startSeconds: 2400,
+      format: 'source', totalDurationSeconds: 60,
+    });
+
+    const args = ffmpegCallArgs();
+    const iIndex = args.indexOf('-i');
+    expect(args.slice(0, iIndex)).toEqual(expect.arrayContaining(['-ss', '2385']));
+    expect(args.slice(iIndex)).toEqual(expect.arrayContaining(['-ss', '15']));
   });
 
   it('goes straight to the format-specific re-encode (skipping the copy attempt) when auto-upgrading a format conversion', async () => {
@@ -117,7 +150,7 @@ describe('clipAndConvert', () => {
     expect(ffmpegCalls[0][1]).toEqual(expect.arrayContaining(['-c:v', 'libvpx-vp9', '-c:a', 'libopus']));
   });
 
-  it('never probes for keyframe risk when forceReencode is already set', async () => {
+  it('never probes for keyframe risk when forceReencode is already set, and still only re-encodes video', async () => {
     stubSpawn({ keyframeTimes: [598], streams: [{ codecType: 'video', codecName: 'h264' }] });
     const { clipAndConvert } = createFfmpegRunner({ ffmpegBinaryPath: FFMPEG_BIN, ffprobeBinaryPath: FFPROBE_BIN });
 
@@ -127,7 +160,7 @@ describe('clipAndConvert', () => {
     });
 
     expect(spawnMock.mock.calls.some(([bin, args]) => bin === FFPROBE_BIN && args.includes('-read_intervals'))).toBe(false);
-    expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c:v', 'libx264', '-c:a', 'aac']));
+    expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c:v', 'libx264', '-c:a', 'copy']));
   });
 
   it('skips the risk check entirely when startSeconds is not provided (backward-compatible callers)', async () => {
@@ -155,7 +188,7 @@ describe('clipAndConvert', () => {
   // immediately before the requested point (a real seek, not a scan from
   // zero) using packet-level flags instead of frame-level metadata.
   it('bounds the keyframe probe to a fixed window before the requested point, not a scan from the start of the file', async () => {
-    stubSpawn({ keyframeTimes: [3536.5], streams: [{ codecType: 'video', codecName: 'av1' }] });
+    stubSpawn({ keyframeTimes: [3536.95], streams: [{ codecType: 'video', codecName: 'av1' }] });
     const { clipAndConvert } = createFfmpegRunner({ ffmpegBinaryPath: FFMPEG_BIN, ffprobeBinaryPath: FFPROBE_BIN });
 
     // An hour into a long file -- the exact shape of the real bug report.
@@ -178,8 +211,9 @@ describe('clipAndConvert', () => {
     const [intervalStart, intervalEnd] = interval.split('%').map(Number);
     expect(intervalEnd).toBe(3537);
     expect(intervalStart).toBeGreaterThan(3000);
-    // Negligible real offset (3537 - 3536.5 = 0.5s) -- stays on the fast copy
-    // path, exactly as it should once the probe itself is fast and correct.
+    // Negligible real offset (3537 - 3536.95 = 0.05s) -- stays on the fast
+    // copy path, exactly as it should once the probe itself is fast and
+    // correct.
     expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c', 'copy']));
   });
 

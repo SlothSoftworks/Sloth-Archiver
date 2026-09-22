@@ -7,12 +7,15 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
+import VolumeUpIcon from '@mui/icons-material/VolumeUp';
+import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import MusicNoteIcon from '@mui/icons-material/MusicNote';
 import AudiotrackIcon from '@mui/icons-material/Audiotrack';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { buildAppVideoUrl } from '../../utils/utils.ts';
 import { useBackgroundPlayer, videoDetailPathFor, formatPlaybackTime } from '../hooks/useBackgroundPlayer.tsx';
+import VolumePopover from './VolumePopover';
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 640;
@@ -24,11 +27,12 @@ type MediaMode = 'audio' | 'video';
 // in from the screen's left edge.
 export default function QueueDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const {
-    queue, currentIndex, current, paused, currentTime, duration, pause, resume, seek,
-    next, previous, playAt, removeAt, setVisibleContainer,
+    queue, currentIndex, current, paused, currentTime, duration, volume, muted, setVolume, setMuted,
+    pause, resume, seek, next, previous, playAt, removeAt, setVisibleContainer,
   } = useBackgroundPlayer();
   const [mediaMode, setMediaMode] = useState<MediaMode>('audio');
   const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [volumeAnchorEl, setVolumeAnchorEl] = useState<HTMLElement | null>(null);
   const draggingRef = useRef(false);
 
   // Drags the drawer's right edge to resize it -- window-level pointermove/
@@ -143,6 +147,8 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
               size="small"
               value={Math.min(currentTime, duration || 0)}
               max={duration || 0}
+              // SAFETY: this Slider has no `range` prop, so MUI's onChange
+              // always reports a single number here, never number[].
               onChange={(_e, value) => seek(value as number)}
               disabled={!duration}
               aria-label="Seek"
@@ -150,6 +156,24 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
             <Typography variant="caption" color="text.secondary" sx={{ minWidth: 32 }}>
               {formatPlaybackTime(duration)}
             </Typography>
+            <Tooltip title={volumeAnchorEl ? 'Hide volume' : 'Show volume'}>
+              <IconButton
+                size="small"
+                onClick={(e) => setVolumeAnchorEl(volumeAnchorEl ? null : e.currentTarget)}
+                aria-label={volumeAnchorEl ? 'Hide volume' : 'Show volume'}
+              >
+                {muted || volume === 0 ? <VolumeOffIcon fontSize="small" /> : <VolumeUpIcon fontSize="small" />}
+              </IconButton>
+            </Tooltip>
+            <VolumePopover
+              open={!!volumeAnchorEl}
+              anchorEl={volumeAnchorEl}
+              onClose={() => setVolumeAnchorEl(null)}
+              volume={volume}
+              muted={muted}
+              onVolumeChange={setVolume}
+              onToggleMute={() => setMuted(!muted)}
+            />
           </Stack>}
 
         <Divider />

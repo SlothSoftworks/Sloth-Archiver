@@ -83,6 +83,7 @@ export default function FfmpegUtilitiesPanel({
   ffmpegError,
   isVideoDownloaded,
   hasAudioFile,
+  isGeneric,
   convertFormat,
   setConvertFormat,
   convertFormatOptions,
@@ -99,6 +100,10 @@ export default function FfmpegUtilitiesPanel({
   ffmpegError: string | null;
   isVideoDownloaded: boolean;
   hasAudioFile: boolean;
+  // Generic (non-YouTube) entries get MP3 export via the Convert-to dropdown
+  // instead of a dedicated Extract MP3 button -- see LibraryVideoDetail.tsx's
+  // own isGeneric.
+  isGeneric: boolean;
   convertFormat: string;
   setConvertFormat: (format: string) => void;
   convertFormatOptions: string[];
@@ -141,16 +146,17 @@ export default function FfmpegUtilitiesPanel({
         {ffmpegError &&
           <Typography variant="caption" color="error">{ffmpegError}</Typography>}
 
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Typography variant="body2" sx={{ flexGrow: 1 }}>Extract MP3</Typography>
-          <Tooltip title="Extract MP3">
-            <span>
-              <IconButton size="small" aria-label="Extract MP3" onClick={onExtractMp3} disabled={ffmpegControlsDisabled}>
-                <AudiotrackIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-        </Stack>
+        {!isGeneric &&
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Typography variant="body2" sx={{ flexGrow: 1 }}>Extract MP3</Typography>
+            <Tooltip title="Extract MP3">
+              <span>
+                <IconButton size="small" aria-label="Extract MP3" onClick={onExtractMp3} disabled={ffmpegControlsDisabled}>
+                  <AudiotrackIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>}
 
         <Stack direction="row" spacing={1} alignItems="center">
           <Typography variant="body2" sx={{ flexGrow: 1 }}>Convert to</Typography>

@@ -136,6 +136,26 @@ describe('DownloaderScreen', () => {
     expect(screen.getByLabelText('URL')).toHaveValue('');
   });
 
+  it('allows adding a non-YouTube video to the library too', async () => {
+    const user = userEvent.setup();
+    const nonYoutubeResponse = { ...videoResponse, originalUrl: 'https://www.dailymotion.com/video/xbafapm' };
+    (window.electronAPI.getVideoInfoPython as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true, data: { response: nonYoutubeResponse, fromCache: false },
+    });
+    renderScreen();
+    await user.type(screen.getByLabelText('URL'), nonYoutubeResponse.originalUrl);
+    await screen.findByRole('link', { name: 'My Great Video' }, { timeout: 2000 });
+    (window.electronAPI.findLibraryVideo as ReturnType<typeof vi.fn>).mockResolvedValue({ found: false });
+    (window.electronAPI.addLibraryEntry as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true, videoDir: '/d', epoch: '1' });
+
+    const addButton = within(screen.getByLabelText('Add to library')).getByRole('button');
+    expect(addButton).not.toBeDisabled();
+    await user.click(addButton);
+
+    await waitFor(() => expect(screen.getByText('Added to library')).toBeInTheDocument());
+    expect(window.electronAPI.addLibraryEntry).toHaveBeenCalledWith(nonYoutubeResponse, 'DefaultLibrary');
+  });
+
   it('offers Override/Add as new version when the video is already tracked', async () => {
     const user = userEvent.setup();
     await loadVideo(user);

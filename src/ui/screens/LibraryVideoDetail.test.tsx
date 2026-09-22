@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import LibraryVideoDetail from './LibraryVideoDetail';
 import { BackgroundPlayerProvider, useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import type { LibraryClip, DownloadProgressMessage } from '../../types';
@@ -142,18 +143,20 @@ function renderDetail(
   const onVersionsChanged = vi.fn().mockResolvedValue(undefined);
   const onVideoTagsChanged = vi.fn().mockResolvedValue(undefined);
   const utils = render(
-    <BackgroundPlayerProvider>
-      <LibraryVideoDetail
-        video={video}
-        onBack={onBack}
-        onLibraryChanged={onLibraryChanged}
-        onDeleted={onDeleted}
-        onVersionsChanged={onVersionsChanged}
-        videoTags={videoTags}
-        onVideoTagsChanged={onVideoTagsChanged}
-        {...deepLinkOverrides}
-      />
-    </BackgroundPlayerProvider>,
+    <MemoryRouter>
+      <BackgroundPlayerProvider>
+        <LibraryVideoDetail
+          video={video}
+          onBack={onBack}
+          onLibraryChanged={onLibraryChanged}
+          onDeleted={onDeleted}
+          onVersionsChanged={onVersionsChanged}
+          videoTags={videoTags}
+          onVideoTagsChanged={onVideoTagsChanged}
+          {...deepLinkOverrides}
+        />
+      </BackgroundPlayerProvider>
+    </MemoryRouter>,
   );
   return { ...utils, onBack, onLibraryChanged, onDeleted, onVersionsChanged, onVideoTagsChanged };
 }
@@ -350,6 +353,151 @@ describe('LibraryVideoDetail', () => {
     }));
   });
 
+  describe('generic (non-YouTube) audio-only entry', () => {
+    it('routes its MP3-only download through the main resolution grid, not the separate Audio section', async () => {
+      const video = makeVideo({
+        platform: 'soundcloud',
+        resolutions: [{ resolution: 'MP3', filesizeMb: 5 }],
+      });
+      const { onVersionsChanged } = renderDetail(video);
+      const user = userEvent.setup();
+
+      // The separate Audio section's "Download MP3" button never renders --
+      // only the main grid's MP3 button does.
+      expect(screen.queryByRole('button', { name: /Download MP3/ })).not.toBeInTheDocument();
+      const mp3Button = screen.getByRole('button', { name: /^MP3/ });
+      expect(mp3Button).toHaveTextContent('MP3');
+      expect(mp3Button).not.toHaveTextContent('MP3p');
+
+      await user.click(mp3Button);
+
+      // Same flow as a normal video quality pick (handleDownload), not
+      // handleAudioDownload -- lands toward downloadedFilePath, not
+      // downloadedAudioFilePath.
+      expect(window.electronAPIPythonDownload.startDownloadPython).toHaveBeenCalledWith(
+        expect.objectContaining({ outputPath: '/lib/Channel A/vidA/100/video', resolution: 'MP3' }),
+      );
+
+      emit({ type: 'done', payload: { filename: '/lib/Channel A/vidA/100/video.mp3' } as DownloadProgressMessage['payload'] });
+
+      await waitFor(() => expect(window.electronAPI.recordLibraryDownload).toHaveBeenCalledWith({
+        videoDir: '/lib/Channel A/vidA',
+        epoch: '100',
+        filePath: '/lib/Channel A/vidA/100/video.mp3',
+        resolution: 'MP3',
+        format: 'dflt',
+        kind: 'video',
+      }));
+      await waitFor(() => expect(onVersionsChanged).toHaveBeenCalled());
+
+      // The plain native <audio controls> widget from the old MP3 section
+      // never renders for this flow.
+      expect(document.querySelector('audio')).not.toBeInTheDocument();
+    });
+
+    it('leaves a real YouTube entry with both a video resolution and a separate MP3 resolution unaffected', async () => {
+      const video = makeVideo({ downloadedAudioFilePath: '/v/audio.mp3' });
+      renderDetail(video);
+
+      // The Audio section's own "Download MP3"/<audio> flow still works
+      // exactly as before -- untouched by the generic-entry routing change.
+      expect(screen.getByRole('button', { name: /^720p/ })).toBeInTheDocument();
+      expect(document.querySelector('audio')).toBeInTheDocument();
+    });
+
+    it('shows a platform chip in the header next to the title/upload date, even before anything is downloaded', async () => {
+      const video = makeVideo({ platform: 'soundcloud' });
+      renderDetail(video);
+
+      const platformChip = screen.getByText('soundcloud');
+      expect(platformChip).toBeInTheDocument();
+      // In the same header row as the title, not tucked away in the
+      // resolution/download area below (which wouldn't even render yet here
+      // since nothing's downloaded).
+      expect(screen.getByText('Alpha Video').closest('.MuiStack-root')).toContainElement(platformChip);
+    });
+
+    it('hides Extract MP3 and offers mp3 as a Convert-to option', async () => {
+      const video = makeVideo({
+        platform: 'soundcloud',
+        downloadedFilePath: '/v/track.mp3',
+        downloadedResolution: 'MP3',
+        downloadedFormat: 'dflt',
+      });
+      renderDetail(video);
+      const user = userEvent.setup();
+
+      expect(screen.queryByRole('button', { name: 'Extract MP3' })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('combobox'));
+      expect(await screen.findByRole('option', { name: 'MP3' })).toBeInTheDocument();
+    });
+
+    it('renders the Extra data section with only populated fields', async () => {
+      const video = makeVideo({
+        platform: 'soundcloud',
+        channel: 'DJ Sloth',
+        uploadDate: '20260115',
+        license: 'CC BY 4.0',
+        categories: ['Podcast'],
+        tags: ['chill', 'lofi'],
+        music: { track: 'Sunset', artist: 'Sloth Beats', album: null, genre: 'Lofi' },
+      });
+      renderDetail(video);
+
+      expect(screen.getByText('Extra data')).toBeInTheDocument();
+      expect(screen.getByText('DJ Sloth')).toBeInTheDocument();
+      expect(screen.getByText('CC BY 4.0')).toBeInTheDocument();
+      expect(screen.getByText('Podcast')).toBeInTheDocument();
+      expect(screen.getByText('Music')).toBeInTheDocument();
+      expect(screen.getByText('chill')).toBeInTheDocument();
+      expect(screen.getByText('lofi')).toBeInTheDocument();
+      expect(screen.getByText('Sunset')).toBeInTheDocument();
+      expect(screen.getByText('Sloth Beats')).toBeInTheDocument();
+      expect(screen.getByText('Lofi')).toBeInTheDocument();
+      // Album was null on the music object -- must not render a blank row.
+      expect(screen.queryByText('Album')).not.toBeInTheDocument();
+    });
+
+    it('skips absent fields entirely and hides the music sub-section when metadata.music is null', async () => {
+      const video = makeVideo({
+        platform: 'soundcloud',
+        channel: null,
+        license: null,
+        categories: null,
+        tags: null,
+        music: null,
+      });
+      renderDetail(video);
+
+      // uploadDate is still set by baseMetadata, so the section itself
+      // renders (it isn't entirely empty) -- but every other field is absent.
+      expect(screen.getByText('Extra data')).toBeInTheDocument();
+      expect(screen.queryByText('License')).not.toBeInTheDocument();
+      expect(screen.queryByText('Categories')).not.toBeInTheDocument();
+      expect(screen.queryByText('Tags')).not.toBeInTheDocument();
+      expect(screen.queryByText('Music')).not.toBeInTheDocument();
+      expect(screen.queryByText('Uploader')).not.toBeInTheDocument();
+    });
+  });
+
+  it('regression: a real YouTube entry gets no platform chip, keeps Extract MP3, has no mp3 Convert-to option, and no Extra data section', async () => {
+    const video = makeVideo({
+      downloadedFilePath: '/v/video.mp4', downloadedResolution: '720', downloadedFormat: 'dflt',
+    });
+    renderDetail(video);
+    const user = userEvent.setup();
+
+    expect(screen.getByText('720p')).toBeInTheDocument();
+    expect(screen.queryByText('youtube')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Extract MP3' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('combobox'));
+    expect(screen.queryByRole('option', { name: 'MP3' })).not.toBeInTheDocument();
+
+    expect(screen.queryByText('Extra data')).not.toBeInTheDocument();
+  });
+
   it('switching versions swaps the displayed metadata', async () => {
     const meta100 = baseMetadata({ downloadedFilePath: '/v/100.mp4', downloadedResolution: '720', downloadedFormat: 'dflt' });
     const meta50 = baseMetadata({ downloadedFilePath: '/v/50.mp4', downloadedResolution: '480', downloadedFormat: 'dflt' });
@@ -530,6 +678,25 @@ describe('LibraryVideoDetail', () => {
       inputPath: '/v/audio.mp3', kind: 'audio',
     }));
     expect(await screen.findByText('Metadata embedded')).toBeInTheDocument();
+  });
+
+  // Regression test: a generic (non-YouTube) entry has no separate
+  // downloadedAudioFilePath slot, so an audio-only download (resolution
+  // 'MP3') lands directly in downloadedFilePath -- kind must reflect that
+  // it's audio, not assume "downloadedFilePath means video" the way a real
+  // YouTube video+separate-MP3 entry always can.
+  it('embeds metadata with kind "audio" when downloadedFilePath itself holds an MP3-resolution download', async () => {
+    const video = makeVideo({
+      downloadedFilePath: '/v/track.mp3', downloadedResolution: 'MP3', downloadedFormat: 'dflt',
+    });
+    renderDetail(video);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Embed metadata into local file' }));
+
+    await waitFor(() => expect(window.electronAPI.embedFileMetadata).toHaveBeenCalledWith(expect.objectContaining({
+      inputPath: '/v/track.mp3', kind: 'audio',
+    })));
   });
 
   it('deletes the last remaining version and bounces out via onDeleted', async () => {
@@ -720,6 +887,45 @@ describe('LibraryVideoDetail', () => {
       // confirms ClipCollectionView picked clip2 as active, not just that
       // clip2 appears somewhere in the sidebar list.
       expect(await screen.findByTestId('fake-player-override-path')).toHaveAttribute('data-override-file-path', expect.stringContaining('Clip Two.mp4'));
+    });
+
+    // Regression test: ClipCollectionView's "Mark clip on original video"
+    // re-navigates to this *same* video with fresh initialClipStartSeconds/
+    // EndSeconds -- LibraryScreen.tsx renders this component without a key,
+    // so it doesn't remount, and activeView's own useState initializer
+    // never re-runs on its own. Without the dedicated effect that watches
+    // these two props, the user stayed stuck on the Clip Collection tab.
+    it('switches back to the video view when a "mark clip on original video" deep link arrives while Clip Collection is open', async () => {
+      const video = makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720' }, { clipCount: 1 });
+      window.electronAPI.getClips = vi.fn().mockResolvedValue({
+        success: true,
+        clips: [{ id: 'clip1', fileName: 'Clip One.mp4', title: 'Clip One', createdAt: 0, durationSeconds: 5 }],
+      });
+      const { rerender } = renderDetail(video, {}, { initialActiveView: 'clips' });
+
+      expect(await screen.findByText('Clip One')).toBeInTheDocument();
+
+      rerender(
+        <MemoryRouter>
+          <BackgroundPlayerProvider>
+            <LibraryVideoDetail
+              video={video}
+              onBack={vi.fn()}
+              onLibraryChanged={vi.fn()}
+              onDeleted={vi.fn()}
+              onVersionsChanged={vi.fn()}
+              videoTags={{}}
+              onVideoTagsChanged={vi.fn()}
+              initialActiveView="clips"
+              initialClipStartSeconds={5}
+              initialClipEndSeconds={12}
+            />
+          </BackgroundPlayerProvider>
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByRole('button', { name: 'Fake save clip' })).toBeInTheDocument();
+      expect(screen.queryByText('Clip One')).not.toBeInTheDocument();
     });
   });
 

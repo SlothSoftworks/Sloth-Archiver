@@ -7,6 +7,7 @@ import {
   sanitizeForFilesystem,
   channelFolderName,
   videoFolderName,
+  nonYoutubeVideoHash,
   writeLibraryEntry,
   addLibraryVersion,
   refreshLibraryEntryMetadata,
@@ -33,6 +34,7 @@ import {
   CURRENT_PLAYLIST_SCHEMA_VERSION,
   PLAYLISTS_DIR_NAME,
   CLIPS_DIR_NAME,
+  NONYT_DIR_NAME,
   DEFAULT_LIBRARY_DIR_NAME,
   libraryTagDir,
   listLibraryTags,
@@ -138,6 +140,31 @@ describe('channelFolderName / videoFolderName', () => {
   });
 });
 
+describe('nonYoutubeVideoHash', () => {
+  it('is deterministic for the same input', () => {
+    const first = nonYoutubeVideoHash('soundcloud', 'track123', 'https://soundcloud.com/artist/track123');
+    const second = nonYoutubeVideoHash('soundcloud', 'track123', 'https://soundcloud.com/artist/track123');
+    expect(first).toBe(second);
+  });
+
+  it('differs for the same id under a different extractorKey', () => {
+    const soundcloud = nonYoutubeVideoHash('soundcloud', 'abc123', 'https://soundcloud.com/x/abc123');
+    const dailymotion = nonYoutubeVideoHash('dailymotion', 'abc123', 'https://dailymotion.com/x/abc123');
+    expect(soundcloud).not.toBe(dailymotion);
+  });
+
+  it('falls back to hashing originalUrl when id is missing', () => {
+    const withoutId = nonYoutubeVideoHash('soundcloud', null, 'https://soundcloud.com/artist/track123');
+    const fromUrlDirectly = nonYoutubeVideoHash('anything', null, 'https://soundcloud.com/artist/track123');
+    expect(withoutId).toBe(fromUrlDirectly);
+  });
+
+  it('always returns 16 hex chars', () => {
+    expect(nonYoutubeVideoHash('soundcloud', 'track123', 'https://soundcloud.com/artist/track123')).toMatch(/^[0-9a-f]{16}$/);
+    expect(nonYoutubeVideoHash('soundcloud', null, 'https://soundcloud.com/artist/track123')).toMatch(/^[0-9a-f]{16}$/);
+  });
+});
+
 describe('writeLibraryEntry', () => {
   it('throws when videoMetaData.id is missing', () => {
     expect(() => writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: undefined }) }))
@@ -156,7 +183,7 @@ describe('writeLibraryEntry', () => {
     expect(channelDir).toBe(path.join(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Some Channel'));
     expect(videoDir).toBe(path.join(channelDir, 'abc123'));
 
-    expect(metadata.schemaVersion).toBe(4);
+    expect(metadata.schemaVersion).toBe(5);
     expect(metadata.videoId).toBe('abc123');
     expect(metadata.channel).toBe('Some Channel');
     expect(metadata.resolutions).toEqual([{ resolution: '720', filesizeMb: '10' }]);
@@ -192,6 +219,61 @@ describe('writeLibraryEntry', () => {
     const second = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
 
     expect(second).toEqual(first);
+  });
+
+  it('writes a non-YouTube entry under NonYT/<platform>/<hash> instead of a channel/videoId path', () => {
+    const videoMetaData = baseVideoMetaData({
+      id: 'track123',
+      uploader: 'Some Artist',
+      platform: 'soundcloud',
+      extractorKey: 'Soundcloud',
+      originalUrl: 'https://soundcloud.com/some-artist/track123',
+    });
+    const { channelDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData });
+
+    const expectedHash = nonYoutubeVideoHash('Soundcloud', 'track123', 'https://soundcloud.com/some-artist/track123');
+    expect(channelDir).toBe(path.join(libraryDir, DEFAULT_LIBRARY_DIR_NAME, NONYT_DIR_NAME, 'soundcloud'));
+    expect(videoDir).toBe(path.join(channelDir, expectedHash));
+
+    // The bug this whole phase exists to fix: a generic entry's single
+    // download option (even a pure-audio one) must land in the same slot a
+    // video download would, not the YouTube-only audio slot.
+    expect(metadata.downloadedAudioFilePath).toBeNull();
+    expect(metadata.channelId).toBeNull();
+    expect(metadata.platform).toBe('soundcloud');
+    expect(metadata.channel).toBe('Some Artist');
+  });
+
+  it('populates the new schemaVersion-5 fields (uploaderId/timestamp/license/categories/tags/music) for a generic entry', () => {
+    const { metadata } = writeLibraryEntry({
+      libraryDir,
+      videoMetaData: baseVideoMetaData({
+        id: 'track123',
+        platform: 'soundcloud',
+        extractorKey: 'Soundcloud',
+        uploaderId: '856062',
+        timestamp: 1314199241,
+        license: 'all-rights-reserved',
+        categories: ['Music'],
+        tags: ['dubstep'],
+        music: { track: 'First Of The Year (Equinox)', artist: 'Skrillex', album: null, genre: 'Dubstep' },
+      }),
+    });
+
+    expect(metadata.uploaderId).toBe('856062');
+    expect(metadata.timestamp).toBe(1314199241);
+    expect(metadata.license).toBe('all-rights-reserved');
+    expect(metadata.categories).toEqual(['Music']);
+    expect(metadata.tags).toEqual(['dubstep']);
+    expect(metadata.music).toEqual({ track: 'First Of The Year (Equinox)', artist: 'Skrillex', album: null, genre: 'Dubstep' });
+  });
+
+  it('still writes a YouTube entry under the usual channel/videoId path when platform is absent', () => {
+    const { channelDir, videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    expect(channelDir).toBe(path.join(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Some Channel'));
+    expect(videoDir).toBe(path.join(channelDir, 'abc123'));
+    expect(metadata.platform).toBe('youtube');
+    expect(metadata.channelId).toBe('UC123');
   });
 });
 
@@ -447,12 +529,16 @@ describe('clips (recordClip / listClips / deleteClip)', () => {
     fs.mkdirSync(path.dirname(clipPath), { recursive: true });
     fs.writeFileSync(clipPath, 'fake clip bytes');
 
-    const clip = recordClip({ libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 12 });
+    const clip = recordClip({
+      libraryDir, videoDir, fileName: path.basename(clipPath), title: 'My Clip', durationSeconds: 12,
+      clipTimestamps: { start: '00:00:01', end: '00:00:13' },
+    });
 
     expect(clip.id).toBeTruthy();
     expect(clip.createdAt).toBeTypeOf('number');
     expect(clip.fileName).toBe('My Clip.mp4');
     expect(clip.durationSeconds).toBe(12);
+    expect(clip.clipTimestamps).toEqual({ start: '00:00:01', end: '00:00:13' });
     expect(listClips({ libraryDir, videoDir })).toEqual([clip]);
   });
 
@@ -539,6 +625,18 @@ describe('clips (recordClip / listClips / deleteClip)', () => {
 
     expect(updated).toEqual({ ...clip, fileName: 'My Clip.mkv', durationSeconds: 6 });
     expect(listClips({ libraryDir, videoDir })).toEqual([]); // file on disk is still the old one in this unit test
+  });
+
+  it('updateClipFile preserves clipTimestamps across a format conversion', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clip = recordClip({
+      libraryDir, videoDir, fileName: 'My Clip.mp4', title: 'My Clip', durationSeconds: 5,
+      clipTimestamps: { start: '00:00:05', end: '00:00:10' },
+    });
+
+    const updated = updateClipFile({ libraryDir, videoDir, clipId: clip.id, fileName: 'My Clip.mkv', durationSeconds: 5 });
+
+    expect(updated.clipTimestamps).toEqual({ start: '00:00:05', end: '00:00:10' });
   });
 
   it('updateClipFile throws when the new fileName collides with a different clip', () => {
@@ -690,6 +788,65 @@ describe('scanLibrary', () => {
     expect(index.channels[0].videos[0].clipCount).toBe(2);
   });
 
+  it('flattens NonYT/<platform> folders into synthetic isPlatformGroup channels alongside real channels', async () => {
+    // A real channel, to confirm the two shapes coexist in one channels[] array.
+    writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'yt-vid', uploader: 'Real Channel' }) });
+
+    // Hand-written NonYT/<platform>/<hash>/<epoch>/metadata.json, as a
+    // library populated by an older/different process might produce, rather
+    // than only ever going through writeLibraryEntry itself.
+    const platformDir = path.join(libraryTagDir(libraryDir), NONYT_DIR_NAME, 'soundcloud');
+    const hash = nonYoutubeVideoHash('Soundcloud', 'track123', 'https://soundcloud.com/artist/track123');
+    const epochDir = path.join(platformDir, hash, '1700000000000');
+    fs.mkdirSync(epochDir, { recursive: true });
+    fs.writeFileSync(path.join(epochDir, 'metadata.json'), JSON.stringify({
+      schemaVersion: 5,
+      videoId: 'track123',
+      platform: 'soundcloud',
+      channelId: null,
+      channel: 'Some Artist',
+      title: 'A Soundcloud Track',
+      addedEpoch: 1700000000000,
+      downloadedFilePath: null,
+      downloadedAudioFilePath: null,
+    }), 'utf-8');
+
+    const index = await scanLibrary(libraryDir);
+
+    const realChannel = index.channels.find((c) => c.displayName === 'Real Channel');
+    expect(realChannel).toBeDefined();
+    expect(realChannel.isPlatformGroup).toBeFalsy();
+
+    const platformGroup = index.channels.find((c) => c.isPlatformGroup);
+    expect(platformGroup).toBeDefined();
+    expect(platformGroup.platform).toBe('soundcloud');
+    expect(platformGroup.displayName).toBe('soundcloud');
+    expect(platformGroup.channelIconPath).toBeNull();
+    // Full relative path, not a bare folder name -- moveLibraryEntry/
+    // library:refreshChannelIcon build an absolute path via
+    // path.join(libraryTagDir(...), channelFolderName) directly.
+    expect(platformGroup.channelFolderName).toBe(path.join(NONYT_DIR_NAME, 'soundcloud'));
+    expect(platformGroup.videos).toHaveLength(1);
+    expect(platformGroup.videos[0].metadata.videoId).toBe('track123');
+    expect(platformGroup.videos[0].metadata.platform).toBe('soundcloud');
+  });
+
+  it('groups multiple platform subfolders under NonYT into separate synthetic channels', async () => {
+    const soundcloudEpoch = path.join(libraryTagDir(libraryDir), NONYT_DIR_NAME, 'soundcloud', 'hash1', '1700000000000');
+    const dailymotionEpoch = path.join(libraryTagDir(libraryDir), NONYT_DIR_NAME, 'dailymotion', 'hash2', '1700000000001');
+    for (const [epochDir, videoId, platform] of [[soundcloudEpoch, 'sc-1', 'soundcloud'], [dailymotionEpoch, 'dm-1', 'dailymotion']]) {
+      fs.mkdirSync(epochDir, { recursive: true });
+      fs.writeFileSync(path.join(epochDir, 'metadata.json'), JSON.stringify({
+        schemaVersion: 5, videoId, platform, channelId: null, channel: null, title: 't', addedEpoch: 1700000000000,
+        downloadedFilePath: null, downloadedAudioFilePath: null,
+      }), 'utf-8');
+    }
+
+    const index = await scanLibrary(libraryDir);
+
+    const platformGroups = index.channels.filter((c) => c.isPlatformGroup);
+    expect(platformGroups.map((c) => c.platform).sort()).toEqual(['dailymotion', 'soundcloud']);
+  });
 });
 
 describe('checkAndRepairEpochFiles', () => {
@@ -1077,6 +1234,32 @@ describe('findVideoInIndex', () => {
   it('returns null when the video is not found', () => {
     const index = { channels: [{ displayName: 'A', videos: [] }] };
     expect(findVideoInIndex(index, 'missing')).toBeNull();
+  });
+
+  it('disambiguates a colliding raw id across two different extractors when platform is given', () => {
+    const index = {
+      channels: [
+        { displayName: 'soundcloud', videos: [{ metadata: { videoId: 'shared-id', platform: 'soundcloud' } }] },
+        { displayName: 'dailymotion', videos: [{ metadata: { videoId: 'shared-id', platform: 'dailymotion' } }] },
+      ],
+    };
+
+    const soundcloudMatch = findVideoInIndex(index, 'shared-id', 'soundcloud');
+    expect(soundcloudMatch.channel.displayName).toBe('soundcloud');
+
+    const dailymotionMatch = findVideoInIndex(index, 'shared-id', 'dailymotion');
+    expect(dailymotionMatch.channel.displayName).toBe('dailymotion');
+  });
+
+  it('without a platform argument, matches on videoId alone (backward compatible)', () => {
+    const index = { channels: [{ displayName: 'A', videos: [{ metadata: { videoId: 'shared-id', platform: 'soundcloud' } }] }] };
+    expect(findVideoInIndex(index, 'shared-id')).not.toBeNull();
+  });
+
+  it('treats a null/absent metadata.platform as youtube when a platform is given', () => {
+    const index = { channels: [{ displayName: 'A', videos: [{ metadata: { videoId: 'old-entry', platform: null } }] }] };
+    expect(findVideoInIndex(index, 'old-entry', 'youtube')).not.toBeNull();
+    expect(findVideoInIndex(index, 'old-entry', 'soundcloud')).toBeNull();
   });
 });
 

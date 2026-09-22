@@ -280,37 +280,87 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog,
         });
     }
 
-    // Below this fraction of the clip's own length, or this many seconds in
-    // absolute terms, a keyframe-rounded start is a rounding error nobody
-    // will notice (a 2s-early start on a 10-minute clip is 0.3% of it).
-    // Above it, a real, perceptible chunk of what the user asked for would
-    // be missing (that same 2s on a 3-second clip is 65% of it) -- these
-    // numbers aren't tuned against real user reports, just chosen to
-    // separate those two cases by a wide margin.
-    const KEYFRAME_RISK_RATIO_THRESHOLD = 0.1;
-    const KEYFRAME_RISK_ABSOLUTE_FLOOR_SECONDS = 0.5;
+    // Two independent reasons a copy-mode clip's keyframe-rounded start can
+    // be wrong -- each gets its own threshold rather than folding them into
+    // one number, since they don't scale the same way:
+    //  - A/V sync: under stream copy, video can only start on a keyframe,
+    //    but audio has no such restriction and lands almost exactly on the
+    //    requested point -- confirmed directly against a real clip whose
+    //    video and audio, after copy-mode trimming, started ~0.46s apart
+    //    even though the keyframe offset causing it was under 1% of that
+    //    clip's own length (see clipAndConvert's own comment). That gap is a
+    //    perceptual constant, not something that gets less noticeable on a
+    //    longer clip -- ITU-R BT.1359 puts the detectability threshold
+    //    around 45ms (audio ahead of video) to 125ms (audio behind); 100ms
+    //    is a reasonable single cutoff given this is already a coarse proxy
+    //    (measuring video's own rounding, not the actual video/audio
+    //    difference -- audio's rounding is comparatively negligible).
+    //  - Content loss: even a sync-safe offset can still eat a real chunk of
+    //    a *very short* clip (a 0.4s-early start is a rounding error on a
+    //    10-minute clip, but is most of a 3-second one) -- kept as a
+    //    fraction-of-clip-length check alongside the fixed sync floor above,
+    //    not instead of it, since the two failure modes are unrelated.
+    const AV_SYNC_RISK_THRESHOLD_SECONDS = 0.1;
+    const CONTENT_LOSS_RISK_RATIO_THRESHOLD = 0.1;
 
     async function isKeyframeRoundingRisky(inputPath, startSeconds, totalDurationSeconds) {
         if (!(totalDurationSeconds > 0)) return false;
         const keyframeBefore = await findLastKeyframeAtOrBefore(inputPath, startSeconds);
         const offset = Math.max(0, startSeconds - keyframeBefore);
-        return offset > KEYFRAME_RISK_ABSOLUTE_FLOOR_SECONDS
-            && (offset / totalDurationSeconds) > KEYFRAME_RISK_RATIO_THRESHOLD;
+        return offset > AV_SYNC_RISK_THRESHOLD_SECONDS
+            || (offset / totalDurationSeconds) > CONTENT_LOSS_RISK_RATIO_THRESHOLD;
+    }
+
+    // How much earlier than the requested start to land the fast,
+    // index-based input seek before handing the small remainder off to an
+    // exact output-side seek -- see buildSplitSeekArgs's own comment for why
+    // splitting the seek this way matters. Comfortably larger than the
+    // keyframe intervals seen in real library files (~2-10s, per
+    // KEYFRAME_SEARCH_WINDOW_SECONDS's own comment), so the coarse seek
+    // always lands before any keyframe the fine seek might need to decode
+    // through, while still keeping the input seek itself a genuine O(1)
+    // index jump rather than a slow linear read from the start of the file.
+    const COARSE_SEEK_BUFFER_SECONDS = 15;
+
+    // Splits a single requested start time into a fast, approximate
+    // input-side seek plus an exact output-side remainder -- the standard
+    // ffmpeg technique for frame-accurate seeking without paying for a full
+    // linear read from the start of the file
+    // (https://trac.ffmpeg.org/wiki/Seeking). Used only for the video-only
+    // re-encode path below: a single input-side -ss leaves the re-encoded
+    // video stream frame-accurate regardless (decoding always discards
+    // frames before the requested point), but leaves the *copied* audio
+    // stream still landing wherever that one input seek happened to put it
+    // -- an output-side seek is what actually trims a copied stream
+    // precisely, packet by packet, without decoding it. See clipAndConvert's
+    // own comment for the full reasoning and the real numbers behind it.
+    function buildSplitSeekArgs(startSeconds) {
+        const coarseSeekSeconds = Math.max(0, startSeconds - COARSE_SEEK_BUFFER_SECONDS);
+        const fineSeekSeconds = startSeconds - coarseSeekSeconds;
+        return {
+            preInputArgs: coarseSeekSeconds > 0 ? ['-ss', String(coarseSeekSeconds)] : [],
+            fineSeekArgs: fineSeekSeconds > 0 ? ['-ss', String(fineSeekSeconds)] : [],
+        };
     }
 
     // "Same as source" (format 'source') means don't change the codec, only
-    // stop stream-copying -- so when a keyframe-risk re-encode is needed
-    // there, it still has to re-encode into *something* resembling the
-    // source rather than a fixed target. Only VP8/VP9 (-> WebM's own codecs)
-    // is special-cased, matching convertWithFallback/the reencodeCodecArgs
-    // below -- anything else (including codecs this bundled ffmpeg can't
-    // encode) falls back to the same libx264/aac default those use, which is
-    // already correct for the overwhelmingly common case (yt-dlp downloads
-    // are forced to --merge-output-format mp4, i.e. already h264/aac).
-    async function reencodeCodecArgsMatchingSource(inputPath) {
+    // stop stream-copying the video -- so when a keyframe-risk re-encode is
+    // needed there, it still has to re-encode into *something* resembling
+    // the source rather than a fixed target. Only VP8/VP9 (-> WebM's own
+    // codecs) is special-cased, matching convertWithFallback/the
+    // reencodeCodecArgs below -- anything else (including codecs this
+    // bundled ffmpeg can't encode) falls back to the same libx264 default
+    // those use, which is already correct for the overwhelmingly common case
+    // (yt-dlp downloads are forced to --merge-output-format mp4, i.e.
+    // already h264). Video-only, not video+audio: audio is never actually at
+    // risk from keyframe rounding (see isKeyframeRoundingRisky's own
+    // comment) -- clipAndConvert keeps stream-copying it even on this
+    // "risky" path, so re-encoding it too would only cost quality/time for
+    // no sync benefit.
+    async function reencodeVideoCodecArgsMatchingSource(inputPath) {
         const streams = await probeMediaStreams(inputPath).catch(() => []);
         const isVp8or9 = streams.some((s) => s.codecType === 'video' && /^vp[89]$/.test(s.codecName || ''));
-        return isVp8or9 ? ['-c:v', 'libvpx-vp9', '-c:a', 'libopus'] : ['-c:v', 'libx264', '-c:a', 'aac'];
+        return isVp8or9 ? ['-c:v', 'libvpx-vp9'] : ['-c:v', 'libx264'];
     }
 
     // Clip [start,end] and, optionally, convert format in one pass -- not a
@@ -334,15 +384,34 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog,
     // makes the demuxer jump to the keyframe *at or before* the requested
     // point, so video and audio both start together at that same boundary --
     // zero re-encoding, zero quality/frame loss, just a clip that may start
-    // up to one GOP length earlier than the exact requested timestamp (the
-    // standard, universally-recommended tradeoff for lossless trimming).
+    // up to one GOP length earlier than the exact requested timestamp.
+    //
+    // That tradeoff has a real, separate cost of its own, though: audio
+    // isn't keyframe-bound the way video is, so its own copy-mode trim lands
+    // much closer to the requested point than video's does -- confirmed
+    // directly against a real clip (start 00:00:23.290 into an AV1/Opus
+    // source) where the nearest keyframe at or before that point was at
+    // 21.855s, and the actual output file's first video packet landed at
+    // -1.468s relative to the intended start while its first audio packet
+    // landed at -1.009s -- a ~0.46s *relative* offset between the two
+    // streams baked permanently into the file, not something a player can
+    // ever correct for. isKeyframeRoundingRisky below exists specifically to
+    // catch this -- when it does, the branches below re-encode video only
+    // (frame-accurate regardless of seek placement, since decoding always
+    // discards frames before the requested point) while still
+    // stream-copying audio via buildSplitSeekArgs's output-side fine seek
+    // (confirmed against the same real file: video and audio then land
+    // 0.033s/0.011s after the intended start, a ~0.02s difference -- well
+    // under the ~45-125ms perceptibility range cited in
+    // isKeyframeRoundingRisky's own comment), rather than the coarse
+    // single-input-seek used by the fast copy-both path below (which would
+    // leave audio just as unfixed as video was).
     // startSeconds (plain seconds, separate from the HH:MM:SS `start` string
     // ffmpeg itself takes) drives isKeyframeRoundingRisky below -- when that
-    // tradeoff would actually cost a noticeable chunk of a short clip, this
-    // skips straight to a real re-encode (frame-accurate, since re-encoding
-    // decodes every frame rather than copying packets) instead of accepting
-    // it, without paying that re-encode cost on the vast majority of clips
-    // where the rounding error is negligible.
+    // tradeoff would actually cost a noticeable chunk of a short clip, or
+    // risk an audible A/V sync gap, this skips straight to that video-only
+    // re-encode instead of accepting it, without paying any re-encode cost
+    // on the vast majority of clips where the rounding error is negligible.
     // -to (an absolute output timestamp) is replaced with -t (a duration):
     // once the input has been seeked, -to's "absolute timestamp" meaning is
     // no longer relative to the original file, but -t's plain duration is
@@ -370,8 +439,24 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog,
 
         if (isSourceFormat) {
             if (forceReencode || risky) {
-                const sourceReencodeCodecArgs = await reencodeCodecArgsMatchingSource(inputPath);
-                await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, ...sourceReencodeCodecArgs], totalDurationSeconds, onProgress, preInputArgs });
+                const videoCodecArgs = await reencodeVideoCodecArgsMatchingSource(inputPath);
+                const codecArgs = [...durationArgs, ...videoCodecArgs, '-c:a', 'copy'];
+                // The split seek needs a concrete startSeconds to divide --
+                // an older/backward-compatible caller that only ever passes
+                // forceReencode without it (startSeconds == null skips the
+                // risk check above entirely, but forceReencode can still
+                // reach here on its own) falls back to the plain single
+                // input-side seek instead, same placement as the fast path
+                // below, since there's nothing to split.
+                if (startSeconds != null) {
+                    const { preInputArgs: splitPreInputArgs, fineSeekArgs } = buildSplitSeekArgs(startSeconds);
+                    await runFfmpegWithProgress({
+                        inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress,
+                        preInputArgs: splitPreInputArgs, extraInputArgs: fineSeekArgs,
+                    });
+                    return;
+                }
+                await runFfmpegWithProgress({ inputPath, outputPath, codecArgs, totalDurationSeconds, onProgress, preInputArgs });
                 return;
             }
             await runFfmpegWithProgress({ inputPath, outputPath, codecArgs: [...durationArgs, '-c', 'copy'], totalDurationSeconds, onProgress, preInputArgs });

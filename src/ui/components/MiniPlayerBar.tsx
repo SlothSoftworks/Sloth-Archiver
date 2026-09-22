@@ -5,12 +5,15 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
+import VolumeUpIcon from '@mui/icons-material/VolumeUp';
+import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import CloseIcon from '@mui/icons-material/Close';
 import MusicNoteIcon from '@mui/icons-material/MusicNote';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import { buildAppVideoUrl } from '../../utils/utils.ts';
 import { useBackgroundPlayer, videoDetailPathFor, formatPlaybackTime } from '../hooks/useBackgroundPlayer.tsx';
 import QueueDrawer from './QueueDrawer';
+import VolumePopover from './VolumePopover';
 
 // Persistent across every tab -- rendered in MainPage.tsx as a sibling to
 // its CustomTabPanels, the same placement BulkAddSidePanel already uses to
@@ -18,8 +21,12 @@ import QueueDrawer from './QueueDrawer';
 // -- the underlying <video> element (BackgroundPlayerProvider) keeps
 // playing regardless, this is just a control surface for it.
 export default function MiniPlayerBar() {
-  const { queue, currentIndex, current, paused, currentTime, duration, pause, resume, seek, next, previous, stop } = useBackgroundPlayer();
+  const {
+    queue, currentIndex, current, paused, currentTime, duration, volume, muted, setVolume, setMuted,
+    pause, resume, seek, next, previous, stop,
+  } = useBackgroundPlayer();
   const [queueOpen, setQueueOpen] = useState(false);
+  const [volumeAnchorEl, setVolumeAnchorEl] = useState<HTMLElement | null>(null);
 
   if (!current) return null;
 
@@ -79,7 +86,7 @@ export default function MiniPlayerBar() {
             </Box>
           </Box>
 
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ width: 220, flexShrink: 0 }}>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ width: 260, flexShrink: 0 }}>
             <Typography variant="caption" color="text.secondary" sx={{ minWidth: 32, textAlign: 'right' }}>
               {formatPlaybackTime(currentTime)}
             </Typography>
@@ -87,6 +94,8 @@ export default function MiniPlayerBar() {
               size="small"
               value={Math.min(currentTime, duration || 0)}
               max={duration || 0}
+              // SAFETY: this Slider has no `range` prop, so MUI's onChange
+              // always reports a single number here, never number[].
               onChange={(_e, value) => seek(value as number)}
               disabled={!duration}
               aria-label="Seek"
@@ -94,6 +103,28 @@ export default function MiniPlayerBar() {
             <Typography variant="caption" color="text.secondary" sx={{ minWidth: 32 }}>
               {formatPlaybackTime(duration)}
             </Typography>
+            {/* Anchored inside the same Stack as the seek slider -- not as a
+                sibling further along the bar -- so it keeps the same
+                breathing room from the window edge that QueueDrawer's own
+                volume button has inside its (narrower) drawer panel. */}
+            <Tooltip title={volumeAnchorEl ? 'Hide volume' : 'Show volume'}>
+              <IconButton
+                size="small"
+                onClick={(e) => setVolumeAnchorEl(volumeAnchorEl ? null : e.currentTarget)}
+                aria-label={volumeAnchorEl ? 'Hide volume' : 'Show volume'}
+              >
+                {muted || volume === 0 ? <VolumeOffIcon fontSize="small" /> : <VolumeUpIcon fontSize="small" />}
+              </IconButton>
+            </Tooltip>
+            <VolumePopover
+              open={!!volumeAnchorEl}
+              anchorEl={volumeAnchorEl}
+              onClose={() => setVolumeAnchorEl(null)}
+              volume={volume}
+              muted={muted}
+              onVolumeChange={setVolume}
+              onToggleMute={() => setMuted(!muted)}
+            />
           </Stack>
 
           {queue.length > 1 &&

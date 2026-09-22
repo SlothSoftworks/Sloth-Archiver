@@ -306,6 +306,48 @@ describe('useBackgroundPlayer', () => {
     expect(result.current.duration).toBe(0);
   });
 
+  it('starts at full volume, unmuted', () => {
+    const { result } = renderHook(() => useBackgroundPlayer(), { wrapper: BackgroundPlayerProvider });
+    expect(result.current.volume).toBe(1);
+    expect(result.current.muted).toBe(false);
+  });
+
+  it('setVolume() updates state and the underlying element\'s volume', async () => {
+    const { result } = renderHook(() => useBackgroundPlayer(), { wrapper: BackgroundPlayerProvider });
+    act(() => result.current.enqueue(makeVideo()));
+    await waitFor(() => expect(result.current.current).not.toBeNull());
+
+    act(() => result.current.setVolume(0.4));
+
+    expect(result.current.volume).toBe(0.4);
+    expect(result.current.videoRef.current?.volume).toBe(0.4);
+  });
+
+  it('setMuted() updates state and the underlying element\'s muted flag', async () => {
+    const { result } = renderHook(() => useBackgroundPlayer(), { wrapper: BackgroundPlayerProvider });
+    act(() => result.current.enqueue(makeVideo()));
+    await waitFor(() => expect(result.current.current).not.toBeNull());
+
+    act(() => result.current.setMuted(true));
+
+    expect(result.current.muted).toBe(true);
+    expect(result.current.videoRef.current?.muted).toBe(true);
+  });
+
+  it('applies the current volume/muted to a freshly-loaded source, not just the element already playing', async () => {
+    const { result } = renderHook(() => useBackgroundPlayer(), { wrapper: BackgroundPlayerProvider });
+    act(() => result.current.enqueue(makeVideo({ videoId: 'v1' })));
+    await waitFor(() => expect(result.current.current?.videoId).toBe('v1'));
+    act(() => result.current.setVolume(0.2));
+    act(() => result.current.setMuted(true));
+
+    act(() => result.current.enqueue(makeVideo({ videoId: 'v2' })));
+    act(() => result.current.playAt(1));
+
+    expect(result.current.videoRef.current?.volume).toBe(0.2);
+    expect(result.current.videoRef.current?.muted).toBe(true);
+  });
+
   it('shares one live instance across every consumer under the same provider', async () => {
     const { result: a } = renderHook(() => useBackgroundPlayer(), { wrapper: BackgroundPlayerProvider });
     // Two independently-mounted providers -- confirms state is scoped per

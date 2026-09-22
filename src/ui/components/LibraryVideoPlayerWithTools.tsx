@@ -41,6 +41,12 @@ export type LibraryVideoPlayerWithToolsProps = {
   // same name for what this does (hands off from the separate background
   // player, see useBackgroundPlayer.tsx).
   initialSeekSeconds?: number | null;
+  // One-shot seed for clipStartSeconds/clipEndSeconds -- set when this video
+  // was opened via ClipCollectionView's "Mark clip on original video"
+  // deep link (see LibraryScreen.tsx), same one-shot-handoff shape as
+  // initialSeekSeconds above.
+  initialClipStartSeconds?: number | null;
+  initialClipEndSeconds?: number | null;
   // Passed straight through to LibraryVideoPlayer -- see its own prop of the
   // same name.
   backgroundPlayOverride?: { videoId: string; title: string; thumbnailPath: string | null; clipId: string };
@@ -57,10 +63,11 @@ function extensionForFormat(format: string, inputPath: string): string {
 export default function LibraryVideoPlayerWithTools({
   metadata, thumbnailPath, cacheBustKey, overrideFilePath, videoDir, epoch, existingClipTitles, convertFormatOptions, onClipCreated,
   standaloneClipping = false, onClipSavedToFile, initialSeekSeconds, backgroundPlayOverride,
+  initialClipStartSeconds, initialClipEndSeconds,
 }: LibraryVideoPlayerWithToolsProps) {
   const playerRef = useRef<LibraryVideoPlayerHandle>(null);
-  const [clipStartSeconds, setClipStartSeconds] = useState<number | null>(null);
-  const [clipEndSeconds, setClipEndSeconds] = useState<number | null>(null);
+  const [clipStartSeconds, setClipStartSeconds] = useState<number | null>(initialClipStartSeconds ?? null);
+  const [clipEndSeconds, setClipEndSeconds] = useState<number | null>(initialClipEndSeconds ?? null);
   const [saveClipDialogOpen, setSaveClipDialogOpen] = useState(false);
   const [savingClip, setSavingClip] = useState(false);
   const [saveClipError, setSaveClipError] = useState<string | null>(null);

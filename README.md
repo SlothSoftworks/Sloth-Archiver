@@ -20,7 +20,8 @@ Docker, servers, or a complicated setup to get one.**
 *Free and open source: no subscriptions, no accounts, no server to run.*
 
 SlothArchiver is a free desktop app for downloading and organizing videos and audio
-from YouTube and other platforms into a permanent library on your own computer.
+from YouTube and virtually any other platform yt-dlp supports into a permanent
+library on your own computer.
 Install it, point it at a folder, and it does the archiving for you: no
 subscriptions, no re-uploading to yet another cloud service, no losing access
 when a video gets taken down or a channel disappears. The name isn't ironic:
@@ -29,17 +30,17 @@ itself.
 
 ## Download
 
-<!-- Update the version in these 5 links on every release, currently 1.2.0.
+<!-- Update the version in these 5 links on every release, currently 1.3.0.
      Each filename must match exactly what GitHub actually named the asset on
      the release page -->
 
 | Platform | Link |
 |---|---|
-| Windows (installer) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v1.2.0/SlothArchiver.Setup.1.2.0.exe) |
-| Windows (portable, no install) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v1.2.0/SlothArchiver.1.2.0.exe) |
-| macOS (Apple Silicon) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v1.2.0/SlothArchiver-1.2.0-arm64.dmg) |
-| macOS (Intel) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v1.2.0/SlothArchiver-1.2.0.dmg) |
-| Linux (AppImage) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v1.2.0/SlothArchiver-1.2.0.AppImage) |
+| Windows (installer) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v1.3.0/SlothArchiver.Setup.1.3.0.exe) |
+| Windows (portable, no install) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v1.3.0/SlothArchiver.1.3.0.exe) |
+| macOS (Apple Silicon) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v1.3.0/SlothArchiver-1.3.0-arm64.dmg) |
+| macOS (Intel) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v1.3.0/SlothArchiver-1.3.0.dmg) |
+| Linux (AppImage) | [Download](https://github.com/SlothSoftworks/Sloth-Archiver/releases/download/v1.3.0/SlothArchiver-1.3.0.AppImage) |
 
 All builds are unsigned, so your OS will show a first-run security warning.
 See [Installing](#installing) below.
@@ -93,10 +94,12 @@ That's the whole point of SlothArchiver: a simple catalogued library, organized 
 - **Download video or audio** from YouTube and virtually any other site yt-dlp
   supports (1800+ platforms, including SoundCloud, TikTok, Instagram, Facebook,
   Dailymotion, and more) in the quality you choose.
-- **A real library, not just a downloads folder.** Every video is organized by
-  channel, searchable, and keeps a history of versions if you ever re-fetch it.
-  Most downloaders stop at "file saved somewhere"; SlothArchiver actually keeps
-  track of what you have.
+- **A real library, not just a downloads folder.** Works with YouTube and
+  virtually any other yt-dlp-supported platform — YouTube videos are
+  organized by channel, everything else by platform, and either way it's
+  searchable, filterable, and keeps a history of versions if you ever
+  re-fetch it. Most downloaders stop at "file saved somewhere"; SlothArchiver
+  actually keeps track of what you have.
 - **Playlist archiving**: save an entire playlist at once, and refresh it later to
   pick up new additions without losing what you already have, with removed videos
   automatically flagged instead of silently disappearing.
@@ -219,7 +222,7 @@ SlothArchiver is a personal-use, local tool: everything it downloads stays in yo
 >TL;DR: It's a gray area as far as YouTube is concerned but not illegal. This is a personal, local-only archiving tool; staying within your platform's ToS and your local copyright law is on you.
 
 #### What platforms does SlothArchiver support downloading from?
-At time of writing we support YouTube for downloads, library, and playlists. For pure downloads, we support virtually any site [yt-dlp itself supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) (1800+ platforms), including TikTok, Instagram, Twitter, Facebook, SoundCloud, and Dailymotion, to name a few with dedicated recognition in the app's UI.
+Downloads and the library both work with virtually any site [yt-dlp itself supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) (1800+ platforms), including YouTube, TikTok, Instagram, Twitter, Facebook, SoundCloud, and Dailymotion, to name a few with dedicated recognition in the app's UI. Playlists are currently YouTube-only (see "Can I download an entire playlist?" below).
 
 #### What operating systems does SlothArchiver run on?
 Currently we support Mac, Linux, and Windows. This is a solo dev operation and I manually create the executables per system, so I expect there could be OS issues as more people try out the software on their systems. If you experience any issues, let me know by raising an issue and detailing it there.

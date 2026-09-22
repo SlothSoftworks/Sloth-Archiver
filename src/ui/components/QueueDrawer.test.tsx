@@ -5,6 +5,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import QueueDrawer from './QueueDrawer';
+import MiniPlayerBar from './MiniPlayerBar';
 import { BackgroundPlayerProvider, useBackgroundPlayer, type BackgroundPlayerVideo } from '../hooks/useBackgroundPlayer.tsx';
 
 function makeVideo(overrides: Partial<BackgroundPlayerVideo> = {}): BackgroundPlayerVideo {
@@ -164,6 +165,75 @@ describe('QueueDrawer', () => {
     await user.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(screen.getByRole('heading', { level: 6 })).toHaveTextContent('Video Two');
+  });
+
+  it('the volume popover opens on click, closes on a second click, and its mute button toggles muted', async () => {
+    const user = userEvent.setup();
+    const videos = [makeVideo({ videoId: 'v1' })];
+    renderDrawer(videos);
+    await user.click(screen.getByRole('button', { name: 'enqueue v1 (test)' }));
+    await user.click(screen.getByRole('button', { name: 'open drawer (test)' }));
+    await screen.findByRole('button', { name: 'Show volume' });
+
+    expect(screen.queryByRole('button', { name: 'Mute' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Show volume' }));
+    await screen.findByRole('button', { name: 'Mute' });
+
+    await user.click(screen.getByRole('button', { name: 'Mute' }));
+
+    expect(document.querySelector('video')).toHaveProperty('muted', true);
+    expect(await screen.findByRole('button', { name: 'Unmute' })).toBeInTheDocument();
+
+    // hidden: true -- MUI's Popover marks everything outside itself
+    // aria-hidden while open, including this same anchor button, which is
+    // otherwise perfectly real and clickable.
+    await user.click(screen.getByRole('button', { name: 'Hide volume', hidden: true }));
+    expect(screen.queryByRole('button', { name: 'Unmute' })).not.toBeInTheDocument();
+  });
+
+  it('the volume popover\'s slider drives the underlying element\'s volume', async () => {
+    const user = userEvent.setup();
+    const videos = [makeVideo({ videoId: 'v1' })];
+    renderDrawer(videos);
+    await user.click(screen.getByRole('button', { name: 'enqueue v1 (test)' }));
+    await user.click(screen.getByRole('button', { name: 'open drawer (test)' }));
+
+    await user.click(screen.getByRole('button', { name: 'Show volume' }));
+    const slider = await screen.findByRole('slider', { name: 'Volume' });
+    slider.focus();
+    await user.keyboard('{ArrowDown}');
+
+    expect((document.querySelector('video') as HTMLVideoElement).volume).toBeLessThan(1);
+  });
+
+  it('muting from the drawer is reflected in MiniPlayerBar\'s own control once minimized -- both surfaces share one volume state', async () => {
+    const user = userEvent.setup();
+    const videos = [makeVideo({ videoId: 'v1' })];
+    // MiniPlayerBar mounted alongside the drawer, both under the same
+    // provider -- same setup MainPage.tsx itself uses, and the only way to
+    // confirm the two surfaces' controls actually share state rather than
+    // each tracking their own copy. MiniPlayerBar hides itself while the
+    // drawer is open (see its own queueOpen state), so its own volume
+    // popover only becomes reachable again after closing the drawer below.
+    render(
+      <MemoryRouter>
+        <BackgroundPlayerProvider>
+          <Harness videos={videos} onClose={vi.fn()} />
+          <MiniPlayerBar />
+        </BackgroundPlayerProvider>
+      </MemoryRouter>,
+    );
+    await user.click(screen.getByRole('button', { name: 'enqueue v1 (test)' }));
+    await user.click(screen.getByRole('button', { name: 'open drawer (test)' }));
+    await user.click(screen.getByRole('button', { name: 'Show volume' }));
+    await user.click(await screen.findByRole('button', { name: 'Mute' }));
+
+    // MUI's Modal (which Drawer is built on) closes on Escape by default --
+    // same convention MiniPlayerBar.test.tsx's own tests already use.
+    await user.keyboard('{Escape}');
+
+    await user.click(await screen.findByRole('button', { name: 'Show volume' }));
+    expect(await screen.findByRole('button', { name: 'Unmute' })).toBeInTheDocument();
   });
 
   describe('audio/video mode toggle', () => {
