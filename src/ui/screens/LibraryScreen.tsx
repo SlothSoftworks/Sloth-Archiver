@@ -25,6 +25,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import type { SvgIconProps } from '@mui/material';
 import { pink } from '@mui/material/colors';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -51,6 +52,7 @@ import CreateSubLibraryDialog from '../components/CreateSubLibraryDialog';
 import MoveToSubLibraryDialog from '../components/MoveToSubLibraryDialog';
 import TagSelectedDialog from '../components/TagSelectedDialog';
 import TagFilterPopover, { type SystemFilterKey } from '../components/TagFilterPopover';
+import { getPlatformIcon, getPlatformColor } from '../utils/platformIcons';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
 import { useLibraryTags } from '../hooks/useLibraryTags.tsx';
@@ -911,15 +913,24 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
         <Box sx={{ p: 1.5 }}>
           <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
             <Typography variant="body1" noWrap sx={{ minWidth: 0 }}>{video.metadata.title || video.videoFolderName}</Typography>
-            {bestQuality ? (
-              <Chip
-                size="small"
-                color="success"
-                label={bestQuality.resolution === 'MP3' ? 'MP3' : `${bestQuality.resolution}p`}
-              />
-            ) : (
-              <Chip size="small" variant="outlined" label="Not downloaded" />
-            )}
+            <Stack direction="row" spacing={0.5} flexShrink={0}>
+              {video.metadata.platform && video.metadata.platform !== 'youtube' &&
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={video.metadata.platform}
+                  sx={{ borderColor: getPlatformColor(video.metadata.platform), color: getPlatformColor(video.metadata.platform) }}
+                />}
+              {bestQuality ? (
+                <Chip
+                  size="small"
+                  color="success"
+                  label={bestQuality.resolution === 'MP3' ? 'MP3' : `${bestQuality.resolution}p`}
+                />
+              ) : (
+                <Chip size="small" variant="outlined" label="Not downloaded" />
+              )}
+            </Stack>
           </Stack>
           {channelLabel &&
             <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>{channelLabel}</Typography>}
@@ -1023,6 +1034,7 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
   const tagFilteredVideos = useMemo(() => flatVideos.filter(({ video }) => {
     if (selectedSystemFilters.has('downloaded') && getBestDownloadedQuality(video.epochs) === null) return false;
     if (selectedSystemFilters.has('notDownloaded') && getBestDownloadedQuality(video.epochs) !== null) return false;
+    if (selectedSystemFilters.has('nonYoutube') && (!video.metadata.platform || video.metadata.platform === 'youtube')) return false;
     if (selectedFilterTags.size > 0 && ![...selectedFilterTags].every((tag) => videoTags[tag]?.includes(video.metadata.videoId))) return false;
     return true;
   }), [flatVideos, selectedFilterTags, selectedSystemFilters, videoTags]);
@@ -1149,6 +1161,13 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
   );
 }
 
+// Thin wrapper so callers can use getPlatformIcon's result as JSX without
+// each one destructuring/aliasing the returned component by hand.
+function PlatformIcon({ platform, ...props }: { platform?: string | null } & SvgIconProps) {
+  const Icon = getPlatformIcon(platform);
+  return <Icon {...props} />;
+}
+
 function ChannelList({ channels, openFolderDir, viewMode, onViewModeChange, onSelectChannel, onRefresh }: {
   channels: LibraryChannel[];
   openFolderDir: string;
@@ -1190,7 +1209,9 @@ function ChannelList({ channels, openFolderDir, viewMode, onViewModeChange, onSe
           <Card variant="outlined" key={channel.channelFolderName}>
             <CardActionArea onClick={() => onSelectChannel(channel)} sx={{ p: 2 }}>
               <Stack direction="row" spacing={1.5} alignItems="center">
-                {channel.channelIconPath ? (
+                {channel.isPlatformGroup ? (
+                  <PlatformIcon platform={channel.platform} color="primary" />
+                ) : channel.channelIconPath ? (
                   <Avatar src={buildAppVideoUrl(channel.channelIconPath)} alt={channel.displayName} />
                 ) : (
                   <FolderIcon color="primary" />
@@ -1254,8 +1275,11 @@ function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, 
             <ArrowBackIcon fontSize="small" />
           </IconButton>
           <Typography variant="h6">{channel.displayName}</Typography>
-          {channel.channelIconPath &&
-            <Avatar src={buildAppVideoUrl(channel.channelIconPath)} alt={channel.displayName} sx={{ width: 28, height: 28 }} />}
+          {channel.isPlatformGroup ? (
+            <PlatformIcon platform={channel.platform} color="primary" fontSize="small" />
+          ) : channel.channelIconPath && (
+            <Avatar src={buildAppVideoUrl(channel.channelIconPath)} alt={channel.displayName} sx={{ width: 28, height: 28 }} />
+          )}
         </Stack>
         <Stack direction="row" spacing={1} alignItems="center">
           <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
@@ -1270,13 +1294,15 @@ function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, 
             }
             label="Select all"
           />
-          <Tooltip title="Refresh channel icon">
-            <span>
-              <IconButton onClick={handleRefreshIcon} disabled={refreshingIcon} size="small" aria-label="Refresh channel icon">
-                {refreshingIcon ? <CircularProgress size={18} /> : <FaceRetouchingNaturalIcon fontSize="small" />}
-              </IconButton>
-            </span>
-          </Tooltip>
+          {!channel.isPlatformGroup && (
+            <Tooltip title="Refresh channel icon">
+              <span>
+                <IconButton onClick={handleRefreshIcon} disabled={refreshingIcon} size="small" aria-label="Refresh channel icon">
+                  {refreshingIcon ? <CircularProgress size={18} /> : <FaceRetouchingNaturalIcon fontSize="small" />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
         </Stack>
       </Stack>
       {isSearching && filtered.length === 0 &&

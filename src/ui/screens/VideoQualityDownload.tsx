@@ -24,6 +24,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import LocalOfferOutlinedIcon from '@mui/icons-material/LocalOfferOutlined';
 import { pink } from '@mui/material/colors';
 import { buildAppVideoUrl, formatEpochLabel, isLongVideoForPostprocess } from '../../utils/utils.ts';
+import { getPlatformColor } from '../utils/platformIcons';
 import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
 import VideoTagsPopover from '../components/VideoTagsPopover';
 import type { LibraryVideo, LibraryVideoMetadata, Resolution } from '../../types';
@@ -260,10 +261,18 @@ export default function VideoQualityDownload({
             </FormControl>}
           {metadata.downloadedFilePath &&
             <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Chip
-                color="success"
-                label={metadata.downloadedResolution === 'MP3' ? 'MP3' : `${metadata.downloadedResolution}p`}
-              />
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Chip
+                  color="success"
+                  label={metadata.downloadedResolution === 'MP3' ? 'MP3' : `${metadata.downloadedResolution}p`}
+                />
+                {metadata.platform && metadata.platform !== 'youtube' &&
+                  <Chip
+                    variant="outlined"
+                    label={metadata.platform}
+                    sx={{ borderColor: getPlatformColor(metadata.platform), color: getPlatformColor(metadata.platform) }}
+                  />}
+              </Stack>
               <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap" sx={{ justifyContent: 'flex-end' }}>
                 {appliedTagNames.map((tag) => (
                   <Chip key={tag} size="small" label={tag} sx={{ bgcolor: pink[700], color: '#fff' }} />

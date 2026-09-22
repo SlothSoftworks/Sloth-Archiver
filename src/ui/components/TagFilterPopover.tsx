@@ -13,10 +13,11 @@ import {
 // generated per-caller. Both entries AND together with each other and with
 // any selected tags -- checking both at once is a valid, if useless,
 // combination (matches "0 results" rather than being blocked).
-export type SystemFilterKey = 'downloaded' | 'notDownloaded';
+export type SystemFilterKey = 'downloaded' | 'notDownloaded' | 'nonYoutube';
 export const SYSTEM_FILTER_OPTIONS: { key: SystemFilterKey; label: string }[] = [
   { key: 'downloaded', label: 'Downloaded' },
   { key: 'notDownloaded', label: 'Not Downloaded' },
+  { key: 'nonYoutube', label: 'Non-YouTube' },
 ];
 
 // Pure selection state -- unlike VideoTagsPopover (which applies each

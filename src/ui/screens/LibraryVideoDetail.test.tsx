@@ -404,6 +404,99 @@ describe('LibraryVideoDetail', () => {
       expect(screen.getByRole('button', { name: /^720p/ })).toBeInTheDocument();
       expect(document.querySelector('audio')).toBeInTheDocument();
     });
+
+    it('shows a platform chip next to the resolution chip once downloaded', async () => {
+      const video = makeVideo({
+        platform: 'soundcloud',
+        downloadedFilePath: '/v/track.mp3',
+        downloadedResolution: 'MP3',
+        downloadedFormat: 'dflt',
+      });
+      renderDetail(video);
+
+      expect(screen.getByText('MP3')).toBeInTheDocument();
+      expect(screen.getByText('soundcloud')).toBeInTheDocument();
+    });
+
+    it('hides Extract MP3 and offers mp3 as a Convert-to option', async () => {
+      const video = makeVideo({
+        platform: 'soundcloud',
+        downloadedFilePath: '/v/track.mp3',
+        downloadedResolution: 'MP3',
+        downloadedFormat: 'dflt',
+      });
+      renderDetail(video);
+      const user = userEvent.setup();
+
+      expect(screen.queryByRole('button', { name: 'Extract MP3' })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('combobox'));
+      expect(await screen.findByRole('option', { name: 'MP3' })).toBeInTheDocument();
+    });
+
+    it('renders the Extra data section with only populated fields', async () => {
+      const video = makeVideo({
+        platform: 'soundcloud',
+        channel: 'DJ Sloth',
+        uploadDate: '20260115',
+        license: 'CC BY 4.0',
+        categories: ['Podcast'],
+        tags: ['chill', 'lofi'],
+        music: { track: 'Sunset', artist: 'Sloth Beats', album: null, genre: 'Lofi' },
+      });
+      renderDetail(video);
+
+      expect(screen.getByText('Extra data')).toBeInTheDocument();
+      expect(screen.getByText('DJ Sloth')).toBeInTheDocument();
+      expect(screen.getByText('CC BY 4.0')).toBeInTheDocument();
+      expect(screen.getByText('Podcast')).toBeInTheDocument();
+      expect(screen.getByText('Music')).toBeInTheDocument();
+      expect(screen.getByText('chill')).toBeInTheDocument();
+      expect(screen.getByText('lofi')).toBeInTheDocument();
+      expect(screen.getByText('Sunset')).toBeInTheDocument();
+      expect(screen.getByText('Sloth Beats')).toBeInTheDocument();
+      expect(screen.getByText('Lofi')).toBeInTheDocument();
+      // Album was null on the music object -- must not render a blank row.
+      expect(screen.queryByText('Album')).not.toBeInTheDocument();
+    });
+
+    it('skips absent fields entirely and hides the music sub-section when metadata.music is null', async () => {
+      const video = makeVideo({
+        platform: 'soundcloud',
+        channel: null,
+        license: null,
+        categories: null,
+        tags: null,
+        music: null,
+      });
+      renderDetail(video);
+
+      // uploadDate is still set by baseMetadata, so the section itself
+      // renders (it isn't entirely empty) -- but every other field is absent.
+      expect(screen.getByText('Extra data')).toBeInTheDocument();
+      expect(screen.queryByText('License')).not.toBeInTheDocument();
+      expect(screen.queryByText('Categories')).not.toBeInTheDocument();
+      expect(screen.queryByText('Tags')).not.toBeInTheDocument();
+      expect(screen.queryByText('Music')).not.toBeInTheDocument();
+      expect(screen.queryByText('Uploader')).not.toBeInTheDocument();
+    });
+  });
+
+  it('regression: a real YouTube entry gets no platform chip, keeps Extract MP3, has no mp3 Convert-to option, and no Extra data section', async () => {
+    const video = makeVideo({
+      downloadedFilePath: '/v/video.mp4', downloadedResolution: '720', downloadedFormat: 'dflt',
+    });
+    renderDetail(video);
+    const user = userEvent.setup();
+
+    expect(screen.getByText('720p')).toBeInTheDocument();
+    expect(screen.queryByText('youtube')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Extract MP3' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('combobox'));
+    expect(screen.queryByRole('option', { name: 'MP3' })).not.toBeInTheDocument();
+
+    expect(screen.queryByText('Extra data')).not.toBeInTheDocument();
   });
 
   it('switching versions swaps the displayed metadata', async () => {

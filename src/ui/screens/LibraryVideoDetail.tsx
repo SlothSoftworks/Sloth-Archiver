@@ -33,6 +33,7 @@ import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import { useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import VideoQualityDownload from './VideoQualityDownload';
 import FfmpegUtilitiesPanel, { OTHER_FORMAT_VALUE } from './FfmpegUtilitiesPanel';
+import ExtraDataTable from './ExtraDataTable';
 import ClipCollectionView from '../components/ClipCollectionView';
 import LibraryVideoPlayerWithTools from '../components/LibraryVideoPlayerWithTools';
 import type { LibraryClip, LibraryVideo } from '../../types';
@@ -723,6 +724,14 @@ export default function LibraryVideoDetail({
   // the video file, not the separate MP3 slot.
   const isVideoDownloaded = !!metadata.downloadedFilePath;
   const isGeneric = !!metadata.platform && metadata.platform !== 'youtube';
+  // Generic entries have no dedicated Extract MP3 button (see
+  // FfmpegUtilitiesPanel's own isGeneric), so 'mp3' is added to Convert-to
+  // as the only way to get an MP3 out of them. Kept out of
+  // POPULAR_CONVERT_FORMATS itself since YouTube entries already have that
+  // dedicated button and shouldn't get a redundant convert-to option.
+  const genericConvertFormatOptions = isGeneric && !convertFormatOptions.includes('mp3')
+    ? [...convertFormatOptions, 'mp3']
+    : convertFormatOptions;
   const resolutions = metadata.resolutions || [];
   // MP3 is rendered in its own Audio sub-section, not mixed into the video
   // quality grid -- except for a generic (non-YouTube) entry, where MP3 may
@@ -937,9 +946,10 @@ export default function LibraryVideoDetail({
                 ffmpegError={ffmpegError}
                 isVideoDownloaded={isVideoDownloaded}
                 hasAudioFile={!!metadata.downloadedAudioFilePath}
+                isGeneric={isGeneric}
                 convertFormat={convertFormat}
                 setConvertFormat={setConvertFormat}
-                convertFormatOptions={convertFormatOptions}
+                convertFormatOptions={genericConvertFormatOptions}
                 otherFormatInput={otherFormatInput}
                 setOtherFormatInput={setOtherFormatInput}
                 forceReencode={forceReencode}
@@ -948,6 +958,8 @@ export default function LibraryVideoDetail({
                 onConvertFormat={handleConvertFormat}
                 onEmbedMetadata={handleEmbedMetadata}
               />
+
+              {isGeneric && <ExtraDataTable metadata={metadata} />}
             </Stack>
           </Card>
         </Stack>
