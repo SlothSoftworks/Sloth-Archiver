@@ -29,6 +29,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { convertYYYYMMDDStringToDate, cleanElectronErrorMessage } from '../../utils/utils.ts';
 import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
+import { getPlatformColor } from '../utils/platformIcons';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import { useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import VideoQualityDownload from './VideoQualityDownload';
@@ -766,6 +767,13 @@ export default function LibraryVideoDetail({
             label={convertYYYYMMDDStringToDate(metadata.uploadDate || '') || metadata.uploadDate}
             sx={{ flexShrink: 0, fontWeight: 'bolder' }}
           />
+          {isGeneric &&
+            <Chip
+              size="small"
+              variant="outlined"
+              label={metadata.platform}
+              sx={{ flexShrink: 0, borderColor: getPlatformColor(metadata.platform), color: getPlatformColor(metadata.platform) }}
+            />}
           {isSchemaOutdated &&
             <Tooltip title="This version's saved data predates newer features -- use Refresh from YouTube to pick them up">
               <Chip

@@ -405,17 +405,16 @@ describe('LibraryVideoDetail', () => {
       expect(document.querySelector('audio')).toBeInTheDocument();
     });
 
-    it('shows a platform chip next to the resolution chip once downloaded', async () => {
-      const video = makeVideo({
-        platform: 'soundcloud',
-        downloadedFilePath: '/v/track.mp3',
-        downloadedResolution: 'MP3',
-        downloadedFormat: 'dflt',
-      });
+    it('shows a platform chip in the header next to the title/upload date, even before anything is downloaded', async () => {
+      const video = makeVideo({ platform: 'soundcloud' });
       renderDetail(video);
 
-      expect(screen.getByText('MP3')).toBeInTheDocument();
-      expect(screen.getByText('soundcloud')).toBeInTheDocument();
+      const platformChip = screen.getByText('soundcloud');
+      expect(platformChip).toBeInTheDocument();
+      // In the same header row as the title, not tucked away in the
+      // resolution/download area below (which wouldn't even render yet here
+      // since nothing's downloaded).
+      expect(screen.getByText('Alpha Video').closest('.MuiStack-root')).toContainElement(platformChip);
     });
 
     it('hides Extract MP3 and offers mp3 as a Convert-to option', async () => {

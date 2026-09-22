@@ -129,6 +129,23 @@ describe('LibraryVideoPlayer', () => {
     expect(container.querySelector('video:not([data-testid="background-player-video"])')).toBeNull();
   });
 
+  // Regression test: videoId on a generic entry is whatever platform-native
+  // id that source actually uses (e.g. a Dailymotion/SoundCloud id), not a
+  // real YouTube id -- embedding it as a YouTube video used to silently try
+  // (and fail) to load an unrelated or nonexistent video.
+  it('shows a "Video isn\'t downloaded" message instead of a broken YouTube embed for a generic (non-YouTube) entry with nothing downloaded', () => {
+    const { container } = render(
+      <LibraryVideoPlayer metadata={baseMetadata({ platform: 'soundcloud' })} />,
+    );
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(screen.getByText("Video isn't downloaded.")).toBeInTheDocument();
+  });
+
+  it('still embeds the YouTube player for a plain YouTube entry (platform unset)', () => {
+    const { container } = render(<LibraryVideoPlayer metadata={baseMetadata({ platform: null })} />);
+    expect(container.querySelector('iframe')).toHaveAttribute('src', 'https://www.youtube-nocookie.com/embed/abc123');
+  });
+
   it('renders a local <video> for a playable extension, pointed at the app-video:// URL', async () => {
     const { container } = render(
       <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} />,

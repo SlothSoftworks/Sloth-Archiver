@@ -286,6 +286,36 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
       // Clip context: if there's genuinely nothing to play, there's nothing to show.
       return null;
     }
+    // A generic (non-YouTube) entry has no real YouTube video id to embed --
+    // videoId here is whatever platform-native id the source actually uses
+    // (e.g. a Dailymotion/SoundCloud id), so YouTubeEmbed would just try (and
+    // fail) to load an unrelated or nonexistent YouTube video. Embedding each
+    // platform's own online player is a real future improvement, but until
+    // then this is honest about there being nothing playable yet, rather than
+    // silently showing a broken YouTube frame.
+    if (metadata.platform && metadata.platform !== 'youtube') {
+      return (
+        <ResizableMediaContainer sx={containerSx}>
+          <Box sx={{ ...fillSx, position: 'relative' }}>
+            <CardMedia
+              component="div"
+              image={posterSrc}
+              sx={{ ...fillSx, backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
+            />
+            <Typography
+              variant="caption"
+              sx={{
+                position: 'absolute', bottom: 8, left: 8, right: 8,
+                color: 'common.white', bgcolor: 'rgba(0, 0, 0, 0.6)',
+                px: 1, py: 0.5, borderRadius: 1,
+              }}
+            >
+              Video isn't downloaded.
+            </Typography>
+          </Box>
+        </ResizableMediaContainer>
+      );
+    }
     return (
       <ResizableMediaContainer sx={containerSx}>
         <YouTubeEmbed videoId={videoId} sx={fillSx} />
