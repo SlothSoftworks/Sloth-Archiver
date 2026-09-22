@@ -43,6 +43,16 @@ export function clampLibrarySortDirection(value) {
     return value === 'desc' ? 'desc' : 'asc';
 }
 
+// The flat video view's card-grid vs. compact-list layout -- kept separate
+// from libraryViewMode (channel vs. video grouping) since the two are
+// orthogonal.
+export const LIBRARY_DISPLAY_MODES = ['grid', 'list'];
+export const LIBRARY_DISPLAY_MODE_DEFAULT = 'grid';
+
+export function clampLibraryDisplayMode(value) {
+    return LIBRARY_DISPLAY_MODES.includes(value) ? value : LIBRARY_DISPLAY_MODE_DEFAULT;
+}
+
 // The overall theme (color palette/typography), independent of light/dark
 // mode -- 'default' is this app's original plain-MUI look, 'slothui' is the
 // palette pulled from SlothArchiver-info's landing page (see theme.ts).

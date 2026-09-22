@@ -15,6 +15,11 @@ import {
   FormControlLabel,
   IconButton,
   InputLabel,
+  List,
+  ListItem,
+  ListItemAvatar,
+  ListItemButton,
+  ListItemText,
   MenuItem,
   Paper,
   Select,
@@ -135,6 +140,7 @@ export default function LibraryScreen() {
   const [viewMode, setViewMode] = useState<LibraryViewMode>('channel');
   const [librarySection, setLibrarySection] = useState<LibrarySection>('videos');
   const [thumbnailSize, setThumbnailSize] = useState(220); // overwritten by load()
+  const [displayMode, setDisplayMode] = useState<'grid' | 'list'>('grid'); // overwritten by load()
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
   // Set from the deep-link's own ?view=/?clip= query params (see the effect
   // below) -- the mini-player bar (MiniPlayerBar.tsx) uses these to reopen a
@@ -192,17 +198,19 @@ export default function LibraryScreen() {
   // still this screen's own to own.
   const load = async () => {
     setLoading(true);
-    const [{ libraryDir }, index, { libraryViewMode }, { thumbnailSize }, { tags: videoTags }] = await Promise.all([
+    const [{ libraryDir }, index, { libraryViewMode }, { thumbnailSize }, { libraryDisplayMode }, { tags: videoTags }] = await Promise.all([
       window.electronAPI.getLibraryDir(),
       window.electronAPI.getLibraryIndex(),
       window.electronAPI.getLibraryViewMode(),
       window.electronAPI.getThumbnailSize(),
+      window.electronAPI.getLibraryDisplayMode(),
       window.electronAPI.listVideoTags(),
     ]);
     setLibraryDir(libraryDir);
     setChannels(index.channels);
     setViewMode(libraryViewMode);
     setThumbnailSize(thumbnailSize);
+    setDisplayMode(libraryDisplayMode);
     setVideoTags(videoTags);
     setLoading(false);
   };
@@ -271,6 +279,12 @@ export default function LibraryScreen() {
 
   const handleThumbnailSizeCommit = (size: number) => {
     window.electronAPI.setThumbnailSize(size);
+  };
+
+  // Same fire-and-forget pattern as handleViewModeChange above.
+  const handleDisplayModeChange = (mode: 'grid' | 'list') => {
+    setDisplayMode(mode);
+    window.electronAPI.setLibraryDisplayMode(mode);
   };
 
   const toggleVideoSelected = (videoDir: string) => {
@@ -627,6 +641,7 @@ export default function LibraryScreen() {
       openFolderDir={activeLibraryTagDir}
       viewMode={viewMode}
       thumbnailSize={thumbnailSize}
+      displayMode={displayMode}
       selectedVideoDirs={selectedVideoDirs}
       onToggleSelect={toggleVideoSelected}
       onSelectAll={(dirs) => setSelectedVideoDirs(new Set(dirs))}
@@ -702,6 +717,11 @@ export default function LibraryScreen() {
       </Box>
       {!loading && libraryDir && librarySection === 'videos' && !selectedVideo && (selectedChannel || viewMode === 'video') &&
         <LibraryBottomBar
+          // The grid/list toggle only applies to the flat cross-channel video
+          // view -- a single channel's own VideoGrid (selectedChannel truthy)
+          // shares this same bottom-bar render but has no list layout of its
+          // own, so these two props stay undefined there.
+          {...(!selectedChannel && viewMode === 'video' ? { displayMode, onDisplayModeChange: handleDisplayModeChange } : {})}
           thumbnailSize={thumbnailSize}
           onThumbnailSizeChange={handleThumbnailSizeChange}
           onThumbnailSizeCommit={handleThumbnailSizeCommit}
@@ -971,11 +991,142 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
   );
 }
 
-function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selectedVideoDirs, onToggleSelect, onSelectAll, onViewModeChange, onSelectVideo, onRefresh, videoTags }: {
+// The compact-list counterpart to VideoCard above -- same fields (title,
+// platform chip, quality/download chip, channel name, applied tags, upload
+// date, version/clip counts), same checkbox/add-to-queue action slots, just
+// laid out as a dense horizontal row instead of a stacked card. Only used by
+// FlatVideoList's list displayMode; VideoGrid/FlatVideoList's grid mode
+// still use VideoCard.
+function VideoListRow({ video, onSelect, channelLabel, selected, selectionActive, onToggleSelect, videoTags }: {
+  video: LibraryVideo;
+  onSelect: (video: LibraryVideo) => void;
+  channelLabel?: string;
+  selected: boolean;
+  selectionActive: boolean;
+  onToggleSelect: (videoDir: string) => void;
+  videoTags: Record<string, string[]>;
+}) {
+  const bestQuality = getBestDownloadedQuality(video.epochs);
+  const isGeneric = !!video.metadata.platform && video.metadata.platform !== 'youtube';
+  const appliedTags = Object.keys(videoTags).filter((name) => videoTags[name].includes(video.metadata.videoId));
+  const { enqueue, showToast } = useBackgroundPlayer();
+  const [queueLoading, setQueueLoading] = useState(false);
+  const isDownloaded = !!video.metadata.downloadedFilePath;
+  const handleAddToQueue = async () => {
+    if (!video.metadata.downloadedFilePath) return;
+    setQueueLoading(true);
+    const source = await resolvePlayableSource(video.metadata.downloadedFilePath);
+    setQueueLoading(false);
+    if (!source) {
+      showToast(`Couldn't prepare "${video.metadata.title || video.videoFolderName}" for playback.`);
+      return;
+    }
+    enqueue({
+      videoId: video.metadata.videoId,
+      title: video.metadata.fullTitle || video.metadata.title || null,
+      channel: video.metadata.channel,
+      thumbnailPath: video.thumbnailPath,
+      sourcePath: source.sourcePath,
+      mimeType: source.mimeType,
+    });
+  };
+  return (
+    <ListItem
+      disablePadding
+      sx={{
+        backgroundColor: selected ? 'action.selected' : undefined,
+        '&:hover .video-row-checkbox': { opacity: 1 },
+      }}
+      secondaryAction={
+        <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {isDownloaded &&
+            <Tooltip title="Add to queue">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={() => handleAddToQueue()}
+                  aria-label="Add to queue"
+                  disabled={queueLoading}
+                >
+                  {queueLoading ? <CircularProgress size={16} /> : <FormatListBulletedAddIcon fontSize="small" />}
+                </IconButton>
+              </span>
+            </Tooltip>}
+        </Box>
+      }
+    >
+      {/* Same hover/selection-forced-visible behavior as VideoCard's own
+          checkbox, in a fixed 34x34 slot so it lines up with the row's other
+          fixed-size slots. Sits outside ListItemButton (stopPropagation on
+          click) so toggling it doesn't also fire the row's onSelect. */}
+      <Box
+        className="video-row-checkbox"
+        onClick={(e) => e.stopPropagation()}
+        sx={{
+          width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, ml: 1,
+          opacity: selectionActive || selected ? 1 : 0,
+          transition: 'opacity 0.1s',
+        }}
+      >
+        <Checkbox
+          size="small"
+          checked={selected}
+          onChange={() => onToggleSelect(video.videoDir)}
+          inputProps={{ 'aria-label': `Select ${video.metadata.title || video.videoFolderName}` }}
+        />
+      </Box>
+      <ListItemButton onClick={() => onSelect(video)}>
+        <ListItemAvatar>
+          <Avatar variant="rounded" src={video.metadata.thumbnail || undefined} sx={{ width: 64, height: 36 }} />
+        </ListItemAvatar>
+        <ListItemText
+          primary={
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Typography component="span" noWrap sx={{ minWidth: 0 }}>
+                {video.metadata.title || video.videoFolderName}
+              </Typography>
+              {channelLabel && !isGeneric &&
+                <Typography component="span" variant="caption" color="text.secondary" noWrap sx={{ flexShrink: 0 }}>{channelLabel}</Typography>}
+              {isGeneric &&
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={video.metadata.platform}
+                  sx={{ borderColor: getPlatformColor(video.metadata.platform), color: getPlatformColor(video.metadata.platform), flexShrink: 0 }}
+                />}
+              {bestQuality ? (
+                <Chip size="small" color="success" label={bestQuality.resolution === 'MP3' ? 'MP3' : `${bestQuality.resolution}p`} sx={{ flexShrink: 0 }} />
+              ) : (
+                <Chip size="small" variant="outlined" label="Not downloaded" sx={{ flexShrink: 0 }} />
+              )}
+              {appliedTags.map((tag) => (
+                <Chip key={tag} size="small" label={tag} sx={{ bgcolor: pink[700], color: '#fff', flexShrink: 0 }} />
+              ))}
+            </Stack>
+          }
+          secondary={
+            <Stack direction="row" spacing={2}>
+              <Typography component="span" variant="caption" color="text.secondary">
+                {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
+              </Typography>
+              {video.epochs.length > 1 &&
+                <Typography component="span" variant="caption" color="text.secondary">{video.epochs.length} versions</Typography>}
+              {video.clipCount > 0 &&
+                <Typography component="span" variant="caption" color="text.secondary">{video.clipCount} clip{video.clipCount === 1 ? '' : 's'}</Typography>}
+            </Stack>
+          }
+        />
+      </ListItemButton>
+    </ListItem>
+  );
+}
+
+function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, displayMode, selectedVideoDirs, onToggleSelect, onSelectAll, onViewModeChange, onSelectVideo, onRefresh, videoTags }: {
   channels: LibraryChannel[];
   openFolderDir: string;
   viewMode: LibraryViewMode;
   thumbnailSize: number;
+  displayMode: 'grid' | 'list';
   selectedVideoDirs: Set<string>;
   onToggleSelect: (videoDir: string) => void;
   // Replaces the whole selection at once with exactly the given videoDirs
@@ -1063,80 +1214,110 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
   const allVisibleSelected = filtered.length > 0 && filtered.every(({ video }) => selectedVideoDirs.has(video.videoDir));
   const someVisibleSelected = filtered.some(({ video }) => selectedVideoDirs.has(video.videoDir));
 
+  // Select-all checkbox and the filter/sort/view-mode/folder/refresh cluster
+  // are each shared between grid mode's single header row and list mode's
+  // two tighter rows below -- pulled out once so the two layouts can't
+  // silently drift apart from each other.
+  const selectAllControl = (
+    <FormControlLabel
+      control={
+        <Checkbox
+          size="small"
+          checked={allVisibleSelected}
+          indeterminate={someVisibleSelected && !allVisibleSelected}
+          onChange={() => onSelectAll(allVisibleSelected ? [] : filtered.map(({ video }) => video.videoDir))}
+        />
+      }
+      label="Select all"
+    />
+  );
+  const filterSortAndViewControls = (
+    <>
+      <Tooltip title="Filter by tag">
+        <IconButton
+          size="small"
+          onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+          aria-label="Filter by tag"
+          color={(selectedFilterTags.size > 0 || selectedSystemFilters.size > 0) ? 'primary' : 'default'}
+        >
+          <Badge badgeContent={selectedFilterTags.size + selectedSystemFilters.size} color="primary">
+            <FilterListIcon fontSize="small" />
+          </Badge>
+        </IconButton>
+      </Tooltip>
+      {/* Grouped into one bordered container so the field picker and
+          direction toggle read as a single "sort" instrument -- Select
+          uses variant="standard" so this outer Paper is the only
+          border drawn. */}
+      <Paper variant="outlined" sx={{ display: 'flex', alignItems: 'center', pl: 1.5, pr: 0.5, borderRadius: 1 }}>
+        <FormControl size="small" variant="standard" sx={{ minWidth: 140 }}>
+          <InputLabel id="library-sort-field-label">Order by</InputLabel>
+          <Select
+            labelId="library-sort-field-label"
+            label="Order by"
+            value={sortField}
+            // SAFETY: every MenuItem below is keyed by a SortField, so
+            // this Select can only ever emit one of those values.
+            onChange={(e) => setSortField(e.target.value as SortField)}
+          >
+            {SORT_FIELD_OPTIONS.map((field) => (
+              <MenuItem key={field} value={field}>{SORT_FIELD_LABELS[field]}</MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <Tooltip title={sortDirectionLabel}>
+          <IconButton
+            size="small"
+            onClick={() => setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')}
+            aria-label="Toggle sort direction"
+          >
+            {sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />}
+          </IconButton>
+        </Tooltip>
+      </Paper>
+      <LibraryViewModeToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
+      <Tooltip title="Open library folder">
+        <IconButton onClick={() => window.electronAPI.openDirectory(openFolderDir)} size="small" aria-label="Open library folder">
+          <FolderOpenIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <Tooltip title="Refresh">
+        <IconButton onClick={onRefresh} size="small" aria-label="Refresh library">
+          <RefreshIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+    </>
+  );
+
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }} flexWrap="wrap" useFlexGap gap={1}>
-        <Stack direction="row" spacing={2} alignItems="center">
-          <Typography variant="h6">Library</Typography>
-          <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
-          <FormControlLabel
-            control={
-              <Checkbox
-                size="small"
-                checked={allVisibleSelected}
-                indeterminate={someVisibleSelected && !allVisibleSelected}
-                onChange={() => onSelectAll(allVisibleSelected ? [] : filtered.map(({ video }) => video.videoDir))}
-              />
-            }
-            label="Select all"
-          />
+      {displayMode === 'list' ? (
+        <Box sx={{ mb: 2 }}>
+          <Box sx={{ mb: 1 }}>
+            <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
+          </Box>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" useFlexGap gap={1}>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <Typography variant="h6">Library</Typography>
+              {selectAllControl}
+            </Stack>
+            <Stack direction="row" spacing={1} alignItems="center">
+              {filterSortAndViewControls}
+            </Stack>
+          </Stack>
+        </Box>
+      ) : (
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }} flexWrap="wrap" useFlexGap gap={1}>
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Typography variant="h6">Library</Typography>
+            <LibrarySearchBar value={query} onChange={setQuery} onClear={clear} placeholder="Search videos..." />
+            {selectAllControl}
+          </Stack>
+          <Stack direction="row" spacing={1} alignItems="center">
+            {filterSortAndViewControls}
+          </Stack>
         </Stack>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Tooltip title="Filter by tag">
-            <IconButton
-              size="small"
-              onClick={(e) => setFilterAnchorEl(e.currentTarget)}
-              aria-label="Filter by tag"
-              color={(selectedFilterTags.size > 0 || selectedSystemFilters.size > 0) ? 'primary' : 'default'}
-            >
-              <Badge badgeContent={selectedFilterTags.size + selectedSystemFilters.size} color="primary">
-                <FilterListIcon fontSize="small" />
-              </Badge>
-            </IconButton>
-          </Tooltip>
-          {/* Grouped into one bordered container so the field picker and
-              direction toggle read as a single "sort" instrument -- Select
-              uses variant="standard" so this outer Paper is the only
-              border drawn. */}
-          <Paper variant="outlined" sx={{ display: 'flex', alignItems: 'center', pl: 1.5, pr: 0.5, borderRadius: 1 }}>
-            <FormControl size="small" variant="standard" sx={{ minWidth: 140 }}>
-              <InputLabel id="library-sort-field-label">Order by</InputLabel>
-              <Select
-                labelId="library-sort-field-label"
-                label="Order by"
-                value={sortField}
-                // SAFETY: every MenuItem below is keyed by a SortField, so
-                // this Select can only ever emit one of those values.
-                onChange={(e) => setSortField(e.target.value as SortField)}
-              >
-                {SORT_FIELD_OPTIONS.map((field) => (
-                  <MenuItem key={field} value={field}>{SORT_FIELD_LABELS[field]}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <Tooltip title={sortDirectionLabel}>
-              <IconButton
-                size="small"
-                onClick={() => setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')}
-                aria-label="Toggle sort direction"
-              >
-                {sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />}
-              </IconButton>
-            </Tooltip>
-          </Paper>
-          <LibraryViewModeToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
-          <Tooltip title="Open library folder">
-            <IconButton onClick={() => window.electronAPI.openDirectory(openFolderDir)} size="small" aria-label="Open library folder">
-              <FolderOpenIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Refresh">
-            <IconButton onClick={onRefresh} size="small" aria-label="Refresh library">
-              <RefreshIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        </Stack>
-      </Stack>
+      )}
       {flatVideos.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
           Nothing in the library yet -- use the library-add button next to the URL field on the Downloader tab.
@@ -1157,20 +1338,37 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, selec
         onToggleSystemFilter={toggleSystemFilter}
         onClear={() => { setSelectedFilterTags(new Set()); setSelectedSystemFilters(new Set()); }}
       />
-      <Box sx={{ display: 'grid', gridTemplateColumns: thumbnailGridTemplateColumns(thumbnailSize), gap: 2 }}>
-        {filtered.map(({ video, channelName }) => (
-          <VideoCard
-            key={video.videoDir}
-            video={video}
-            onSelect={onSelectVideo}
-            channelLabel={channelName}
-            selected={selectedVideoDirs.has(video.videoDir)}
-            selectionActive={selectionActive}
-            onToggleSelect={onToggleSelect}
-            videoTags={videoTags}
-          />
-        ))}
-      </Box>
+      {displayMode === 'list' ? (
+        <List dense>
+          {filtered.map(({ video, channelName }) => (
+            <VideoListRow
+              key={video.videoDir}
+              video={video}
+              onSelect={onSelectVideo}
+              channelLabel={channelName}
+              selected={selectedVideoDirs.has(video.videoDir)}
+              selectionActive={selectionActive}
+              onToggleSelect={onToggleSelect}
+              videoTags={videoTags}
+            />
+          ))}
+        </List>
+      ) : (
+        <Box sx={{ display: 'grid', gridTemplateColumns: thumbnailGridTemplateColumns(thumbnailSize), gap: 2 }}>
+          {filtered.map(({ video, channelName }) => (
+            <VideoCard
+              key={video.videoDir}
+              video={video}
+              onSelect={onSelectVideo}
+              channelLabel={channelName}
+              selected={selectedVideoDirs.has(video.videoDir)}
+              selectionActive={selectionActive}
+              onToggleSelect={onToggleSelect}
+              videoTags={videoTags}
+            />
+          ))}
+        </Box>
+      )}
     </Box>
   );
 }

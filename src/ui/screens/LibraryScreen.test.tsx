@@ -96,6 +96,8 @@ beforeEach(() => {
     setLibraryViewMode: vi.fn().mockResolvedValue({ success: true, libraryViewMode: 'video' }),
     getLibrarySort: vi.fn().mockResolvedValue({ sortField: 'title', sortDirection: 'asc' }),
     setLibrarySort: vi.fn().mockResolvedValue({ success: true, sortField: 'title', sortDirection: 'asc' }),
+    getLibraryDisplayMode: vi.fn().mockResolvedValue({ libraryDisplayMode: 'grid' }),
+    setLibraryDisplayMode: vi.fn().mockResolvedValue({ success: true, libraryDisplayMode: 'list' }),
     getThumbnailSize: vi.fn().mockResolvedValue({ thumbnailSize: 220 }),
     setThumbnailSize: vi.fn().mockResolvedValue({ success: true, thumbnailSize: 220 }),
     refreshLibraryIndex: vi.fn().mockResolvedValue({ channels: makeChannels() }),
@@ -309,6 +311,76 @@ describe('LibraryScreen', () => {
     await user.keyboard('{ArrowRight}');
 
     expect(window.electronAPI.setThumbnailSize).toHaveBeenCalled();
+  });
+
+  describe('grid/list display mode', () => {
+    it('shows the grid/list toggle only on the flat by-video list, not a single channel\'s own video grid', async () => {
+      const user = userEvent.setup();
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('Channel A'));
+
+      // Channel drill-down (VideoGrid) shares LibraryBottomBar's render call
+      // site with the flat video view, but has no list layout of its own --
+      // the thumbnail slider still shows, the display-mode toggle doesn't.
+      expect(screen.getByRole('slider', { name: 'Thumbnail size' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'List view' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Grid view' })).not.toBeInTheDocument();
+    });
+
+    it('shows the grid/list toggle on the flat by-video list, defaulting to grid (VideoCard)', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      expect(screen.getByRole('button', { name: 'Grid view' })).toBeInTheDocument();
+      expect(screen.getByText('Alpha Video').closest('.MuiCard-root')).not.toBeNull();
+    });
+
+    it('switching to list view renders compact rows instead of cards, and persists the choice', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'List view' }));
+
+      expect(window.electronAPI.setLibraryDisplayMode).toHaveBeenCalledWith('list');
+      expect(screen.getByText('Alpha Video').closest('.MuiCard-root')).toBeNull();
+      expect(screen.getByText('Alpha Video').closest('.MuiListItem-root')).not.toBeNull();
+    });
+
+    it('loads directly into list mode when that is the persisted setting, and shows the key fields per row', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      expect(screen.getByRole('button', { name: 'List view' })).toHaveAttribute('aria-pressed', 'true');
+      const row = screen.getByText('Alpha Video').closest('.MuiListItem-root');
+      expect(row).not.toBeNull();
+      expect(within(row as HTMLElement).getByText('Not downloaded')).toBeInTheDocument();
+      expect(within(row as HTMLElement).getByText(/2026/)).toBeInTheDocument();
+    });
+
+    it('selection and "Add to queue" still work identically in list mode', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({ metadata: { ...makeVideo().metadata, downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4' } })],
+        }],
+      });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
+      expect(screen.getByText('1 item selected')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Add to queue' }));
+      expect(screen.queryByText('Detail: vidA')).not.toBeInTheDocument();
+    });
   });
 
   describe('Add to queue (video card)', () => {
