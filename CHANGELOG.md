@@ -4,6 +4,25 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [1.4.0] — 2026-09-22
+- **A compact list view for the library.** The flat "by video" list now has
+  a grid/list toggle next to the thumbnail-size slider: list view shows each
+  video as a dense row (thumbnail, title, platform/quality chips, labels,
+  upload date, version/clip counts) instead of a card, with the same
+  selection and "Add to queue" support as the grid. A second slider — discrete
+  1/2/3 stops, replacing the thumbnail-size slider while list view is active
+  — lets you choose how many columns of rows to show, defaulting to one.
+- **Platform label cleanup on the by-video list.** The platform name no
+  longer shows up twice on a card (once as its own chip, once again as plain
+  text where a YouTube channel name would go) — that plain-text line is
+  YouTube-channel-only now. The platform and quality/downloaded chips moved
+  down to sit next to it, left-aligned, so the title gets the full width of
+  the card instead of squeezing against them.
+- **Fixed the thumbnail sometimes showing as a generic placeholder** when
+  bulk-downloading videos already in your library (Library view → select
+  some → Download selected) — it now carries over the video's own cached
+  thumbnail instead of guessing a YouTube-only URL that didn't apply.
+
 ## [1.3.0] — 2026-09-22
 - **Add videos from virtually any yt-dlp-supported site to your library, not
   just YouTube.** SoundCloud, Dailymotion, archive.org, PeerTube, and the rest
