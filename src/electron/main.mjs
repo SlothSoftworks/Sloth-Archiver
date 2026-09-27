@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -1291,6 +1291,14 @@ ipcMain.handle('dialog:openLocalVideoFile', async () => dialog.showOpenDialog({
     filters: [{ name: 'Video Files', extensions: LOCAL_VIDEO_FILE_EXTENSIONS }, ...allVideoFilter],
 }));
 
+const LOCAL_IMAGE_FILE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'];
+
+// "Change thumbnail" -> "From file" mode's own file picker.
+ipcMain.handle('dialog:openImageFile', async () => dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'Image Files', extensions: LOCAL_IMAGE_FILE_EXTENSIONS }, { name: 'All Files', extensions: ['*'] }],
+}));
+
 // Read-only prefill probe for AddLocalFileDialog.tsx -- never writes
 // anything, just surfaces whatever ffprobe can read off the file so the form
 // can prefill Title/Metadata fields. Missing data resolves to null/empty
@@ -1329,6 +1337,43 @@ ipcMain.handle('library:addLocalFile', async (e, { sourceFilePath, formFields, m
     await refreshLibraryIndex(libraryDir, tagForRefresh);
     notifyLibraryBackgroundUpdate();
     return { success: true, videoDir: result.videoDir, epoch: result.epoch };
+});
+
+// Player context menu's "Change thumbnail" action. Unlike addLocalFileEntry's
+// own best-effort auto-thumbnail, this is user-initiated -- any failure
+// (bad timestamp, corrupt image, ffmpeg error) is returned for the dialog to
+// show, never swallowed. mode 'timestamp' reads downloadedFilePath (the
+// renderer already holds the full metadata object for the open video) as
+// ffmpeg's input rather than this process re-deriving "the current epoch's
+// video file" from videoDir; mode 'file' takes the path the user picked via
+// dialog:openImageFile above.
+ipcMain.handle('library:changeThumbnail', async (e, { videoDir, mode, timestampSeconds, imageFilePath, downloadedFilePath }) => {
+    const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
+        return { success: false, message: 'Refusing to write outside the configured library folder.' };
+    }
+    let source;
+    if (mode === 'timestamp') {
+        const resolvedVideoFilePath = resolveInsideLibrary(libraryDir, downloadedFilePath);
+        if (!resolvedVideoFilePath || typeof timestampSeconds !== 'number' || !Number.isFinite(timestampSeconds) || timestampSeconds < 0) {
+            return { success: false, message: 'Invalid timestamp.' };
+        }
+        source = { type: 'timestamp', videoFilePath: resolvedVideoFilePath, timestampSeconds };
+    } else {
+        if (!imageFilePath) {
+            return { success: false, message: 'No image file selected.' };
+        }
+        source = { type: 'file', imageFilePath };
+    }
+    try {
+        const thumbnailPath = await replaceLibraryThumbnail({ videoDir: resolvedVideoDir, ffmpegRunner, source });
+        await refreshLibraryIndex(libraryDir, activeLibraryTag);
+        notifyLibraryBackgroundUpdate();
+        return { success: true, thumbnailPath };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
 });
 
 ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options) => {

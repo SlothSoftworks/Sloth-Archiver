@@ -110,7 +110,12 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // that payload's title/thumbnail/videoId/clipId -- this is it. Ignored by
   // the normal (non-clip) player.
   backgroundPlayOverride?: { videoId: string; title: string; thumbnailPath: string | null; clipId: string };
-}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange, initialSeekSeconds, backgroundPlayOverride }, ref) {
+  // Available for every library entry -- unlike clipMarkers/onAddToQueue,
+  // never conditionally hidden. Undefined here (rather than the video
+  // having no context menu item) never happens in practice; the caller
+  // (LibraryVideoPlayerWithTools) always has a videoDir to write into.
+  onChangeThumbnail?: (currentTime: number | null) => void;
+}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange, initialSeekSeconds, backgroundPlayOverride, onChangeThumbnail }, ref) {
   const { thumbnail, videoId } = metadata;
   const filePath = overrideFilePath ?? metadata.downloadedFilePath;
   const [state, setState] = useState<PlaybackState>(() => computeInitialState(filePath));
@@ -126,6 +131,10 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   const [loopEnabled, setLoopEnabled] = useState(false);
   const [loopSequenceEnabled, setLoopSequenceEnabled] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  // Captured at the moment the menu opens, not read again when "Change
+  // thumbnail" is clicked -- by then the video may have kept playing past
+  // the position the user actually right-clicked at.
+  const [contextMenuCurrentTime, setContextMenuCurrentTime] = useState<number | null>(null);
   const playerRef = useRef<MediaPlayerInstance>(null);
   const backgroundPlayer = useBackgroundPlayer();
   // Guards initialSeekSeconds from being re-applied on a later 'can-play'
@@ -197,7 +206,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // Prefer the locally-cached, offline-capable thumbnail over the hotlinked
   // YouTube URL -- that URL is the fallback while the background fetch
   // hasn't landed yet.
-  const posterSrc = thumbnailPath ? buildAppVideoUrl(thumbnailPath) : (thumbnail || undefined);
+  const posterSrc = thumbnailPath ? buildAppVideoUrl(thumbnailPath, cacheBustKey) : (thumbnail || undefined);
 
   const handleToggleLoop = () => { setLoopEnabled((v) => !v); setLoopSequenceEnabled(false); };
   // Turning loop sequence on seeks to the start marker immediately, per its
@@ -386,6 +395,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
               onContextMenu={(e) => {
                 e.preventDefault();
                 setContextMenuPosition({ left: e.clientX, top: e.clientY });
+                setContextMenuCurrentTime(playerRef.current ? playerRef.current.currentTime : null);
               }}
               sx={{ position: 'absolute', inset: 0, cursor: 'pointer' }}
             />
@@ -423,6 +433,8 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             // gives that case its own title/thumbnail/clipId instead of the
             // normal videoId/metadata-derived payload above.
             onAddToQueue={handleAddToQueue}
+            onChangeThumbnail={onChangeThumbnail}
+            currentTime={contextMenuCurrentTime}
           />
           {!hasStartedPlayback &&
             <IconButton

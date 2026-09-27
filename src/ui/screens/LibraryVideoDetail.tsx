@@ -892,6 +892,14 @@ export default function LibraryVideoDetail({
               setClips((prev) => [...prev, clip]);
               onVersionsChanged();
             }}
+            onThumbnailChanged={() => {
+              // The replaced file always lands at the same video-thumbnail.jpg
+              // path, so a plain cache-bust is enough -- no need for the
+              // deeper resync onVersionsChanged/handleSelectEpoch use
+              // elsewhere in this file.
+              setCacheBustKey((prev) => prev + 1);
+              onLibraryChanged();
+            }}
           />
 
           {/* Bounded + scrollable rather than letting a long description

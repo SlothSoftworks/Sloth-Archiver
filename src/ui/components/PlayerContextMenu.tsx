@@ -9,6 +9,7 @@ export default function PlayerContextMenu({
   loopEnabled, onToggleLoop,
   loopSequenceEnabled, onToggleLoopSequence, loopSequenceDisabled,
   onAddToQueue,
+  onChangeThumbnail, currentTime,
 }: {
   open: boolean;
   anchorPosition: { top: number; left: number } | null;
@@ -21,6 +22,12 @@ export default function PlayerContextMenu({
   // undefined (not just a disabled flag) hides the item entirely -- the
   // caller only ever omits it for a not-yet-ready video.
   onAddToQueue?: () => void;
+  // Available for every library entry, unlike onAddToQueue -- always passed
+  // when the caller has a real videoDir to write the replaced thumbnail into.
+  onChangeThumbnail?: (currentTime: number | null) => void;
+  // Playback position at the moment the menu was opened -- prefills the
+  // dialog's timestamp field.
+  currentTime: number | null;
 }) {
   return (
     <Menu open={open} onClose={onClose} anchorReference="anchorPosition" anchorPosition={anchorPosition ?? undefined}>
@@ -38,6 +45,11 @@ export default function PlayerContextMenu({
         <MenuItem onClick={() => { onAddToQueue(); onClose(); }}>
           <ListItemIcon />
           Add to queue
+        </MenuItem>}
+      {onChangeThumbnail &&
+        <MenuItem onClick={() => { onChangeThumbnail(currentTime); onClose(); }}>
+          <ListItemIcon />
+          Change thumbnail
         </MenuItem>}
     </Menu>
   );

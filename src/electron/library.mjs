@@ -647,6 +647,55 @@ export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, f
     return metadata;
 }
 
+// Grabs a single frame at timestampSeconds and writes it to outputPath.
+// Shared by extractLocalFileThumbnail's own best-effort heuristic below and
+// the explicit "change thumbnail" flow (replaceLibraryThumbnail) -- unlike
+// extractLocalFileThumbnail, this never swallows errors itself; whether a
+// failure is fatal is entirely the caller's call.
+export async function extractFrameToFile({ ffmpegRunner, inputPath, outputPath, timestampSeconds }) {
+    await ffmpegRunner.runFfmpegWithProgress({
+        inputPath,
+        outputPath,
+        codecArgs: ['-frames:v', '1'],
+        totalDurationSeconds: 0,
+        preInputArgs: timestampSeconds > 0 ? ['-ss', String(timestampSeconds)] : [],
+    });
+}
+
+// Re-encodes a still image into the fixed video-thumbnail.jpg shape via
+// ffmpeg (the same tool already on hand, rather than pulling in an image
+// library just for this one conversion) -- ffmpeg treats a single-image
+// input as a one-frame source, so the same "-frames:v 1" output args apply.
+export async function convertImageToThumbnail({ ffmpegRunner, inputPath, outputPath }) {
+    await ffmpegRunner.runFfmpegWithProgress({
+        inputPath,
+        outputPath,
+        codecArgs: ['-frames:v', '1'],
+        totalDurationSeconds: 0,
+    });
+}
+
+// Explicit, user-initiated thumbnail replacement (the video player's "Change
+// thumbnail" context menu item) -- unlike extractLocalFileThumbnail below,
+// errors are never swallowed: the caller (the library:changeThumbnail IPC
+// handler) surfaces them back to the dialog that triggered this. Always
+// normalizes to video-thumbnail.jpg regardless of source, so the on-disk
+// path never changes; clears out any pre-existing video-thumbnail.* file
+// first (mirrors thumbnails.mjs's own downloadImageToFile cleanup) so an
+// extension change (e.g. .png -> .jpg) never leaves a stale file behind.
+export async function replaceLibraryThumbnail({ videoDir, ffmpegRunner, source }) {
+    for (const existing of fs.readdirSync(videoDir).filter((f) => f.startsWith('video-thumbnail.'))) {
+        fs.rmSync(path.join(videoDir, existing), { force: true });
+    }
+    const outputPath = path.join(videoDir, 'video-thumbnail.jpg');
+    if (source.type === 'timestamp') {
+        await extractFrameToFile({ ffmpegRunner, inputPath: source.videoFilePath, outputPath, timestampSeconds: source.timestampSeconds });
+    } else {
+        await convertImageToThumbnail({ ffmpegRunner, inputPath: source.imageFilePath, outputPath });
+    }
+    return outputPath;
+}
+
 // Best-effort thumbnail extraction shared by every addLocalFileEntry mode --
 // same "never throws" spirit as thumbnails.mjs's own ensureVideoThumbnail: a
 // missing/unextractable frame (e.g. an audio-only source) must never fail the
@@ -655,12 +704,8 @@ export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, f
 async function extractLocalFileThumbnail({ ffmpegRunner, filePath, videoDir, durationSeconds }) {
     try {
         const offsetSeconds = durationSeconds > 0 ? Math.min(3, durationSeconds / 10) : 0;
-        await ffmpegRunner.runFfmpegWithProgress({
-            inputPath: filePath,
-            outputPath: path.join(videoDir, 'video-thumbnail.jpg'),
-            codecArgs: ['-frames:v', '1'],
-            totalDurationSeconds: 0,
-            preInputArgs: offsetSeconds > 0 ? ['-ss', String(offsetSeconds)] : [],
+        await extractFrameToFile({
+            ffmpegRunner, inputPath: filePath, outputPath: path.join(videoDir, 'video-thumbnail.jpg'), timestampSeconds: offsetSeconds,
         });
     } catch {
         // Best-effort -- e.g. no video stream to grab a frame from.

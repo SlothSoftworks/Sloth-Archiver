@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Link, Snackbar } from '@mui/material';
 import LibraryVideoPlayer, { type LibraryVideoPlayerHandle } from './LibraryVideoPlayer';
 import SaveClipDialog from './SaveClipDialog';
+import ChangeThumbnailDialog from './ChangeThumbnailDialog';
 import { formatSecondsAsClipTimestamp } from '../screens/FfmpegUtilitiesPanel';
 import type { LibraryVideoMetadata, LibraryClip } from '../../types';
 
@@ -37,6 +38,11 @@ export type LibraryVideoPlayerWithToolsProps = {
   // location via a native file dialog.
   standaloneClipping?: boolean;
   onClipSavedToFile?: (outputPath: string) => void;
+  // Unused in standaloneClipping mode -- "Change thumbnail" is a library
+  // video entry's own action (there's no videoDir to write into for a
+  // standalone clip player), so the context menu item is hidden entirely
+  // whenever videoDir isn't provided.
+  onThumbnailChanged?: () => void;
   // Passed straight through to LibraryVideoPlayer -- see its own prop of the
   // same name for what this does (hands off from the separate background
   // player, see useBackgroundPlayer.tsx).
@@ -63,7 +69,7 @@ function extensionForFormat(format: string, inputPath: string): string {
 export default function LibraryVideoPlayerWithTools({
   metadata, thumbnailPath, cacheBustKey, overrideFilePath, videoDir, epoch, existingClipTitles, convertFormatOptions, onClipCreated,
   standaloneClipping = false, onClipSavedToFile, initialSeekSeconds, backgroundPlayOverride,
-  initialClipStartSeconds, initialClipEndSeconds,
+  initialClipStartSeconds, initialClipEndSeconds, onThumbnailChanged,
 }: LibraryVideoPlayerWithToolsProps) {
   const playerRef = useRef<LibraryVideoPlayerHandle>(null);
   const [clipStartSeconds, setClipStartSeconds] = useState<number | null>(initialClipStartSeconds ?? null);
@@ -72,6 +78,8 @@ export default function LibraryVideoPlayerWithTools({
   const [savingClip, setSavingClip] = useState(false);
   const [saveClipError, setSaveClipError] = useState<string | null>(null);
   const [savedFilePath, setSavedFilePath] = useState<string | null>(null);
+  const [changeThumbnailDialogOpen, setChangeThumbnailDialogOpen] = useState(false);
+  const [changeThumbnailInitialSeconds, setChangeThumbnailInitialSeconds] = useState<number | null>(null);
 
   const canTrackPosition = !standaloneClipping && !!videoDir && !!epoch;
   const [resumeToastOpen, setResumeToastOpen] = useState(false);
@@ -170,6 +178,11 @@ export default function LibraryVideoPlayerWithTools({
     setSaveClipDialogOpen(true);
   };
 
+  const handleChangeThumbnail = (currentTime: number | null) => {
+    setChangeThumbnailInitialSeconds(currentTime);
+    setChangeThumbnailDialogOpen(true);
+  };
+
   const handleSubmitSaveClip = async (
     { clipName, start, end, format, forceReencode, saveAsFile }:
       { clipName: string; start: string; end: string; format: string; forceReencode: boolean; saveAsFile: boolean },
@@ -234,6 +247,7 @@ export default function LibraryVideoPlayerWithTools({
         onPlaybackStateChange={handlePlaybackStateChange}
         initialSeekSeconds={initialSeekSeconds}
         backgroundPlayOverride={backgroundPlayOverride}
+        onChangeThumbnail={videoDir ? handleChangeThumbnail : undefined}
         clipMarkers={{
           startSeconds: clipStartSeconds,
           endSeconds: clipEndSeconds,
@@ -268,6 +282,15 @@ export default function LibraryVideoPlayerWithTools({
         error={saveClipError}
         onSubmit={handleSubmitSaveClip}
       />
+      {videoDir &&
+        <ChangeThumbnailDialog
+          open={changeThumbnailDialogOpen}
+          onClose={() => setChangeThumbnailDialogOpen(false)}
+          videoDir={videoDir}
+          downloadedFilePath={inputPath ?? null}
+          initialTimestampSeconds={changeThumbnailInitialSeconds}
+          onThumbnailChanged={() => onThumbnailChanged?.()}
+        />}
       <Snackbar
         open={savedFilePath != null}
         autoHideDuration={6000}
