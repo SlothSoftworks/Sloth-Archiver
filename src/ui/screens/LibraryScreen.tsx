@@ -5,12 +5,18 @@ import {
   Avatar,
   Badge,
   Box,
+  Button,
   Card,
   CardActionArea,
   CardMedia,
   Checkbox,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   FormControl,
   FormControlLabel,
   IconButton,
@@ -44,7 +50,7 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
-import { convertYYYYMMDDStringToDate, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage } from '../../utils/utils.ts';
 import { useBackgroundPlayer, resolvePlayableSource } from '../hooks/useBackgroundPlayer.tsx';
 import { parseClipTimestampSeconds } from './FfmpegUtilitiesPanel';
 import LibraryVideoDetail from './LibraryVideoDetail';
@@ -54,6 +60,7 @@ import LibraryBottomBar from '../components/LibraryBottomBar';
 import BulkDownloadQualityDialog from '../components/BulkDownloadQualityDialog';
 import BulkDeleteConfirmDialog from '../components/BulkDeleteConfirmDialog';
 import CreateSubLibraryDialog from '../components/CreateSubLibraryDialog';
+import AddLocalFileDialog, { type LocalFileFormFields } from '../components/AddLocalFileDialog';
 import MoveToSubLibraryDialog from '../components/MoveToSubLibraryDialog';
 import TagSelectedDialog from '../components/TagSelectedDialog';
 import TagFilterPopover, { type SystemFilterKey } from '../components/TagFilterPopover';
@@ -131,6 +138,32 @@ function compareFlatVideos(a: { video: LibraryVideo; channelName: string }, b: {
   }
 }
 
+// Standard cross-browser "hide the scrollbar chrome, keep scrolling working"
+// pair -- scrollbarWidth for Firefox, ::-webkit-scrollbar for Chromium (which
+// is what Electron's own renderer uses), msOverflowStyle for legacy Edge.
+// Shared by both the row-grid's own horizontal-scroll fallback and, only
+// while list mode is active, the screen's main vertical-scroll container.
+const HIDE_SCROLLBAR_SX = {
+  scrollbarWidth: 'none',
+  msOverflowStyle: 'none',
+  '&::-webkit-scrollbar': { display: 'none' },
+};
+
+// VideoListRow's own container-query breakpoints, keyed on the row's actual
+// rendered width (which depends on both window width and listColumns) rather
+// than viewport width, since a plain media query can't tell those apart.
+const LIST_ROW_MEDIUM_QUERY = '@container (max-width: 460px)';
+const LIST_ROW_NARROW_QUERY = '@container (max-width: 320px)';
+
+// Shared by every chip in VideoListRow's primary line (platform, quality/
+// download-status, tags) so they all shrink in lockstep instead of drifting
+// out of sync tier by tier.
+const LIST_ROW_COMPACT_CHIP_SX = {
+  flexShrink: 0,
+  [LIST_ROW_MEDIUM_QUERY]: { height: 20, fontSize: '0.6875rem' },
+  [LIST_ROW_NARROW_QUERY]: { height: 18, fontSize: '0.625rem', '& .MuiChip-label': { px: '6px' } },
+};
+
 export default function LibraryScreen() {
   const [libraryDir, setLibraryDir] = useState('');
   const [loading, setLoading] = useState(true);
@@ -183,6 +216,19 @@ export default function LibraryScreen() {
   const [createTagDialogOpen, setCreateTagDialogOpen] = useState(false);
   const [creatingTag, setCreatingTag] = useState(false);
   const [createTagError, setCreateTagError] = useState<string | null>(null);
+  const [addLocalFileDialogOpen, setAddLocalFileDialogOpen] = useState(false);
+  const [addingLocalFile, setAddingLocalFile] = useState(false);
+  const [addLocalFileError, setAddLocalFileError] = useState<string | null>(null);
+  // Set once a submitted add turns out to be a duplicate (same shape as
+  // DownloaderScreen.tsx's own duplicateMatch) -- pending payload is kept
+  // around so the Override/Add-as-new-version choice can resubmit it with
+  // the resolved videoDir, without asking the user to reselect the file.
+  const [localFileDuplicateMatch, setLocalFileDuplicateMatch] = useState<{
+    channelDisplayName: string | null;
+    videoDir: string;
+    pending: { sourceFilePath: string; formFields: LocalFileFormFields; targetTag: string };
+  } | null>(null);
+  const [localFileAddedSnackbarOpen, setLocalFileAddedSnackbarOpen] = useState(false);
   // The active sublibrary's video-tag map (unrelated to libraryTags above,
   // which is sublibrary switching) -- {} until load() finishes.
   const [videoTags, setVideoTags] = useState<Record<string, string[]>>({});
@@ -261,6 +307,77 @@ export default function LibraryScreen() {
       await load();
     } finally {
       setCreatingTag(false);
+    }
+  };
+
+  // Shared by both the plain-add and duplicate-resolution paths below --
+  // handleVersionsChanged already re-syncs `channels` off the fresh index
+  // library:addLocalFile's own refreshLibraryIndex call produced (via the
+  // onLibraryBackgroundUpdate listener below), so this just needs to close
+  // out the dialog state and show the success toast. No
+  // incrementLibraryNotifications() here, unlike DownloaderScreen's own
+  // add flow -- that badge exists to flag the Library tab from *outside* it;
+  // this add already happens while the tab is open.
+  const finishLocalFileAdd = () => {
+    setAddLocalFileDialogOpen(false);
+    setLocalFileDuplicateMatch(null);
+    setLocalFileAddedSnackbarOpen(true);
+    setAddingLocalFile(false);
+  };
+
+  const handleAddLocalFileSubmit = async (payload: { sourceFilePath: string; formFields: LocalFileFormFields; targetTag: string }) => {
+    setAddingLocalFile(true);
+    setAddLocalFileError(null);
+    try {
+      // Scoped to the target sublibrary, same reasoning as DownloaderScreen's
+      // own handleAddToLibrary -- a duplicate check against the wrong
+      // sublibrary would either miss a real duplicate or flag a false one.
+      const probe = await window.electronAPI.probeLocalFile(payload.sourceFilePath);
+      const existing = await window.electronAPI.findLibraryVideo(probe.id, payload.targetTag);
+      if (existing.found && existing.videoDir) {
+        setAddingLocalFile(false);
+        setLocalFileDuplicateMatch({ channelDisplayName: existing.channelDisplayName || null, videoDir: existing.videoDir, pending: payload });
+        return;
+      }
+      await window.electronAPI.addLocalFile({ sourceFilePath: payload.sourceFilePath, formFields: payload.formFields, mode: 'add' }, payload.targetTag);
+      finishLocalFileAdd();
+    } catch (err) {
+      console.error('Failed to add local file to library', err);
+      setAddingLocalFile(false);
+      setAddLocalFileError(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to add this file to the library.');
+    }
+  };
+
+  // Replaces the existing tracked entry -- mirrors DownloaderScreen's own
+  // handleOverrideAdd, just calling addLocalFile with mode 'override'
+  // instead of overrideLibraryEntry.
+  const handleLocalFileOverride = async () => {
+    if (!localFileDuplicateMatch) return;
+    const { pending, videoDir } = localFileDuplicateMatch;
+    setAddingLocalFile(true);
+    try {
+      await window.electronAPI.addLocalFile({ sourceFilePath: pending.sourceFilePath, formFields: pending.formFields, mode: 'override', videoDir }, pending.targetTag);
+      finishLocalFileAdd();
+    } catch (err) {
+      console.error('Failed to override library entry with local file', err);
+      setAddingLocalFile(false);
+      setAddLocalFileError(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to add this file to the library.');
+    }
+  };
+
+  // Additive counterpart to handleLocalFileOverride -- mirrors
+  // DownloaderScreen's own handleAddVersion.
+  const handleLocalFileAddVersion = async () => {
+    if (!localFileDuplicateMatch) return;
+    const { pending, videoDir } = localFileDuplicateMatch;
+    setAddingLocalFile(true);
+    try {
+      await window.electronAPI.addLocalFile({ sourceFilePath: pending.sourceFilePath, formFields: pending.formFields, mode: 'addVersion', videoDir }, pending.targetTag);
+      finishLocalFileAdd();
+    } catch (err) {
+      console.error('Failed to add local file as a new version', err);
+      setAddingLocalFile(false);
+      setAddLocalFileError(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to add this file to the library.');
     }
   };
 
@@ -673,6 +790,12 @@ export default function LibraryScreen() {
     />
   );
 
+  // Mirrors the exact condition that renders FlatVideoList in list mode
+  // above -- this same Box is shared by grid mode, channel view and
+  // playlist view too, which must keep their normal scrollbar.
+  const isListDisplayActive = displayMode === 'list' && !loading && !!libraryDir
+    && librarySection === 'videos' && !selectedVideo && !selectedChannel && viewMode === 'video';
+
   return (
     <>
       {/* Scrollable region -- everything above the bottom options bar scrolls
@@ -683,7 +806,7 @@ export default function LibraryScreen() {
           prop (MainPage.tsx), which leaves its wrapping Box unpadded so the
           bar below can span the tab's full width -- p:3 lives here instead,
           on just this scrollable region, rather than on that shared Box. */}
-      <Box sx={{ flex: 1, overflow: 'auto', minHeight: 0, p: 3 }}>
+      <Box data-testid="library-scroll-region" sx={[{ flex: 1, overflow: 'auto', minHeight: 0, p: 3 }, isListDisplayActive && HIDE_SCROLLBAR_SX]}>
         {/* Only shown at the root level -- hidden while drilled into a
             channel's video grid or a video's own detail. */}
         {!loading && libraryDir && !selectedVideo && !selectedChannel &&
@@ -749,6 +872,7 @@ export default function LibraryScreen() {
           onMoveSelected={() => setMoveDialogOpen(true)}
           canTag={canTag}
           onTagSelected={() => setTagDialogOpen(true)}
+          onAddLocalFile={() => setAddLocalFileDialogOpen(true)}
         />}
       {!loading && libraryDir && librarySection === 'playlists' && playlistBulkBar &&
         <LibraryBottomBar
@@ -768,6 +892,37 @@ export default function LibraryScreen() {
         error={createTagError}
         onConfirm={handleCreateLibraryTag}
       />
+      <AddLocalFileDialog
+        open={addLocalFileDialogOpen}
+        onClose={() => { setAddLocalFileDialogOpen(false); setAddLocalFileError(null); }}
+        submitting={addingLocalFile}
+        error={addLocalFileError}
+        onSubmit={handleAddLocalFileSubmit}
+      />
+      <Dialog open={!!localFileDuplicateMatch} onClose={() => setLocalFileDuplicateMatch(null)}>
+        <DialogTitle>Already in your library</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This file is already tracked in your library{localFileDuplicateMatch?.channelDisplayName ? ` under "${localFileDuplicateMatch.channelDisplayName}"` : ''}.
+            What would you like to do?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setLocalFileDuplicateMatch(null)}>Cancel</Button>
+          <Button onClick={handleLocalFileAddVersion}>Add as new version</Button>
+          <Button variant="contained" onClick={handleLocalFileOverride}>Override</Button>
+        </DialogActions>
+      </Dialog>
+      <Snackbar
+        open={localFileAddedSnackbarOpen}
+        autoHideDuration={4000}
+        onClose={() => setLocalFileAddedSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setLocalFileAddedSnackbarOpen(false)} severity="success" variant="filled">
+          Added to library
+        </Alert>
+      </Snackbar>
       <BulkDownloadQualityDialog
         open={bulkDownloadDialogOpen}
         onClose={() => setBulkDownloadDialogOpen(false)}
@@ -951,7 +1106,7 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
       <CardActionArea onClick={() => onSelect(video)}>
         <CardMedia
           component="div"
-          image={video.metadata.thumbnail || undefined}
+          image={video.thumbnailPath ? buildAppVideoUrl(video.thumbnailPath) : (video.metadata.thumbnail || undefined)}
           sx={{ aspectRatio: '16 / 9', backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
         />
         <Box sx={{ p: 1.5 }}>
@@ -990,7 +1145,7 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
             </Stack>}
           <Stack direction="row" justifyContent="space-between" alignItems="center">
             <Typography variant="body2" color="text.secondary">
-              {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
+              {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate || formatEpochLabel(video.metadata.addedEpoch)}
             </Typography>
             <Stack direction="row" spacing={1}>
               {video.epochs.length > 1 &&
@@ -1050,6 +1205,11 @@ function VideoListRow({ video, onSelect, channelLabel, selected, selectionActive
       sx={{
         backgroundColor: selected ? 'action.selected' : undefined,
         '&:hover .video-row-checkbox': { opacity: 1 },
+        // Establishes the container-query context below -- descendants query
+        // this row's own rendered width (the grid track width), not the
+        // viewport, since that's what actually differs between listColumns.
+        containerType: 'inline-size',
+        minWidth: 0,
       }}
       secondaryAction={
         <Box sx={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1089,44 +1249,75 @@ function VideoListRow({ video, onSelect, channelLabel, selected, selectionActive
           inputProps={{ 'aria-label': `Select ${video.metadata.title || video.videoFolderName}` }}
         />
       </Box>
-      <ListItemButton onClick={() => onSelect(video)}>
+      <ListItemButton onClick={() => onSelect(video)} sx={{ minWidth: 0 }}>
         <ListItemAvatar>
-          <Avatar variant="rounded" src={video.metadata.thumbnail || undefined} sx={{ width: 64, height: 36 }} />
+          <Avatar
+            variant="rounded"
+            src={video.thumbnailPath ? buildAppVideoUrl(video.thumbnailPath) : (video.metadata.thumbnail || undefined)}
+            sx={{
+              width: 64,
+              height: 36,
+              [LIST_ROW_MEDIUM_QUERY]: { width: 48, height: 27 },
+              [LIST_ROW_NARROW_QUERY]: { width: 36, height: 20 },
+            }}
+          />
         </ListItemAvatar>
         <ListItemText
+          sx={{ minWidth: 0 }}
           primary={
-            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-              <Typography component="span" noWrap sx={{ minWidth: 0 }}>
+            <Stack
+              direction="row"
+              spacing={1}
+              alignItems="center"
+              flexWrap="wrap"
+              useFlexGap
+              sx={{ minWidth: 0, [LIST_ROW_NARROW_QUERY]: { gap: '4px' } }}
+            >
+              <Typography
+                component="span"
+                noWrap
+                sx={{
+                  minWidth: 0,
+                  [LIST_ROW_MEDIUM_QUERY]: { fontSize: '0.8125rem' },
+                  [LIST_ROW_NARROW_QUERY]: { fontSize: '0.75rem' },
+                }}
+              >
                 {video.metadata.title || video.videoFolderName}
               </Typography>
               {channelLabel && !isGeneric &&
-                <Typography component="span" variant="caption" color="text.secondary" noWrap sx={{ flexShrink: 0 }}>{channelLabel}</Typography>}
+                <Typography
+                  component="span"
+                  variant="caption"
+                  color="text.secondary"
+                  noWrap
+                  sx={{ flexShrink: 0, [LIST_ROW_NARROW_QUERY]: { fontSize: '0.625rem' } }}
+                >{channelLabel}</Typography>}
               {isGeneric &&
                 <Chip
                   size="small"
                   variant="outlined"
                   label={video.metadata.platform}
-                  sx={{ borderColor: getPlatformColor(video.metadata.platform), color: getPlatformColor(video.metadata.platform), flexShrink: 0 }}
+                  sx={{ ...LIST_ROW_COMPACT_CHIP_SX, borderColor: getPlatformColor(video.metadata.platform), color: getPlatformColor(video.metadata.platform) }}
                 />}
               {bestQuality ? (
-                <Chip size="small" color="success" label={bestQuality.resolution === 'MP3' ? 'MP3' : `${bestQuality.resolution}p`} sx={{ flexShrink: 0 }} />
+                <Chip size="small" color="success" label={bestQuality.resolution === 'MP3' ? 'MP3' : `${bestQuality.resolution}p`} sx={LIST_ROW_COMPACT_CHIP_SX} />
               ) : (
-                <Chip size="small" variant="outlined" label="Not downloaded" sx={{ flexShrink: 0 }} />
+                <Chip size="small" variant="outlined" label="Not downloaded" sx={LIST_ROW_COMPACT_CHIP_SX} />
               )}
               {appliedTags.map((tag) => (
-                <Chip key={tag} size="small" label={tag} sx={{ bgcolor: pink[700], color: '#fff', flexShrink: 0 }} />
+                <Chip key={tag} size="small" label={tag} sx={{ ...LIST_ROW_COMPACT_CHIP_SX, bgcolor: pink[700], color: '#fff' }} />
               ))}
             </Stack>
           }
           secondary={
-            <Stack direction="row" spacing={2}>
-              <Typography component="span" variant="caption" color="text.secondary">
-                {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
+            <Stack direction="row" spacing={2} sx={{ minWidth: 0 }}>
+              <Typography component="span" variant="caption" color="text.secondary" sx={{ [LIST_ROW_NARROW_QUERY]: { fontSize: '0.625rem' } }}>
+                {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate || formatEpochLabel(video.metadata.addedEpoch)}
               </Typography>
               {video.epochs.length > 1 &&
-                <Typography component="span" variant="caption" color="text.secondary">{video.epochs.length} versions</Typography>}
+                <Typography component="span" variant="caption" color="text.secondary" sx={{ [LIST_ROW_NARROW_QUERY]: { fontSize: '0.625rem' } }}>{video.epochs.length} versions</Typography>}
               {video.clipCount > 0 &&
-                <Typography component="span" variant="caption" color="text.secondary">{video.clipCount} clip{video.clipCount === 1 ? '' : 's'}</Typography>}
+                <Typography component="span" variant="caption" color="text.secondary" sx={{ [LIST_ROW_NARROW_QUERY]: { fontSize: '0.625rem' } }}>{video.clipCount} clip{video.clipCount === 1 ? '' : 's'}</Typography>}
             </Stack>
           }
         />
@@ -1357,20 +1548,26 @@ function FlatVideoList({ channels, openFolderDir, viewMode, thumbnailSize, displ
         onClear={() => { setSelectedFilterTags(new Set()); setSelectedSystemFilters(new Set()); }}
       />
       {displayMode === 'list' ? (
-        <List dense sx={{ display: 'grid', gridTemplateColumns: `repeat(${listColumns}, 1fr)`, gap: 1 }}>
-          {filtered.map(({ video, channelName }) => (
-            <VideoListRow
-              key={video.videoDir}
-              video={video}
-              onSelect={onSelectVideo}
-              channelLabel={channelName}
-              selected={selectedVideoDirs.has(video.videoDir)}
-              selectionActive={selectionActive}
-              onToggleSelect={onToggleSelect}
-              videoTags={videoTags}
-            />
-          ))}
-        </List>
+        // Last-resort horizontal-scroll fallback, scoped to just the row
+        // grid -- not the whole screen -- for the rare case where the
+        // per-row shrinking (VideoListRow's own container queries) still
+        // isn't enough, e.g. 3 columns in a very narrow window.
+        <Box sx={{ overflowX: 'auto', ...HIDE_SCROLLBAR_SX }}>
+          <List dense sx={{ display: 'grid', gridTemplateColumns: `repeat(${listColumns}, minmax(0, 1fr))`, gap: 1 }}>
+            {filtered.map(({ video, channelName }) => (
+              <VideoListRow
+                key={video.videoDir}
+                video={video}
+                onSelect={onSelectVideo}
+                channelLabel={channelName}
+                selected={selectedVideoDirs.has(video.videoDir)}
+                selectionActive={selectionActive}
+                onToggleSelect={onToggleSelect}
+                videoTags={videoTags}
+              />
+            ))}
+          </List>
+        </Box>
       ) : (
         <Box sx={{ display: 'grid', gridTemplateColumns: thumbnailGridTemplateColumns(thumbnailSize), gap: 2 }}>
           {filtered.map(({ video, channelName }) => (

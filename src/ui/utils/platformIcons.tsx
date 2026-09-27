@@ -2,6 +2,7 @@ import type { SvgIconComponent } from '@mui/icons-material';
 import AudiotrackIcon from '@mui/icons-material/Audiotrack';
 import MovieIcon from '@mui/icons-material/Movie';
 import PublicIcon from '@mui/icons-material/Public';
+import FolderIcon from '@mui/icons-material/Folder';
 
 // Keyed on the same lowercased, sanitized platform string library.mjs uses
 // for the NonYT/<platform> folder name (derivePlatform() in videoInfo.mjs) --
@@ -17,6 +18,7 @@ const PLATFORM_ICONS = new Map<string, SvgIconComponent>([
   ['archiveorg', MovieIcon],
   ['peertube', MovieIcon],
   ['twitch', MovieIcon],
+  ['local', FolderIcon],
 ]);
 
 // The deliberate catch-all for any platform not listed above.
@@ -40,6 +42,7 @@ const PLATFORM_COLORS = new Map<string, string>([
   ['vimeo', '#1AB7EA'],
   ['peertube', '#F1680D'],
   ['twitch', '#9146FF'],
+  ['local', '#78909C'],
 ]);
 
 const FALLBACK_PLATFORM_COLOR = '#78909C';

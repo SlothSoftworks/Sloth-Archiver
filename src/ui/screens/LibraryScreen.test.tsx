@@ -54,6 +54,13 @@ vi.mock('./LibraryVideoDetail', () => ({
   ),
 }));
 
+// PlaylistsSection has its own dedicated test file -- mocked here to a
+// trivial marker so the "scrollbar hiding stays off in playlist view" test
+// below doesn't also need to stub out its full electronAPI surface.
+vi.mock('../components/PlaylistsSection', () => ({
+  default: () => <div>Playlists section</div>,
+}));
+
 function makeVideo(overrides: Record<string, unknown> = {}) {
   return {
     videoFolderName: 'vidA',
@@ -421,7 +428,7 @@ describe('LibraryScreen', () => {
 
       expect(window.electronAPI.setLibraryListColumns).toHaveBeenCalledWith(2);
       const list = screen.getByText('Alpha Video').closest('.MuiList-root') as HTMLElement;
-      expect(list).toHaveStyle({ gridTemplateColumns: 'repeat(2, 1fr)' });
+      expect(list).toHaveStyle({ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' });
     });
 
     it('loads directly into the persisted column count', async () => {
@@ -433,7 +440,198 @@ describe('LibraryScreen', () => {
 
       expect(screen.getByRole('slider', { name: 'List columns' })).toHaveAttribute('aria-valuenow', '3');
       const list = screen.getByText('Alpha Video').closest('.MuiList-root') as HTMLElement;
-      expect(list).toHaveStyle({ gridTemplateColumns: 'repeat(3, 1fr)' });
+      expect(list).toHaveStyle({ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' });
+    });
+
+    it('scopes the row-grid horizontal-scroll fallback and hidden scrollbar to the grid container, not the whole screen', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      const list = screen.getByText('Alpha Video').closest('.MuiList-root') as HTMLElement;
+      const scrollWrapper = list.parentElement as HTMLElement;
+      expect(scrollWrapper).toHaveStyle({ overflowX: 'auto', scrollbarWidth: 'none' });
+    });
+
+    it('hides the main content Box scrollbar only while list mode is active', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      const scrollRegion = screen.getByTestId('library-scroll-region');
+      expect(scrollRegion).toHaveStyle({ scrollbarWidth: 'none' });
+    });
+
+    it('does not hide the main content Box scrollbar in grid mode', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'grid' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      const scrollRegion = screen.getByTestId('library-scroll-region');
+      expect(scrollRegion).not.toHaveStyle({ scrollbarWidth: 'none' });
+    });
+
+    it('does not hide the main content Box scrollbar in channel view', async () => {
+      const user = userEvent.setup();
+      render(<LibraryScreen />);
+      await user.click(await screen.findByText('Channel A'));
+      await screen.findByText('Alpha Video');
+
+      const scrollRegion = screen.getByTestId('library-scroll-region');
+      expect(scrollRegion).not.toHaveStyle({ scrollbarWidth: 'none' });
+    });
+
+    it('does not hide the main content Box scrollbar in playlist view', async () => {
+      const user = userEvent.setup();
+      render(<LibraryScreen />);
+      await screen.findByText('Channel A');
+      await user.click(screen.getByRole('button', { name: /Playlists/i }));
+      await screen.findByText('Playlists section');
+
+      const scrollRegion = screen.getByTestId('library-scroll-region');
+      expect(scrollRegion).not.toHaveStyle({ scrollbarWidth: 'none' });
+    });
+
+    it('keeps every field (title, chips, date, version/clip counts) present in list mode regardless of column count', async () => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({
+            metadata: { ...makeVideo().metadata, downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4' },
+            epochs: [{ epoch: '2', metadata: {} }, { epoch: '1', metadata: {} }],
+            clipCount: 2,
+          })],
+        }],
+      });
+
+      for (const columns of [1, 3]) {
+        (window.electronAPI.getLibraryListColumns as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryListColumns: columns });
+        const { unmount } = render(<LibraryScreen />);
+        const row = (await screen.findByText('Alpha Video')).closest('.MuiListItem-root') as HTMLElement;
+
+        expect(within(row).getByText('Alpha Video')).toBeInTheDocument();
+        expect(within(row).getByText('Not downloaded')).toBeInTheDocument();
+        expect(within(row).getByText(/2026/)).toBeInTheDocument();
+        expect(within(row).getByText('2 versions')).toBeInTheDocument();
+        expect(within(row).getByText('2 clips')).toBeInTheDocument();
+        unmount();
+      }
+    });
+  });
+
+  describe('upload date fallback', () => {
+    beforeEach(() => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+    });
+
+    // A local-file entry (see "Add local file to library") has no uploadDate
+    // at all -- both display sites used to render blank instead of falling
+    // back to when the entry was added to the library.
+    it('falls back to the addedEpoch-derived date when uploadDate is missing, in grid view', async () => {
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({
+            metadata: { ...makeVideo().metadata, uploadDate: null, addedEpoch: new Date('2025-03-04T00:00:00').getTime() },
+          })],
+        }],
+      });
+      render(<LibraryScreen />);
+      const card = (await screen.findByText('Alpha Video')).closest('.MuiCard-root') as HTMLElement;
+
+      expect(within(card).getByText(new Date('2025-03-04T00:00:00').toLocaleString())).toBeInTheDocument();
+    });
+
+    it('falls back to the addedEpoch-derived date when uploadDate is missing, in list view', async () => {
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({
+            metadata: { ...makeVideo().metadata, uploadDate: null, addedEpoch: new Date('2025-03-04T00:00:00').getTime() },
+          })],
+        }],
+      });
+      render(<LibraryScreen />);
+      const row = (await screen.findByText('Alpha Video')).closest('.MuiListItem-root') as HTMLElement;
+
+      expect(within(row).getByText(new Date('2025-03-04T00:00:00').toLocaleString())).toBeInTheDocument();
+    });
+
+    it('still prefers a valid uploadDate over addedEpoch when both are present', async () => {
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({
+            metadata: { ...makeVideo().metadata, uploadDate: '20260101', addedEpoch: new Date('2025-03-04T00:00:00').getTime() },
+          })],
+        }],
+      });
+      render(<LibraryScreen />);
+      const card = (await screen.findByText('Alpha Video')).closest('.MuiCard-root') as HTMLElement;
+
+      expect(within(card).getByText('2026 / Jan / 01')).toBeInTheDocument();
+    });
+  });
+
+  describe('local thumbnail rendering', () => {
+    beforeEach(() => {
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+    });
+
+    // Local-file entries never get a metadata.thumbnail URL (no remote CDN
+    // thumbnail exists for them), but addLocalFileEntry does extract a real
+    // thumbnail to thumbnailPath -- both grid and list views used to ignore
+    // it and read only metadata.thumbnail, showing a blank placeholder.
+    it('renders thumbnailPath via buildAppVideoUrl when metadata.thumbnail is null, in grid view', async () => {
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({ thumbnailPath: '/lib/Channel A/vidA/video-thumbnail.jpg' })],
+        }],
+      });
+      render(<LibraryScreen />);
+      const card = (await screen.findByText('Alpha Video')).closest('.MuiCard-root') as HTMLElement;
+
+      const media = card.querySelector('.MuiCardMedia-root') as HTMLElement;
+      expect(media.style.backgroundImage).toContain(encodeURIComponent('/lib/Channel A/vidA/video-thumbnail.jpg'));
+    });
+
+    it('renders thumbnailPath via buildAppVideoUrl when metadata.thumbnail is null, in list view', async () => {
+      (window.electronAPI.getLibraryDisplayMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryDisplayMode: 'list' });
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({ thumbnailPath: '/lib/Channel A/vidA/video-thumbnail.jpg' })],
+        }],
+      });
+      render(<LibraryScreen />);
+      const row = (await screen.findByText('Alpha Video')).closest('.MuiListItem-root') as HTMLElement;
+
+      const avatar = row.querySelector('.MuiAvatar-img') as HTMLImageElement;
+      expect(avatar.src).toContain(encodeURIComponent('/lib/Channel A/vidA/video-thumbnail.jpg'));
+    });
+
+    it('still falls back to metadata.thumbnail (YouTube entries) when thumbnailPath is null', async () => {
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{
+          channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
+          videos: [makeVideo({
+            thumbnailPath: null,
+            metadata: { ...makeVideo().metadata, thumbnail: 'https://i.ytimg.com/vi/vidA/hqdefault.jpg' },
+          })],
+        }],
+      });
+      render(<LibraryScreen />);
+      const card = (await screen.findByText('Alpha Video')).closest('.MuiCard-root') as HTMLElement;
+
+      const media = card.querySelector('.MuiCardMedia-root') as HTMLElement;
+      expect(media.style.backgroundImage).toContain('https://i.ytimg.com/vi/vidA/hqdefault.jpg');
     });
   });
 
@@ -1136,6 +1334,39 @@ describe('LibraryScreen', () => {
 
       expect(screen.getByRole('button', { name: 'Refresh channel icon' })).toBeInTheDocument();
       expect(screen.queryByTestId('AudiotrackIcon')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Add local file', () => {
+    beforeEach(() => {
+      window.electronAPI.openLocalVideoFile = vi.fn().mockResolvedValue({ filePaths: [], canceled: true });
+      window.electronAPI.probeLocalFile = vi.fn().mockResolvedValue({
+        id: 'localid1', width: null, height: null, duration: null,
+        tags: { title: null, artist: null, date: null, genre: null, comment: null },
+      });
+      window.electronAPI.addLocalFile = vi.fn().mockResolvedValue({ success: true, videoDir: '/lib/DefaultLibrary/NonYT/local/localid1', epoch: '1' });
+    });
+
+    it('opens the Add local file dialog from the bottom bar, in the flat video view', async () => {
+      const user = userEvent.setup();
+      (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+      render(<LibraryScreen />);
+      await screen.findByText('Alpha Video');
+
+      await user.click(screen.getByRole('button', { name: 'Add local file to library' }));
+
+      expect(screen.getByText('Add local file to library', { selector: 'h2' })).toBeInTheDocument();
+    });
+
+    it('is not offered on the Playlists section', async () => {
+      const user = userEvent.setup();
+      render(<LibraryScreen />);
+      await screen.findByText('Channel A');
+
+      await user.click(screen.getByRole('button', { name: 'Playlists' }));
+
+      expect(screen.getByText('Playlists section')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Add local file to library' })).not.toBeInTheDocument();
     });
   });
 

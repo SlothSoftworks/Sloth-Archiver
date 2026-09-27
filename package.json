@@ -1,7 +1,7 @@
 {
   "name": "sloth-archiver",
   "private": true,
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "A desktop app for downloading and archiving videos, with a built-in library and playlist tracking.",
   "author": "Sloth <sloth.software.dev@protonmail.com>",
   "license": "GPL-3.0-or-later",
@@ -86,6 +86,7 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.3.11",
     "@mui/material": "^7.3.11",
+    "@mui/x-date-pickers": "^9.14.0",
     "@vidstack/react": "^1.15.6",
     "dayjs": "^1.11.13",
     "react": "^19.1.0",

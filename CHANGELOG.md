@@ -4,6 +4,33 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [1.5.0] — 2026-09-27
+- **Add local video files straight into your library.** A new upload button
+  in the library's bottom panel opens a dialog that copies a file from
+  anywhere on disk into a chosen sublibrary and catalogues it like any other
+  entry — the original file is never moved or modified. Selecting a file
+  automatically probes it with ffprobe to prefill the title and a
+  collapsible "Metadata" section (description, uploader, upload date,
+  license, categories, tags, and music fields), with the upload date now a
+  real date picker instead of freeform text; a thumbnail frame is extracted
+  automatically too. Local entries get their own icon and a dedicated
+  "local" label, and — since there's no source to refresh from — "Refresh
+  from YouTube" and "Download new version" no longer appear on them (this
+  now applies more generally too: any entry with no real source link hides
+  those buttons instead of just greying them out).
+  - Fixed the upload date showing blank for entries with no embedded date —
+    it now falls back to the date the video was added to the library.
+  - Fixed locally-extracted thumbnails not appearing in the grid/list views.
+- **Change a video's thumbnail right from the player.** Right-click any
+  video and choose "Change thumbnail" to either grab a fresh frame at a
+  chosen timestamp (prefilled with wherever playback currently is) or pick
+  a replacement image from disk — either way it replaces the library
+  entry's thumbnail immediately, everywhere it's shown.
+- **The library list view now resizes itself.** Rows shrink their content
+  to fit narrower windows or more columns instead of overflowing, horizontal
+  scrolling (when unavoidable) is scoped to just the row's own content
+  instead of the whole page, and scrollbars are hidden for a cleaner look.
+
 ## [1.4.0] — 2026-09-22
 - **A compact list view for the library.** The flat "by video" list now has
   a grid/list toggle next to the thumbnail-size slider: list view shows each

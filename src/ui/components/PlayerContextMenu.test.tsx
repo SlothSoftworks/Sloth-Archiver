@@ -18,6 +18,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof PlayerContext
       loopSequenceEnabled={false}
       onToggleLoopSequence={onToggleLoopSequence}
       loopSequenceDisabled={false}
+      currentTime={null}
       {...overrides}
     />,
   );
@@ -68,5 +69,21 @@ describe('PlayerContextMenu', () => {
   it('renders nothing when closed', () => {
     renderMenu({ open: false });
     expect(screen.queryByRole('menuitem', { name: 'Loop' })).not.toBeInTheDocument();
+  });
+
+  it('hides Change thumbnail when onChangeThumbnail is not passed', () => {
+    renderMenu();
+    expect(screen.queryByRole('menuitem', { name: 'Change thumbnail' })).not.toBeInTheDocument();
+  });
+
+  it('clicking Change thumbnail fires the callback with the captured currentTime and closes the menu', async () => {
+    const user = userEvent.setup();
+    const onChangeThumbnail = vi.fn();
+    const { onClose } = renderMenu({ onChangeThumbnail, currentTime: 42.5 });
+
+    await user.click(screen.getByRole('menuitem', { name: 'Change thumbnail' }));
+
+    expect(onChangeThumbnail).toHaveBeenCalledWith(42.5);
+    expect(onClose).toHaveBeenCalled();
   });
 });

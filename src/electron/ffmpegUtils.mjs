@@ -203,9 +203,42 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog,
                 }
                 try {
                     const streams = JSON.parse(stdout).streams || [];
-                    resolve(streams.map((s) => ({ codecType: s.codec_type, codecName: s.codec_name })));
+                    resolve(streams.map((s) => ({ codecType: s.codec_type, codecName: s.codec_name, width: s.width, height: s.height })));
                 } catch {
                     reject(new Error('Failed to parse ffprobe stream output'));
+                }
+            });
+        });
+    }
+
+    // Whatever container-level tags the source file happens to carry --
+    // used only to prefill the "Add local file" form (AddLocalFileDialog.tsx),
+    // never to drive any decision here. Missing tags resolve to null rather
+    // than throwing, since most local files won't have most of these set.
+    function getMediaFormatTags(filePath) {
+        return new Promise((resolve, reject) => {
+            const proc = spawn(ffprobeBinaryPath, ['-v', 'quiet', '-print_format', 'json', '-show_format', filePath]);
+            let stdout = '';
+            let stderr = '';
+            proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+            proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+            proc.on('error', reject);
+            proc.on('close', (code) => {
+                if (code !== 0) {
+                    reject(new Error(stderr || `ffprobe exited with code ${code}`));
+                    return;
+                }
+                try {
+                    const tags = JSON.parse(stdout).format?.tags || {};
+                    resolve({
+                        title: tags.title || null,
+                        artist: tags.artist || null,
+                        date: tags.date || null,
+                        genre: tags.genre || null,
+                        comment: tags.comment || null,
+                    });
+                } catch {
+                    reject(new Error('Failed to parse ffprobe format output'));
                 }
             });
         });
@@ -476,5 +509,5 @@ export function createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog,
         }
     }
 
-    return { getMediaDurationSeconds, getFfmpegVersion, probeMediaStreams, runFfmpegWithProgress, convertWithFallback, clipAndConvert };
+    return { getMediaDurationSeconds, getFfmpegVersion, probeMediaStreams, getMediaFormatTags, runFfmpegWithProgress, convertWithFallback, clipAndConvert };
 }

@@ -26,7 +26,7 @@ import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import { convertYYYYMMDDStringToDate, cleanElectronErrorMessage } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, formatEpochLabel, cleanElectronErrorMessage } from '../../utils/utils.ts';
 import { POPULAR_CONVERT_FORMATS } from '../../utils/ffmpegFormats.ts';
 import { formatComment } from '../components/componentUtils';
 import { getPlatformColor } from '../utils/platformIcons';
@@ -764,7 +764,7 @@ export default function LibraryVideoDetail({
           <Chip
             size="small"
             color="info"
-            label={convertYYYYMMDDStringToDate(metadata.uploadDate || '') || metadata.uploadDate}
+            label={convertYYYYMMDDStringToDate(metadata.uploadDate || '') || metadata.uploadDate || formatEpochLabel(metadata.addedEpoch)}
             sx={{ flexShrink: 0, fontWeight: 'bolder' }}
           />
           {isGeneric &&
@@ -798,30 +798,32 @@ export default function LibraryVideoDetail({
               <ToggleButton value="video">Video</ToggleButton>
               <ToggleButton value="clips">Clip Collection</ToggleButton>
             </ToggleButtonGroup>}
-          <Tooltip title="Refresh this version from YouTube (updates its data in place)">
-            <span>
-              <IconButton
-                size="small"
-                onClick={handleRefreshFromYouTube}
-                disabled={refreshingMetadata || creatingVersion || !metadata.originalUrl}
-                aria-label="Refresh from YouTube"
-              >
-                {refreshingMetadata ? <CircularProgress size={18} /> : <RefreshIcon fontSize="small" />}
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Tooltip title="Download new version (re-fetches live data)">
-            <span>
-              <IconButton
-                size="small"
-                onClick={handleDownloadNewVersion}
-                disabled={creatingVersion || refreshingMetadata || !metadata.originalUrl}
-                aria-label="Download new version"
-              >
-                {creatingVersion ? <CircularProgress size={18} /> : <AddCircleOutlineIcon fontSize="small" />}
-              </IconButton>
-            </span>
-          </Tooltip>
+          {metadata.originalUrl &&
+            <Tooltip title="Refresh this version from YouTube (updates its data in place)">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={handleRefreshFromYouTube}
+                  disabled={refreshingMetadata || creatingVersion}
+                  aria-label="Refresh from YouTube"
+                >
+                  {refreshingMetadata ? <CircularProgress size={18} /> : <RefreshIcon fontSize="small" />}
+                </IconButton>
+              </span>
+            </Tooltip>}
+          {metadata.originalUrl &&
+            <Tooltip title="Download new version (re-fetches live data)">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={handleDownloadNewVersion}
+                  disabled={creatingVersion || refreshingMetadata}
+                  aria-label="Download new version"
+                >
+                  {creatingVersion ? <CircularProgress size={18} /> : <AddCircleOutlineIcon fontSize="small" />}
+                </IconButton>
+              </span>
+            </Tooltip>}
           {metadata.downloadedFilePath && resolutions.length > 0 &&
             <Tooltip title="Download a different quality">
               <IconButton
@@ -889,6 +891,14 @@ export default function LibraryVideoDetail({
             onClipCreated={(clip) => {
               setClips((prev) => [...prev, clip]);
               onVersionsChanged();
+            }}
+            onThumbnailChanged={() => {
+              // The replaced file always lands at the same video-thumbnail.jpg
+              // path, so a plain cache-bust is enough -- no need for the
+              // deeper resync onVersionsChanged/handleSelectEpoch use
+              // elsewhere in this file.
+              setCacheBustKey((prev) => prev + 1);
+              onLibraryChanged();
             }}
           />
 

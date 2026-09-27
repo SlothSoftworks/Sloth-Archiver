@@ -647,6 +647,176 @@ export function recordLibraryDownload({ videoDir, epoch, filePath, resolution, f
     return metadata;
 }
 
+// Grabs a single frame at timestampSeconds and writes it to outputPath.
+// Shared by extractLocalFileThumbnail's own best-effort heuristic below and
+// the explicit "change thumbnail" flow (replaceLibraryThumbnail) -- unlike
+// extractLocalFileThumbnail, this never swallows errors itself; whether a
+// failure is fatal is entirely the caller's call.
+export async function extractFrameToFile({ ffmpegRunner, inputPath, outputPath, timestampSeconds }) {
+    await ffmpegRunner.runFfmpegWithProgress({
+        inputPath,
+        outputPath,
+        codecArgs: ['-frames:v', '1'],
+        totalDurationSeconds: 0,
+        preInputArgs: timestampSeconds > 0 ? ['-ss', String(timestampSeconds)] : [],
+    });
+}
+
+// Re-encodes a still image into the fixed video-thumbnail.jpg shape via
+// ffmpeg (the same tool already on hand, rather than pulling in an image
+// library just for this one conversion) -- ffmpeg treats a single-image
+// input as a one-frame source, so the same "-frames:v 1" output args apply.
+export async function convertImageToThumbnail({ ffmpegRunner, inputPath, outputPath }) {
+    await ffmpegRunner.runFfmpegWithProgress({
+        inputPath,
+        outputPath,
+        codecArgs: ['-frames:v', '1'],
+        totalDurationSeconds: 0,
+    });
+}
+
+// Explicit, user-initiated thumbnail replacement (the video player's "Change
+// thumbnail" context menu item) -- unlike extractLocalFileThumbnail below,
+// errors are never swallowed: the caller (the library:changeThumbnail IPC
+// handler) surfaces them back to the dialog that triggered this. Always
+// normalizes to video-thumbnail.jpg regardless of source, so the on-disk
+// path never changes; clears out any pre-existing video-thumbnail.* file
+// first (mirrors thumbnails.mjs's own downloadImageToFile cleanup) so an
+// extension change (e.g. .png -> .jpg) never leaves a stale file behind.
+export async function replaceLibraryThumbnail({ videoDir, ffmpegRunner, source }) {
+    for (const existing of fs.readdirSync(videoDir).filter((f) => f.startsWith('video-thumbnail.'))) {
+        fs.rmSync(path.join(videoDir, existing), { force: true });
+    }
+    const outputPath = path.join(videoDir, 'video-thumbnail.jpg');
+    if (source.type === 'timestamp') {
+        await extractFrameToFile({ ffmpegRunner, inputPath: source.videoFilePath, outputPath, timestampSeconds: source.timestampSeconds });
+    } else {
+        await convertImageToThumbnail({ ffmpegRunner, inputPath: source.imageFilePath, outputPath });
+    }
+    return outputPath;
+}
+
+// Best-effort thumbnail extraction shared by every addLocalFileEntry mode --
+// same "never throws" spirit as thumbnails.mjs's own ensureVideoThumbnail: a
+// missing/unextractable frame (e.g. an audio-only source) must never fail the
+// whole add. offsetSeconds mirrors "3s in, or 10% of a short clip" so it
+// never lands past a very short file's own end.
+async function extractLocalFileThumbnail({ ffmpegRunner, filePath, videoDir, durationSeconds }) {
+    try {
+        const offsetSeconds = durationSeconds > 0 ? Math.min(3, durationSeconds / 10) : 0;
+        await extractFrameToFile({
+            ffmpegRunner, inputPath: filePath, outputPath: path.join(videoDir, 'video-thumbnail.jpg'), timestampSeconds: offsetSeconds,
+        });
+    } catch {
+        // Best-effort -- e.g. no video stream to grab a frame from.
+    }
+}
+
+// Adds a local (non-yt-dlp) file to the library: copies the source file into
+// a new/existing epoch and catalogs it, without ever downloading anything.
+// Assumes the caller (the library:addLocalFile IPC handler) has already run
+// the duplicate check via findVideoInIndex -- same division of labor as
+// DownloaderScreen.tsx's handleAddToLibrary, which checks findLibraryVideo
+// itself before ever calling addEntry. This function does not repeat that
+// check, so calling it for an id that's already tracked (mode: 'add') would
+// silently create a second, competing entry for the same file.
+//
+// ffmpegRunner is injected (never imported directly), mirroring
+// ensurePlayablePreview's (previewCache.mjs) own DI shape -- keeps this
+// module free of a hard ffmpeg dependency, consistent with every other
+// library.mjs function.
+//
+// mode 'add' derives a fresh id/videoDir from the file path itself (via
+// nonYoutubeVideoHash's originalUrl-fallback branch, since a local file has
+// no id/URL of its own); 'override'/'addVersion' instead write into the
+// already-known videoDir a duplicate check turned up, mirroring how
+// overrideLibraryEntry/addLibraryVersion are already called elsewhere.
+export async function addLocalFileEntry({ libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAME, sourceFilePath, formFields = {}, ffmpegRunner, mode = 'add', videoDir }) {
+    const absoluteFilePath = path.resolve(sourceFilePath);
+    const extension = path.extname(absoluteFilePath).slice(1).toLowerCase();
+
+    const [streams, formatTags, durationSeconds] = await Promise.all([
+        ffmpegRunner.probeMediaStreams(absoluteFilePath).catch(() => []),
+        ffmpegRunner.getMediaFormatTags(absoluteFilePath).catch(() => ({})),
+        ffmpegRunner.getMediaDurationSeconds(absoluteFilePath).catch(() => 0),
+    ]);
+    const videoStream = streams.find((s) => s.codecType === 'video');
+
+    const videoMetaData = {
+        id: nonYoutubeVideoHash('local', null, absoluteFilePath),
+        extractorKey: 'local',
+        platform: 'local',
+        originalUrl: null,
+        title: formFields.title || null,
+        fullTitle: formFields.title || null,
+        description: formFields.description || formatTags.comment || null,
+        thumbnail: null,
+        duration: durationSeconds || null,
+        durationString: null,
+        uploadDate: formFields.uploadDate || null,
+        uploader: formFields.uploader || null,
+        uploaderId: null,
+        timestamp: null,
+        license: formFields.license || null,
+        categories: formFields.categories || null,
+        tags: formFields.tags || null,
+        music: formFields.music || null,
+        resolutions: [],
+    };
+
+    let epochDir;
+    let resolvedVideoDir;
+    let epoch;
+    if (mode === 'override') {
+        const result = overrideLibraryEntry({ libraryDir, libraryTag, videoMetaData, existingVideoDir: videoDir });
+        resolvedVideoDir = result.videoDir;
+        epochDir = result.epochDir;
+        epoch = String(result.metadata.addedEpoch);
+    } else if (mode === 'addVersion') {
+        const result = addLibraryVersion({ libraryDir, videoDir, videoMetaData });
+        resolvedVideoDir = result.videoDir;
+        epochDir = result.epochDir;
+        epoch = result.epoch;
+    } else {
+        const result = writeLibraryEntry({ libraryDir, libraryTag, videoMetaData });
+        resolvedVideoDir = result.videoDir;
+        epochDir = result.epochDir;
+        epoch = String(result.metadata.addedEpoch);
+    }
+
+    // Temp-then-rename, same pattern as swapLibraryDownload -- a copy that
+    // dies partway through must never leave a truncated file masquerading as
+    // the real download at its final name.
+    const tempFilePath = path.join(epochDir, `video.tmp${path.extname(absoluteFilePath)}`);
+    const finalFilePath = path.join(epochDir, `video${path.extname(absoluteFilePath)}`);
+    try {
+        await fsp.copyFile(absoluteFilePath, tempFilePath);
+        fs.renameSync(tempFilePath, finalFilePath);
+    } catch (err) {
+        fs.rmSync(tempFilePath, { force: true });
+        // 'add' created a brand-new videoDir just for this entry -- remove
+        // the whole thing rather than leaving a cataloged video with no
+        // file. 'override'/'addVersion' only created a new epoch under an
+        // already-existing (and otherwise untouched) videoDir, so only that
+        // epoch is rolled back.
+        fs.rmSync(mode === 'add' ? resolvedVideoDir : epochDir, { recursive: true, force: true });
+        throw err;
+    }
+
+    await extractLocalFileThumbnail({ ffmpegRunner, filePath: finalFilePath, videoDir: resolvedVideoDir, durationSeconds });
+
+    const metadata = recordLibraryDownload({
+        videoDir: resolvedVideoDir,
+        epoch,
+        filePath: finalFilePath,
+        resolution: videoStream?.height ? String(videoStream.height) : undefined,
+        format: extension,
+        kind: 'video',
+    });
+
+    return { videoDir: resolvedVideoDir, epoch, metadata };
+}
+
 // Deliberately doesn't refresh the in-memory library index the way
 // recordLibraryDownload does -- this write is frequent and cheap, and
 // nothing in the library grid reflects it.

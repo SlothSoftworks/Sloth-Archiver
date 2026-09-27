@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
+import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { previewCachePathFor } from './previewCache.mjs';
@@ -10,6 +11,10 @@ import {
   nonYoutubeVideoHash,
   writeLibraryEntry,
   addLibraryVersion,
+  addLocalFileEntry,
+  extractFrameToFile,
+  convertImageToThumbnail,
+  replaceLibraryThumbnail,
   refreshLibraryEntryMetadata,
   recordLibraryDownload,
   savePlaybackPosition,
@@ -338,6 +343,211 @@ describe('recordLibraryDownload', () => {
 
     expect(updated.downloadedAudioFilePath).toBe('/x/audio.mp3');
     expect(updated.downloadedFilePath).toBeNull();
+  });
+});
+
+function fakeFfmpegRunner({ streams = [{ codecType: 'video', codecName: 'h264', width: 1280, height: 720 }], tags = {}, durationSeconds = 30, failThumbnail = false } = {}) {
+  return {
+    probeMediaStreams: vi.fn().mockResolvedValue(streams),
+    getMediaFormatTags: vi.fn().mockResolvedValue(tags),
+    getMediaDurationSeconds: vi.fn().mockResolvedValue(durationSeconds),
+    runFfmpegWithProgress: vi.fn().mockImplementation(({ outputPath }) => {
+      if (failThumbnail) return Promise.reject(new Error('no video stream'));
+      fs.writeFileSync(outputPath, 'fake thumbnail bytes');
+      return Promise.resolve();
+    }),
+  };
+}
+
+describe('addLocalFileEntry', () => {
+  let sourceFilePath;
+
+  beforeEach(() => {
+    sourceFilePath = path.join(libraryDir, '..', 'source-video.mp4');
+    fs.writeFileSync(sourceFilePath, 'fake source video bytes');
+  });
+
+  it('catalogs a new video: metadata.json shape, temp-then-rename copy, and thumbnail extraction', async () => {
+    const ffmpegRunner = fakeFfmpegRunner();
+    const { videoDir, epoch, metadata } = await addLocalFileEntry({
+      libraryDir, sourceFilePath, ffmpegRunner,
+      formFields: { title: 'My Local Clip', description: 'a desc', uploader: 'Me' },
+    });
+
+    expect(metadata.title).toBe('My Local Clip');
+    expect(metadata.platform).toBe('local');
+    expect(metadata.originalUrl).toBeNull();
+    expect(metadata.downloadedResolution).toBe('720');
+    expect(metadata.downloadedFormat).toBe('mp4');
+    expect(metadata.downloadedFilePath).toBe(path.join(videoDir, epoch, 'video.mp4'));
+    expect(fs.existsSync(metadata.downloadedFilePath)).toBe(true);
+    expect(fs.readFileSync(metadata.downloadedFilePath, 'utf-8')).toBe('fake source video bytes');
+    // Never a direct write straight to the final name -- the temp file must
+    // not survive the copy.
+    expect(fs.existsSync(path.join(videoDir, epoch, 'video.tmp.mp4'))).toBe(false);
+    expect(fs.existsSync(path.join(videoDir, 'video-thumbnail.jpg'))).toBe(true);
+    expect(readMetadata(videoDir, epoch)).toEqual(metadata);
+  });
+
+  it('never touches the original source file', async () => {
+    const ffmpegRunner = fakeFfmpegRunner();
+    await addLocalFileEntry({ libraryDir, sourceFilePath, ffmpegRunner, formFields: { title: 'X' } });
+
+    expect(fs.existsSync(sourceFilePath)).toBe(true);
+    expect(fs.readFileSync(sourceFilePath, 'utf-8')).toBe('fake source video bytes');
+  });
+
+  it('handles an audio-only source gracefully: no resolution recorded, thumbnail failure does not fail the add', async () => {
+    const ffmpegRunner = fakeFfmpegRunner({ streams: [{ codecType: 'audio', codecName: 'mp3' }], failThumbnail: true });
+    const { videoDir, epoch, metadata } = await addLocalFileEntry({
+      libraryDir, sourceFilePath, ffmpegRunner, formFields: { title: 'Audio only' },
+    });
+
+    expect(metadata.downloadedResolution).toBeNull();
+    expect(metadata.downloadedFilePath).toBe(path.join(videoDir, epoch, 'video.mp4'));
+    expect(fs.existsSync(path.join(videoDir, 'video-thumbnail.jpg'))).toBe(false);
+  });
+
+  it('rolls back the whole video entry if the copy fails on mode "add"', async () => {
+    const ffmpegRunner = fakeFfmpegRunner();
+    const copyFileSpy = vi.spyOn(fsp, 'copyFile').mockRejectedValueOnce(new Error('disk full'));
+
+    await expect(addLocalFileEntry({ libraryDir, sourceFilePath, ffmpegRunner, formFields: { title: 'X' } }))
+      .rejects.toThrow('disk full');
+
+    copyFileSpy.mockRestore();
+    const nonYtDir = path.join(libraryDir, DEFAULT_LIBRARY_DIR_NAME, NONYT_DIR_NAME, 'local');
+    expect(fs.existsSync(nonYtDir) ? fs.readdirSync(nonYtDir) : []).toEqual([]);
+  });
+
+  it('detects a duplicate add of the same path via nonYoutubeVideoHash id + findVideoInIndex', async () => {
+    const ffmpegRunner = fakeFfmpegRunner();
+    await addLocalFileEntry({ libraryDir, sourceFilePath, ffmpegRunner, formFields: { title: 'First' } });
+    await refreshLibraryIndex(libraryDir, DEFAULT_LIBRARY_DIR_NAME);
+    const index = await getLibraryIndex(libraryDir, DEFAULT_LIBRARY_DIR_NAME);
+
+    const expectedId = nonYoutubeVideoHash('local', null, path.resolve(sourceFilePath));
+    expect(findVideoInIndex(index, expectedId)).not.toBeNull();
+  });
+
+  it('mode "override" copies the file into the existing videoDir, replacing the old entry', async () => {
+    const ffmpegRunner = fakeFfmpegRunner();
+    const first = await addLocalFileEntry({ libraryDir, sourceFilePath, ffmpegRunner, formFields: { title: 'First' } });
+
+    const second = await addLocalFileEntry({
+      libraryDir, sourceFilePath, ffmpegRunner, mode: 'override', videoDir: first.videoDir,
+      formFields: { title: 'Second' },
+    });
+
+    expect(second.metadata.title).toBe('Second');
+    // One epoch dir plus the video-level video-thumbnail.jpg sibling.
+    expect(fs.readdirSync(second.videoDir)).toHaveLength(2);
+  });
+
+  it('mode "addVersion" adds a new epoch under the existing videoDir, keeping the old one', async () => {
+    const ffmpegRunner = fakeFfmpegRunner();
+    const first = await addLocalFileEntry({ libraryDir, sourceFilePath, ffmpegRunner, formFields: { title: 'First' } });
+
+    const second = await addLocalFileEntry({
+      libraryDir, sourceFilePath, ffmpegRunner, mode: 'addVersion', videoDir: first.videoDir,
+      formFields: { title: 'Second version' },
+    });
+
+    expect(second.videoDir).toBe(first.videoDir);
+    expect(second.epoch).not.toBe(first.epoch);
+    // Two epoch dirs plus the video-level video-thumbnail.jpg sibling.
+    expect(fs.readdirSync(first.videoDir)).toHaveLength(3);
+  });
+});
+
+describe('extractFrameToFile / convertImageToThumbnail / replaceLibraryThumbnail', () => {
+  let videoDir;
+  let videoFilePath;
+  let imageFilePath;
+
+  beforeEach(() => {
+    videoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-thumbnail-test-'));
+    videoFilePath = path.join(videoDir, 'video.mp4');
+    fs.writeFileSync(videoFilePath, 'fake video bytes');
+    imageFilePath = path.join(videoDir, 'picked.png');
+    fs.writeFileSync(imageFilePath, 'fake image bytes');
+  });
+
+  afterEach(() => {
+    fs.rmSync(videoDir, { recursive: true, force: true });
+  });
+
+  it('extractFrameToFile writes the requested output path', async () => {
+    const ffmpegRunner = fakeFfmpegRunner();
+    const outputPath = path.join(videoDir, 'video-thumbnail.jpg');
+
+    await extractFrameToFile({ ffmpegRunner, inputPath: videoFilePath, outputPath, timestampSeconds: 5 });
+
+    expect(fs.existsSync(outputPath)).toBe(true);
+    expect(ffmpegRunner.runFfmpegWithProgress).toHaveBeenCalledWith(expect.objectContaining({
+      inputPath: videoFilePath, outputPath, preInputArgs: ['-ss', '5'],
+    }));
+  });
+
+  it('extractFrameToFile propagates an ffmpeg failure instead of swallowing it', async () => {
+    const ffmpegRunner = fakeFfmpegRunner({ failThumbnail: true });
+    const outputPath = path.join(videoDir, 'video-thumbnail.jpg');
+
+    await expect(extractFrameToFile({ ffmpegRunner, inputPath: videoFilePath, outputPath, timestampSeconds: 5 }))
+      .rejects.toThrow('no video stream');
+  });
+
+  it('convertImageToThumbnail writes the requested output path with no seek args', async () => {
+    const ffmpegRunner = fakeFfmpegRunner();
+    const outputPath = path.join(videoDir, 'video-thumbnail.jpg');
+
+    await convertImageToThumbnail({ ffmpegRunner, inputPath: imageFilePath, outputPath });
+
+    expect(fs.existsSync(outputPath)).toBe(true);
+    expect(ffmpegRunner.runFfmpegWithProgress).toHaveBeenCalledWith(expect.objectContaining({
+      inputPath: imageFilePath, outputPath, codecArgs: ['-frames:v', '1'],
+    }));
+  });
+
+  it('replaceLibraryThumbnail writes video-thumbnail.jpg from a timestamp source', async () => {
+    const ffmpegRunner = fakeFfmpegRunner();
+
+    const outputPath = await replaceLibraryThumbnail({
+      videoDir, ffmpegRunner, source: { type: 'timestamp', videoFilePath, timestampSeconds: 3 },
+    });
+
+    expect(outputPath).toBe(path.join(videoDir, 'video-thumbnail.jpg'));
+    expect(fs.existsSync(outputPath)).toBe(true);
+  });
+
+  it('replaceLibraryThumbnail writes video-thumbnail.jpg from a file source', async () => {
+    const ffmpegRunner = fakeFfmpegRunner();
+
+    const outputPath = await replaceLibraryThumbnail({
+      videoDir, ffmpegRunner, source: { type: 'file', imageFilePath },
+    });
+
+    expect(outputPath).toBe(path.join(videoDir, 'video-thumbnail.jpg'));
+    expect(fs.existsSync(outputPath)).toBe(true);
+  });
+
+  it('deletes a pre-existing video-thumbnail.* file of a different extension before writing the new one', async () => {
+    const staleThumbnailPath = path.join(videoDir, 'video-thumbnail.png');
+    fs.writeFileSync(staleThumbnailPath, 'stale thumbnail bytes');
+    const ffmpegRunner = fakeFfmpegRunner();
+
+    await replaceLibraryThumbnail({ videoDir, ffmpegRunner, source: { type: 'file', imageFilePath } });
+
+    expect(fs.existsSync(staleThumbnailPath)).toBe(false);
+    expect(fs.existsSync(path.join(videoDir, 'video-thumbnail.jpg'))).toBe(true);
+  });
+
+  it('propagates an ffmpeg failure rather than swallowing it, unlike extractLocalFileThumbnail', async () => {
+    const ffmpegRunner = fakeFfmpegRunner({ failThumbnail: true });
+
+    await expect(replaceLibraryThumbnail({
+      videoDir, ffmpegRunner, source: { type: 'timestamp', videoFilePath, timestampSeconds: 3 },
+    })).rejects.toThrow('no video stream');
   });
 });
 
