@@ -174,6 +174,14 @@ describe('LibraryVideoDetail', () => {
     expect(onBack).toHaveBeenCalled();
   });
 
+  it('falls back to the addedEpoch-derived date when uploadDate is missing', () => {
+    const addedEpoch = new Date('2025-03-04T00:00:00').getTime();
+    const video = makeVideo({ uploadDate: null, addedEpoch });
+    renderDetail(video);
+
+    expect(screen.getByText(new Date(addedEpoch).toLocaleString())).toBeInTheDocument();
+  });
+
   it('runs the initial download flow and records it once done', async () => {
     const video = makeVideo();
     const { onVersionsChanged } = renderDetail(video);

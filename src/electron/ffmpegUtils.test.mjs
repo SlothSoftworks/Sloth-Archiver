@@ -241,3 +241,66 @@ describe('clipAndConvert', () => {
     expect(ffmpegCallArgs()).toEqual(expect.arrayContaining(['-c', 'copy']));
   });
 });
+
+describe('probeMediaStreams', () => {
+  it('reports width/height alongside codecType/codecName for a video stream', async () => {
+    spawnMock.mockImplementation((bin) => {
+      const proc = fakeProcess();
+      if (bin === FFPROBE_BIN) {
+        respondAsync(proc, {
+          stdout: JSON.stringify({
+            streams: [
+              { codec_type: 'video', codec_name: 'h264', width: 1920, height: 1080 },
+              { codec_type: 'audio', codec_name: 'aac' },
+            ],
+          }),
+        });
+      }
+      return proc;
+    });
+    const { probeMediaStreams } = createFfmpegRunner({ ffmpegBinaryPath: FFMPEG_BIN, ffprobeBinaryPath: FFPROBE_BIN });
+
+    const streams = await probeMediaStreams('/in.mp4');
+
+    expect(streams).toEqual([
+      { codecType: 'video', codecName: 'h264', width: 1920, height: 1080 },
+      { codecType: 'audio', codecName: 'aac', width: undefined, height: undefined },
+    ]);
+  });
+});
+
+describe('getMediaFormatTags', () => {
+  it('surfaces title/artist/date/genre/comment from format.tags', async () => {
+    spawnMock.mockImplementation((bin) => {
+      const proc = fakeProcess();
+      if (bin === FFPROBE_BIN) {
+        respondAsync(proc, {
+          stdout: JSON.stringify({
+            format: { tags: { title: 'My Song', artist: 'An Artist', date: '2024', genre: 'Rock', comment: 'a comment' } },
+          }),
+        });
+      }
+      return proc;
+    });
+    const { getMediaFormatTags } = createFfmpegRunner({ ffmpegBinaryPath: FFMPEG_BIN, ffprobeBinaryPath: FFPROBE_BIN });
+
+    const tags = await getMediaFormatTags('/in.mp4');
+
+    expect(tags).toEqual({ title: 'My Song', artist: 'An Artist', date: '2024', genre: 'Rock', comment: 'a comment' });
+  });
+
+  it('resolves missing tags as null instead of throwing', async () => {
+    spawnMock.mockImplementation((bin) => {
+      const proc = fakeProcess();
+      if (bin === FFPROBE_BIN) {
+        respondAsync(proc, { stdout: JSON.stringify({ format: {} }) });
+      }
+      return proc;
+    });
+    const { getMediaFormatTags } = createFfmpegRunner({ ffmpegBinaryPath: FFMPEG_BIN, ffprobeBinaryPath: FFPROBE_BIN });
+
+    const tags = await getMediaFormatTags('/in.mp4');
+
+    expect(tags).toEqual({ title: null, artist: null, date: null, genre: null, comment: null });
+  });
+});

@@ -1,4 +1,4 @@
-import { Box, Button, Paper, Slider, Stack, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material';
+import { Box, Button, IconButton, Paper, Slider, Stack, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material';
 import PhotoSizeSelectSmallIcon from '@mui/icons-material/PhotoSizeSelectSmall';
 import PhotoSizeSelectLargeIcon from '@mui/icons-material/PhotoSizeSelectLarge';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
@@ -9,6 +9,7 @@ import DriveFileMoveIcon from '@mui/icons-material/DriveFileMove';
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import ViewModuleIcon from '@mui/icons-material/ViewModule';
 import ViewListIcon from '@mui/icons-material/ViewList';
+import DriveFolderUploadIcon from '@mui/icons-material/DriveFolderUpload';
 
 export const THUMBNAIL_SIZE_MIN = 160;
 export const THUMBNAIL_SIZE_MAX = 360;
@@ -31,6 +32,7 @@ export default function LibraryBottomBar({
   canDeleteLocalFiles, onDeleteLocalFiles, onDeleteFromLibrary,
   canMove, onMoveSelected,
   canTag, onTagSelected,
+  onAddLocalFile,
 }: {
   // Optional, same reason as thumbnailSize below -- only the flat video
   // view has a grid/list layout to switch between; the Playlists view (and
@@ -63,6 +65,10 @@ export default function LibraryBottomBar({
   // one active sublibrary, so it's available whenever anything is selected.
   canTag?: boolean;
   onTagSelected?: () => void;
+  // Optional -- omitted by the Playlists section's own bulk bar (adding a
+  // raw file doesn't apply to a playlist snapshot view), same pattern as
+  // canMove/canTag above.
+  onAddLocalFile?: () => void;
 }) {
   return (
     // A flex sibling of the scrollable content region, not an in-flow
@@ -77,6 +83,12 @@ export default function LibraryBottomBar({
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minHeight: 32 }}>
+        {onAddLocalFile &&
+          <Tooltip title="Add local file to library">
+            <IconButton size="small" onClick={onAddLocalFile} aria-label="Add local file to library">
+              <DriveFolderUploadIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>}
         {selectedCount > 0 &&
           <>
             <Typography variant="body2">{selectedCount} item{selectedCount === 1 ? '' : 's'} selected</Typography>

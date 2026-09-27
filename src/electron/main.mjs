@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -1279,6 +1279,57 @@ ipcMain.handle('dialog:openFolder', async (e, options) => dialog.showOpenDialog(
     properties: ['openDirectory', 'createDirectory'],
     ...options
 }));
+
+// A broad real-world video-extension list, not getSupportedVideoFilters()'s
+// re-encode-target list (that one deliberately excludes .avi/.mov/.webm/.flv,
+// which are all valid things to pick up as a local file to add). Mirrors
+// dialog:saveExportedFile's own extensions-list + allVideoFilter shape.
+const LOCAL_VIDEO_FILE_EXTENSIONS = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', 'm4v', '3gp', 'ts', 'mpg', 'mpeg'];
+
+ipcMain.handle('dialog:openLocalVideoFile', async () => dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'Video Files', extensions: LOCAL_VIDEO_FILE_EXTENSIONS }, ...allVideoFilter],
+}));
+
+// Read-only prefill probe for AddLocalFileDialog.tsx -- never writes
+// anything, just surfaces whatever ffprobe can read off the file so the form
+// can prefill Title/Metadata fields. Missing data resolves to null/empty
+// rather than throwing, since a file with no usable tags is still a valid
+// thing to add. Also returns the id this file would be cataloged under (same
+// nonYoutubeVideoHash addLocalFileEntry itself computes) so the renderer can
+// run the usual library:findVideo duplicate check -- same two-call shape
+// DownloaderScreen.tsx already uses for its own add flow -- before ever
+// calling library:addLocalFile.
+ipcMain.handle('library:probeLocalFile', async (e, filePath) => {
+    const [streams, tags, duration] = await Promise.all([
+        ffmpegRunner.probeMediaStreams(filePath).catch(() => []),
+        ffmpegRunner.getMediaFormatTags(filePath).catch(() => ({})),
+        ffmpegRunner.getMediaDurationSeconds(filePath).catch(() => 0),
+    ]);
+    const videoStream = streams.find((s) => s.codecType === 'video');
+    return {
+        id: nonYoutubeVideoHash('local', null, path.resolve(filePath)),
+        width: videoStream?.width || null,
+        height: videoStream?.height || null,
+        duration: duration || null,
+        tags,
+    };
+});
+
+// Assumes the renderer has already cleared this with library:findVideo (see
+// library:probeLocalFile's own comment) for mode 'add' -- same division of
+// labor as addLocalFileEntry's own doc comment describes. mode
+// 'override'/'addVersion' pass the existing videoDir a duplicate check
+// turned up.
+ipcMain.handle('library:addLocalFile', async (e, { sourceFilePath, formFields, mode, videoDir }, targetTag) => {
+    const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    const libraryTag = targetTag || activeLibraryTag;
+    const result = await addLocalFileEntry({ libraryDir, libraryTag, sourceFilePath, formFields, ffmpegRunner, mode, videoDir });
+    const tagForRefresh = mode === 'add' || mode === 'override' ? libraryTag : activeLibraryTag;
+    await refreshLibraryIndex(libraryDir, tagForRefresh);
+    notifyLibraryBackgroundUpdate();
+    return { success: true, videoDir: result.videoDir, epoch: result.epoch };
+});
 
 ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options) => {
     const { downloadDir } = readSettings();

@@ -5,12 +5,18 @@ import {
   Avatar,
   Badge,
   Box,
+  Button,
   Card,
   CardActionArea,
   CardMedia,
   Checkbox,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   FormControl,
   FormControlLabel,
   IconButton,
@@ -44,7 +50,7 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
-import { convertYYYYMMDDStringToDate, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage } from '../../utils/utils.ts';
 import { useBackgroundPlayer, resolvePlayableSource } from '../hooks/useBackgroundPlayer.tsx';
 import { parseClipTimestampSeconds } from './FfmpegUtilitiesPanel';
 import LibraryVideoDetail from './LibraryVideoDetail';
@@ -54,6 +60,7 @@ import LibraryBottomBar from '../components/LibraryBottomBar';
 import BulkDownloadQualityDialog from '../components/BulkDownloadQualityDialog';
 import BulkDeleteConfirmDialog from '../components/BulkDeleteConfirmDialog';
 import CreateSubLibraryDialog from '../components/CreateSubLibraryDialog';
+import AddLocalFileDialog, { type LocalFileFormFields } from '../components/AddLocalFileDialog';
 import MoveToSubLibraryDialog from '../components/MoveToSubLibraryDialog';
 import TagSelectedDialog from '../components/TagSelectedDialog';
 import TagFilterPopover, { type SystemFilterKey } from '../components/TagFilterPopover';
@@ -209,6 +216,19 @@ export default function LibraryScreen() {
   const [createTagDialogOpen, setCreateTagDialogOpen] = useState(false);
   const [creatingTag, setCreatingTag] = useState(false);
   const [createTagError, setCreateTagError] = useState<string | null>(null);
+  const [addLocalFileDialogOpen, setAddLocalFileDialogOpen] = useState(false);
+  const [addingLocalFile, setAddingLocalFile] = useState(false);
+  const [addLocalFileError, setAddLocalFileError] = useState<string | null>(null);
+  // Set once a submitted add turns out to be a duplicate (same shape as
+  // DownloaderScreen.tsx's own duplicateMatch) -- pending payload is kept
+  // around so the Override/Add-as-new-version choice can resubmit it with
+  // the resolved videoDir, without asking the user to reselect the file.
+  const [localFileDuplicateMatch, setLocalFileDuplicateMatch] = useState<{
+    channelDisplayName: string | null;
+    videoDir: string;
+    pending: { sourceFilePath: string; formFields: LocalFileFormFields; targetTag: string };
+  } | null>(null);
+  const [localFileAddedSnackbarOpen, setLocalFileAddedSnackbarOpen] = useState(false);
   // The active sublibrary's video-tag map (unrelated to libraryTags above,
   // which is sublibrary switching) -- {} until load() finishes.
   const [videoTags, setVideoTags] = useState<Record<string, string[]>>({});
@@ -287,6 +307,77 @@ export default function LibraryScreen() {
       await load();
     } finally {
       setCreatingTag(false);
+    }
+  };
+
+  // Shared by both the plain-add and duplicate-resolution paths below --
+  // handleVersionsChanged already re-syncs `channels` off the fresh index
+  // library:addLocalFile's own refreshLibraryIndex call produced (via the
+  // onLibraryBackgroundUpdate listener below), so this just needs to close
+  // out the dialog state and show the success toast. No
+  // incrementLibraryNotifications() here, unlike DownloaderScreen's own
+  // add flow -- that badge exists to flag the Library tab from *outside* it;
+  // this add already happens while the tab is open.
+  const finishLocalFileAdd = () => {
+    setAddLocalFileDialogOpen(false);
+    setLocalFileDuplicateMatch(null);
+    setLocalFileAddedSnackbarOpen(true);
+    setAddingLocalFile(false);
+  };
+
+  const handleAddLocalFileSubmit = async (payload: { sourceFilePath: string; formFields: LocalFileFormFields; targetTag: string }) => {
+    setAddingLocalFile(true);
+    setAddLocalFileError(null);
+    try {
+      // Scoped to the target sublibrary, same reasoning as DownloaderScreen's
+      // own handleAddToLibrary -- a duplicate check against the wrong
+      // sublibrary would either miss a real duplicate or flag a false one.
+      const probe = await window.electronAPI.probeLocalFile(payload.sourceFilePath);
+      const existing = await window.electronAPI.findLibraryVideo(probe.id, payload.targetTag);
+      if (existing.found && existing.videoDir) {
+        setAddingLocalFile(false);
+        setLocalFileDuplicateMatch({ channelDisplayName: existing.channelDisplayName || null, videoDir: existing.videoDir, pending: payload });
+        return;
+      }
+      await window.electronAPI.addLocalFile({ sourceFilePath: payload.sourceFilePath, formFields: payload.formFields, mode: 'add' }, payload.targetTag);
+      finishLocalFileAdd();
+    } catch (err) {
+      console.error('Failed to add local file to library', err);
+      setAddingLocalFile(false);
+      setAddLocalFileError(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to add this file to the library.');
+    }
+  };
+
+  // Replaces the existing tracked entry -- mirrors DownloaderScreen's own
+  // handleOverrideAdd, just calling addLocalFile with mode 'override'
+  // instead of overrideLibraryEntry.
+  const handleLocalFileOverride = async () => {
+    if (!localFileDuplicateMatch) return;
+    const { pending, videoDir } = localFileDuplicateMatch;
+    setAddingLocalFile(true);
+    try {
+      await window.electronAPI.addLocalFile({ sourceFilePath: pending.sourceFilePath, formFields: pending.formFields, mode: 'override', videoDir }, pending.targetTag);
+      finishLocalFileAdd();
+    } catch (err) {
+      console.error('Failed to override library entry with local file', err);
+      setAddingLocalFile(false);
+      setAddLocalFileError(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to add this file to the library.');
+    }
+  };
+
+  // Additive counterpart to handleLocalFileOverride -- mirrors
+  // DownloaderScreen's own handleAddVersion.
+  const handleLocalFileAddVersion = async () => {
+    if (!localFileDuplicateMatch) return;
+    const { pending, videoDir } = localFileDuplicateMatch;
+    setAddingLocalFile(true);
+    try {
+      await window.electronAPI.addLocalFile({ sourceFilePath: pending.sourceFilePath, formFields: pending.formFields, mode: 'addVersion', videoDir }, pending.targetTag);
+      finishLocalFileAdd();
+    } catch (err) {
+      console.error('Failed to add local file as a new version', err);
+      setAddingLocalFile(false);
+      setAddLocalFileError(err instanceof Error ? cleanElectronErrorMessage(err.message) : 'Failed to add this file to the library.');
     }
   };
 
@@ -781,6 +872,7 @@ export default function LibraryScreen() {
           onMoveSelected={() => setMoveDialogOpen(true)}
           canTag={canTag}
           onTagSelected={() => setTagDialogOpen(true)}
+          onAddLocalFile={() => setAddLocalFileDialogOpen(true)}
         />}
       {!loading && libraryDir && librarySection === 'playlists' && playlistBulkBar &&
         <LibraryBottomBar
@@ -800,6 +892,37 @@ export default function LibraryScreen() {
         error={createTagError}
         onConfirm={handleCreateLibraryTag}
       />
+      <AddLocalFileDialog
+        open={addLocalFileDialogOpen}
+        onClose={() => { setAddLocalFileDialogOpen(false); setAddLocalFileError(null); }}
+        submitting={addingLocalFile}
+        error={addLocalFileError}
+        onSubmit={handleAddLocalFileSubmit}
+      />
+      <Dialog open={!!localFileDuplicateMatch} onClose={() => setLocalFileDuplicateMatch(null)}>
+        <DialogTitle>Already in your library</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This file is already tracked in your library{localFileDuplicateMatch?.channelDisplayName ? ` under "${localFileDuplicateMatch.channelDisplayName}"` : ''}.
+            What would you like to do?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setLocalFileDuplicateMatch(null)}>Cancel</Button>
+          <Button onClick={handleLocalFileAddVersion}>Add as new version</Button>
+          <Button variant="contained" onClick={handleLocalFileOverride}>Override</Button>
+        </DialogActions>
+      </Dialog>
+      <Snackbar
+        open={localFileAddedSnackbarOpen}
+        autoHideDuration={4000}
+        onClose={() => setLocalFileAddedSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setLocalFileAddedSnackbarOpen(false)} severity="success" variant="filled">
+          Added to library
+        </Alert>
+      </Snackbar>
       <BulkDownloadQualityDialog
         open={bulkDownloadDialogOpen}
         onClose={() => setBulkDownloadDialogOpen(false)}
@@ -983,7 +1106,7 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
       <CardActionArea onClick={() => onSelect(video)}>
         <CardMedia
           component="div"
-          image={video.metadata.thumbnail || undefined}
+          image={video.thumbnailPath ? buildAppVideoUrl(video.thumbnailPath) : (video.metadata.thumbnail || undefined)}
           sx={{ aspectRatio: '16 / 9', backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
         />
         <Box sx={{ p: 1.5 }}>
@@ -1022,7 +1145,7 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
             </Stack>}
           <Stack direction="row" justifyContent="space-between" alignItems="center">
             <Typography variant="body2" color="text.secondary">
-              {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
+              {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate || formatEpochLabel(video.metadata.addedEpoch)}
             </Typography>
             <Stack direction="row" spacing={1}>
               {video.epochs.length > 1 &&
@@ -1130,7 +1253,7 @@ function VideoListRow({ video, onSelect, channelLabel, selected, selectionActive
         <ListItemAvatar>
           <Avatar
             variant="rounded"
-            src={video.metadata.thumbnail || undefined}
+            src={video.thumbnailPath ? buildAppVideoUrl(video.thumbnailPath) : (video.metadata.thumbnail || undefined)}
             sx={{
               width: 64,
               height: 36,
@@ -1189,7 +1312,7 @@ function VideoListRow({ video, onSelect, channelLabel, selected, selectionActive
           secondary={
             <Stack direction="row" spacing={2} sx={{ minWidth: 0 }}>
               <Typography component="span" variant="caption" color="text.secondary" sx={{ [LIST_ROW_NARROW_QUERY]: { fontSize: '0.625rem' } }}>
-                {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate}
+                {convertYYYYMMDDStringToDate(video.metadata.uploadDate || '') || video.metadata.uploadDate || formatEpochLabel(video.metadata.addedEpoch)}
               </Typography>
               {video.epochs.length > 1 &&
                 <Typography component="span" variant="caption" color="text.secondary" sx={{ [LIST_ROW_NARROW_QUERY]: { fontSize: '0.625rem' } }}>{video.epochs.length} versions</Typography>}
