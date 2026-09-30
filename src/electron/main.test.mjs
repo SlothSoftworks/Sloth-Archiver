@@ -62,6 +62,10 @@ import {
   assertValidHttpUrl,
   isValidClipTimestamp,
   resolveAppOrLibraryPath,
+  isShellExecutablePath,
+  resolveRevealTarget,
+  resolveOpenDirectoryTarget,
+  resolveOpenExternallyTarget,
   rememberAppPath,
   makeCookiesArgs,
   reapStaleCookieCopies,
@@ -449,6 +453,71 @@ describe('resolveAppOrLibraryPath', () => {
     rememberAppPath('');
     rememberAppPath(null);
     expect(resolveAppOrLibraryPath(dir, '')).toBeNull();
+  });
+});
+
+describe('shell handler path guards (SEC-015)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-shell-'));
+  const videoDir = path.join(dir, 'DefaultLibrary', 'Channel', 'abc123');
+  fs.mkdirSync(path.join(videoDir, '1'), { recursive: true });
+  const media = path.join(videoDir, '1', 'video.mp4');
+  fs.writeFileSync(media, 'data');
+  const script = path.join(videoDir, '1', 'payload.command');
+  fs.writeFileSync(script, 'echo pwned');
+  const extensionless = path.join(videoDir, '1', 'payload');
+  fs.writeFileSync(extensionless, 'echo pwned');
+
+  it('flags executable, script and launcher types on every platform, case-insensitively', () => {
+    for (const name of ['a.exe', 'a.BAT', 'a.lnk', 'a.ps1', 'a.command', 'a.app', 'a.scpt', 'a.desktop', 'a.sh', 'a.AppImage', 'a.jar']) {
+      expect(isShellExecutablePath(name)).toBe(true);
+    }
+  });
+
+  it('flags an extensionless file, which macOS would run in Terminal', () => {
+    expect(isShellExecutablePath('/some/dir/payload')).toBe(true);
+  });
+
+  it('does not flag real media types', () => {
+    for (const name of ['v.mp4', 'v.MKV', 'v.webm', 'a.mp3', 'a.m4a', 'a.opus', 'a.flac', 'v.mov', 'v.ts']) {
+      expect(isShellExecutablePath(name)).toBe(false);
+    }
+  });
+
+  it('reveals library files and remembered app paths, nothing else', () => {
+    expect(resolveRevealTarget(dir, media)).toBe(media);
+    expect(resolveRevealTarget(dir, '/etc/passwd')).toBeNull();
+    const downloaded = path.join(os.tmpdir(), `sloth-archiver-test-reveal-${Date.now()}.mp4`);
+    expect(resolveRevealTarget(dir, downloaded)).toBeNull();
+    rememberAppPath(downloaded);
+    expect(resolveRevealTarget(dir, downloaded)).toBe(path.resolve(downloaded));
+  });
+
+  it('opens only existing directories inside the library', () => {
+    expect(resolveOpenDirectoryTarget(dir, path.join(dir, 'DefaultLibrary'))).toBe(path.join(dir, 'DefaultLibrary'));
+    expect(resolveOpenDirectoryTarget(dir, media)).toBeNull();
+    expect(resolveOpenDirectoryTarget(dir, path.join(videoDir, 'clips'))).toBeNull();
+    expect(resolveOpenDirectoryTarget(dir, os.tmpdir())).toBeNull();
+    expect(resolveOpenDirectoryTarget('', os.tmpdir())).toBeNull();
+  });
+
+  it('opens library media externally but refuses executables, folders and outside paths', () => {
+    expect(resolveOpenExternallyTarget(dir, media)).toBe(media);
+    expect(resolveOpenExternallyTarget(dir, script)).toBeNull();
+    expect(resolveOpenExternallyTarget(dir, extensionless)).toBeNull();
+    expect(resolveOpenExternallyTarget(dir, videoDir)).toBeNull();
+    expect(resolveOpenExternallyTarget(dir, path.join(videoDir, '1', 'missing.mp4'))).toBeNull();
+    expect(resolveOpenExternallyTarget(dir, '/etc/passwd')).toBeNull();
+  });
+
+  it('refuses a remembered app path that is an executable type', () => {
+    const outsideScript = path.join(os.tmpdir(), `sloth-archiver-test-${Date.now()}.sh`);
+    fs.writeFileSync(outsideScript, 'echo pwned');
+    try {
+      rememberAppPath(outsideScript);
+      expect(resolveOpenExternallyTarget(dir, outsideScript)).toBeNull();
+    } finally {
+      fs.rmSync(outsideScript, { force: true });
+    }
   });
 });
 

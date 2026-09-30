@@ -1947,6 +1947,72 @@ export function resolveAppOrLibraryPath(libraryDir, candidatePath) {
         || (candidatePath && recentAppPaths.has(candidatePath) ? path.resolve(candidatePath) : null);
 }
 
+// SEC-015: shell.openPath asks the OS to open a file with its registered
+// default handler -- for these types that handler *executes* it. The
+// system:* handlers below only ever legitimately open downloaded media, a
+// clip, or a library folder, so any of these is refused outright even when
+// the path passes containment. Covers Windows, macOS and Linux launchers/
+// scripts/installers alike, since the app ships on all three.
+const SHELL_EXECUTABLE_EXTENSIONS = new Set([
+    // Windows
+    'exe', 'com', 'bat', 'cmd', 'msi', 'msp', 'mst', 'scr', 'pif', 'lnk', 'url',
+    'vb', 'vbs', 'vbe', 'js', 'jse', 'ws', 'wsf', 'wsc', 'wsh', 'ps1', 'ps1xml',
+    'ps2', 'psc1', 'psm1', 'hta', 'cpl', 'msc', 'reg', 'scf', 'inf', 'chm',
+    'jar', 'appref-ms', 'application', 'gadget', 'appx', 'msix', 'library-ms',
+    'settingcontent-ms',
+    // macOS
+    'app', 'command', 'tool', 'terminal', 'scpt', 'scptd', 'applescript',
+    'workflow', 'action', 'pkg', 'mpkg', 'dmg', 'webloc', 'inetloc', 'fileloc',
+    'osax', 'prefpane', 'kext',
+    // Linux / cross-platform scripts and packages
+    'desktop', 'sh', 'bash', 'zsh', 'csh', 'ksh', 'fish', 'run', 'bin',
+    'appimage', 'deb', 'rpm', 'snap', 'flatpakref', 'py', 'pyw', 'pl', 'rb',
+    'php', 'elf', 'out',
+]);
+
+// True when opening filePath via the OS default handler could execute it:
+// a known executable/script/launcher extension, or no extension at all
+// (macOS's `open` runs an extensionless Unix executable in Terminal).
+export function isShellExecutablePath(filePath) {
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    return ext === '' || SHELL_EXECUTABLE_EXTENSIONS.has(ext);
+}
+
+function statOrNull(targetPath) {
+    try {
+        return fs.statSync(targetPath);
+    } catch {
+        return null;
+    }
+}
+
+// SEC-015: the shell.* handlers below used to hand the raw renderer-supplied
+// path straight to the OS. Each resolves to the path it's allowed to act on,
+// or null (the caller logs and does nothing). Same trust boundary as the
+// ffmpeg utility handlers (SEC-003): inside the library, or a path the main
+// process itself recently handed back (resolveAppOrLibraryPath above).
+//
+// Reveal-in-folder never executes anything, so containment alone suffices.
+export function resolveRevealTarget(libraryDir, candidatePath) {
+    return resolveAppOrLibraryPath(libraryDir, candidatePath);
+}
+
+// Opening a folder's contents: must be a real, existing directory inside the
+// library (the only folders the UI opens -- a sublibrary root or a video's
+// clips folder), so a file path can't be smuggled through as a "folder".
+export function resolveOpenDirectoryTarget(libraryDir, candidatePath) {
+    const resolved = resolveInsideLibrary(libraryDir, candidatePath);
+    return resolved && statOrNull(resolved)?.isDirectory() ? resolved : null;
+}
+
+// Opening a file in its default app: containment, must be an existing
+// regular file, and never a type whose default handler executes it.
+export function resolveOpenExternallyTarget(libraryDir, candidatePath) {
+    const resolved = resolveAppOrLibraryPath(libraryDir, candidatePath);
+    if (!resolved || isShellExecutablePath(resolved)) return null;
+    return statOrNull(resolved)?.isFile() ? resolved : null;
+}
+
 // Matches every shape FfmpegUtilitiesPanel.tsx's own timestamp helpers can
 // produce: formatClipTimestampInput (typed input, anywhere from a bare
 // seconds value up to HH:MM:SS) and formatSecondsAsClipTimestamp (the
@@ -2456,21 +2522,37 @@ ipcMain.handle('system:getFfmpegVersion', async () => {
 });
 
 ipcMain.handle('system:openFileInDirectory', async (e, filepath) => {
-    shell.showItemInFolder(filepath);
+    const target = resolveRevealTarget(readSettings().libraryDir, filepath);
+    if (!target) {
+        log('[system:openFileInDirectory] refused a path outside the library/app paths:', filepath);
+        return;
+    }
+    shell.showItemInFolder(target);
 });
 // shell.showItemInFolder, for a directory path, reveals its *parent* folder
 // with that directory selected -- not what "open this folder" means.
 // shell.openPath opens the given folder's own contents directly.
 ipcMain.handle('system:openDirectory', async (e, dirPath) => {
-    shell.openPath(dirPath);
+    const target = resolveOpenDirectoryTarget(readSettings().libraryDir, dirPath);
+    if (!target) {
+        log('[system:openDirectory] refused a path that is not a folder inside the library:', dirPath);
+        return;
+    }
+    shell.openPath(target);
 });
 
 // Opens a file in the OS's default app (e.g. QuickTime/VLC for a video).
 // Deliberately unconditional on file type -- a generically useful escape
 // hatch even for formats the in-app player already handles, not just MKV
-// (which Chromium's <video> element can't play at all).
+// (which Chromium's <video> element can't play at all) -- "any media type",
+// though, not "any file type": see resolveOpenExternallyTarget (SEC-015).
 ipcMain.handle('system:openFileExternally', async (e, filepath) => {
-    shell.openPath(filepath);
+    const target = resolveOpenExternallyTarget(readSettings().libraryDir, filepath);
+    if (!target) {
+        log('[system:openFileExternally] refused a path outside the library/app paths or an executable file type:', filepath);
+        return;
+    }
+    shell.openPath(target);
 });
 
 // Renderer-side errors (window.onerror/unhandledrejection, see App.tsx)
