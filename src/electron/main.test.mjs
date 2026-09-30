@@ -66,6 +66,7 @@ import {
   resolveRevealTarget,
   resolveOpenDirectoryTarget,
   resolveOpenExternallyTarget,
+  isAllowedRendererHost,
   rememberAppPath,
   makeCookiesArgs,
   reapStaleCookieCopies,
@@ -517,6 +518,18 @@ describe('shell handler path guards (SEC-015)', () => {
       expect(resolveOpenExternallyTarget(dir, outsideScript)).toBeNull();
     } finally {
       fs.rmSync(outsideScript, { force: true });
+    }
+  });
+});
+
+describe('isAllowedRendererHost (SEC-011)', () => {
+  it('accepts only this server\'s own loopback host:port', () => {
+    expect(isAllowedRendererHost('127.0.0.1:5173', 5173)).toBe(true);
+  });
+
+  it('rejects other ports, localhost, rebinding hostnames and a missing header', () => {
+    for (const host of ['127.0.0.1:5174', '127.0.0.1', 'localhost:5173', 'evil.example:5173', '127.0.0.1:5173.evil.example', '', undefined]) {
+      expect(isAllowedRendererHost(host, 5173)).toBe(false);
     }
   });
 });

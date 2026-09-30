@@ -273,9 +273,23 @@ const CONTENT_SECURITY_POLICY = [
 // embed elsewhere in the app; only a genuine http:// origin clears that
 // gate. 127.0.0.1-only (not 0.0.0.0) and port 0 (an OS-picked ephemeral
 // port) keep this unreachable from the network.
+//
+// SEC-011: loopback binding alone doesn't stop a web page from reaching this
+// server via DNS rebinding (a hostile domain re-pointed at 127.0.0.1 is
+// still sent with that domain as its Host), so any request whose Host isn't
+// exactly this server's own 127.0.0.1:<port> is refused.
+export function isAllowedRendererHost(hostHeader, port) {
+    return hostHeader === `127.0.0.1:${port}`;
+}
+
 function startRendererServer() {
     return new Promise((resolve) => {
         const server = http.createServer((req, res) => {
+            if (!isAllowedRendererHost(req.headers.host, server.address().port)) {
+                res.writeHead(421);
+                res.end('Misdirected Request');
+                return;
+            }
             const { pathname } = new URL(req.url, 'http://localhost');
             const resolvedPath = path.join(rendererDir, pathname === '/' ? '/index.html' : pathname);
             const relative = path.relative(rendererDir, resolvedPath);
