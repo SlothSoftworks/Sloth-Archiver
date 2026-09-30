@@ -50,7 +50,7 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
-import { convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage } from '../../utils/utils.ts';
+import { convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage, safeRemoteImageUrl } from '../../utils/utils.ts';
 import { useBackgroundPlayer, resolvePlayableSource } from '../hooks/useBackgroundPlayer.tsx';
 import { parseClipTimestampSeconds } from './FfmpegUtilitiesPanel';
 import LibraryVideoDetail from './LibraryVideoDetail';
@@ -1106,7 +1106,7 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
       <CardActionArea onClick={() => onSelect(video)}>
         <CardMedia
           component="div"
-          image={video.thumbnailPath ? buildAppVideoUrl(video.thumbnailPath) : (video.metadata.thumbnail || undefined)}
+          image={video.thumbnailPath ? buildAppVideoUrl(video.thumbnailPath) : safeRemoteImageUrl(video.metadata.thumbnail)}
           sx={{ aspectRatio: '16 / 9', backgroundColor: 'grey.800', backgroundSize: 'cover', backgroundPosition: 'center' }}
         />
         <Box sx={{ p: 1.5 }}>

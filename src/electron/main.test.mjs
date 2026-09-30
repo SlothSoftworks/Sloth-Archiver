@@ -67,6 +67,7 @@ import {
   resolveOpenDirectoryTarget,
   resolveOpenExternallyTarget,
   isAllowedRendererHost,
+  buildFfmpegMetadataArgs,
   rememberAppPath,
   makeCookiesArgs,
   reapStaleCookieCopies,
@@ -531,6 +532,24 @@ describe('isAllowedRendererHost (SEC-011)', () => {
     for (const host of ['127.0.0.1:5174', '127.0.0.1', 'localhost:5173', 'evil.example:5173', '127.0.0.1:5173.evil.example', '', undefined]) {
       expect(isAllowedRendererHost(host, 5173)).toBe(false);
     }
+  });
+});
+
+describe('buildFfmpegMetadataArgs (SEC-009)', () => {
+  it('emits one -metadata pair per known tag with a value', () => {
+    expect(buildFfmpegMetadataArgs({ title: 'T', artist: 'A', date: '20260101', description: '', album: null })).toEqual([
+      '-metadata', 'title=T', '-metadata', 'artist=A', '-metadata', 'date=20260101',
+    ]);
+  });
+
+  it('drops unknown or malformed keys and non-scalar values', () => {
+    expect(buildFfmpegMetadataArgs({
+      'title=x': 'a', 'comment\nfoo': 'b', '-y': 'c', encoder: 'd', genre: { toString: () => 'x' }, track: 3,
+    })).toEqual(['-metadata', 'track=3']);
+  });
+
+  it('tolerates a missing tags object', () => {
+    expect(buildFfmpegMetadataArgs(undefined)).toEqual([]);
   });
 });
 

@@ -38,14 +38,14 @@ function renderWithBgProbe(ui: ReactElement) {
 
 function baseMetadata(overrides: Partial<LibraryVideoMetadata> = {}): LibraryVideoMetadata {
   return {
-    videoId: 'abc123',
+    videoId: 'abc123def45',
     channelId: null,
     channel: 'Some Channel',
     title: 'A Video',
     fullTitle: 'A Video',
     description: null,
     thumbnail: 'https://example.com/thumb.jpg',
-    originalUrl: 'https://youtube.com/watch?v=abc123',
+    originalUrl: 'https://youtube.com/watch?v=abc123def45',
     duration: null,
     durationString: '2:00',
     uploadDate: '20260101',
@@ -121,7 +121,7 @@ describe('LibraryVideoPlayer', () => {
   it('embeds the YouTube player when no local file is downloaded', () => {
     const { container } = render(<LibraryVideoPlayer metadata={baseMetadata()} />);
     const iframe = container.querySelector('iframe');
-    expect(iframe).toHaveAttribute('src', 'https://www.youtube-nocookie.com/embed/abc123');
+    expect(iframe).toHaveAttribute('src', 'https://www.youtube-nocookie.com/embed/abc123def45');
     // Excludes the always-present, unrelated hidden <video> the
     // BackgroundPlayerProvider wrapper (see this file's own render() above)
     // renders for background playback -- this assertion is about whether
@@ -143,7 +143,7 @@ describe('LibraryVideoPlayer', () => {
 
   it('still embeds the YouTube player for a plain YouTube entry (platform unset)', () => {
     const { container } = render(<LibraryVideoPlayer metadata={baseMetadata({ platform: null })} />);
-    expect(container.querySelector('iframe')).toHaveAttribute('src', 'https://www.youtube-nocookie.com/embed/abc123');
+    expect(container.querySelector('iframe')).toHaveAttribute('src', 'https://www.youtube-nocookie.com/embed/abc123def45');
   });
 
   it('renders a local <video> for a playable extension, pointed at the app-video:// URL', async () => {
@@ -606,7 +606,7 @@ describe('LibraryVideoPlayer', () => {
       await user.click(screen.getByRole('button', { name: 'Add to queue' }));
 
       expect(getBg().current).toEqual({
-        videoId: 'abc123', title: 'A Video', channel: 'Some Channel',
+        videoId: 'abc123def45', title: 'A Video', channel: 'Some Channel',
         thumbnailPath: '/lib/c/v1/thumb.jpg', sourcePath: '/lib/c/v1/1/video.mp4', mimeType: 'video/mp4',
       });
       // This player's own playback stopped -- only one audio stream at a time.
@@ -624,7 +624,7 @@ describe('LibraryVideoPlayer', () => {
       fireEvent.contextMenu(findClickOverlay(container));
       await user.click(await screen.findByRole('menuitem', { name: 'Add to queue' }));
 
-      expect(getBg().current?.videoId).toBe('abc123');
+      expect(getBg().current?.videoId).toBe('abc123def45');
     });
 
     it('is offered even for Clip Collection\'s own player (overrideFilePath set)', async () => {

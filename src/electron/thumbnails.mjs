@@ -239,7 +239,9 @@ export function downloadImageToFile(url, destDir, baseName, {
 // header is wanted), and --playlist-end 1 caps it to one entry.
 function fetchChannelAvatarUrl(channelId, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv }) {
     return new Promise((resolve) => {
-        const channelUrl = `https://www.youtube.com/channel/${channelId}`;
+        // Encoded (SEC-009): channelId comes from remote metadata and is spliced
+        // mid-URL, where a crafted value could otherwise change what's fetched.
+        const channelUrl = `https://www.youtube.com/channel/${encodeURIComponent(channelId)}`;
         const script = spawn(ytdlpPath, [
             '-J', '--no-warnings', '--flat-playlist', '--playlist-end', '1',
             '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), '--', channelUrl,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isValidUrl, convertYYYYMMDDStringToDate, buildAppVideoUrl } from './utils';
+import { isValidUrl, convertYYYYMMDDStringToDate, buildAppVideoUrl, safeRemoteImageUrl, isValidYouTubeVideoId } from './utils';
 
 describe('isValidUrl', () => {
   it('accepts well-formed URLs of any scheme', () => {
@@ -40,5 +40,37 @@ describe('buildAppVideoUrl', () => {
 
   it('includes a cache-busting query param when given', () => {
     expect(buildAppVideoUrl('/a/b.mp4', 42)).toBe('app-video://local/%2Fa%2Fb.mp4?v=42');
+  });
+});
+
+describe('safeRemoteImageUrl (SEC-009)', () => {
+  it('passes a normal https thumbnail URL through', () => {
+    expect(safeRemoteImageUrl('https://i.ytimg.com/vi/abc/maxresdefault.jpg')).toBe('https://i.ytimg.com/vi/abc/maxresdefault.jpg');
+  });
+
+  it('returns undefined for empty, unparseable and non-https values', () => {
+    for (const bad of [null, undefined, '', 'not a url', 'http://i.ytimg.com/a.jpg', 'javascript:alert(1)', 'data:image/png;base64,AAAA', 'file:///etc/passwd']) {
+      expect(safeRemoteImageUrl(bad)).toBeUndefined();
+    }
+  });
+
+  it('never returns a value that can close a CSS url("...") string', () => {
+    const crafted = 'https://cdn.example.com/a.jpg"); background: url("https://evil.example/x';
+    const result = safeRemoteImageUrl(crafted);
+    expect(result === undefined || !result.includes('"')).toBe(true);
+    expect(safeRemoteImageUrl('https://cdn.example.com/a.jpg?x=\\"')).toBeUndefined();
+  });
+});
+
+describe('isValidYouTubeVideoId (SEC-009)', () => {
+  it('accepts real 11-character ids', () => {
+    expect(isValidYouTubeVideoId('dQw4w9WgXcQ')).toBe(true);
+    expect(isValidYouTubeVideoId('a-b_c123XYZ')).toBe(true);
+  });
+
+  it('rejects anything else', () => {
+    for (const bad of ['', null, undefined, 'short', 'dQw4w9WgXcQQ', '../../abcde', 'dQw4w9WgXc?', 'dQw4w9WgXc#']) {
+      expect(isValidYouTubeVideoId(bad)).toBe(false);
+    }
   });
 });

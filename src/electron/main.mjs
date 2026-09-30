@@ -2339,6 +2339,20 @@ ipcMain.handle('library:convertClip', async (e, { videoDir, clipId, format, forc
     }
 });
 
+// SEC-009: tag *keys* arrive from the renderer alongside their values and
+// share one argv token with them (`key=value`), so a key containing "=" or a
+// newline would write a malformed tag. Only the tag names this app actually
+// writes (buildEmbedMetadataTags below, and the renderer's own
+// title/artist/date/description sets) are accepted; values must be strings
+// or numbers and are passed through as-is (one argv token, no shell).
+export const EMBED_METADATA_TAG_KEYS = new Set(['title', 'artist', 'date', 'description', 'track', 'album', 'genre']);
+
+export function buildFfmpegMetadataArgs(metadataTags) {
+    return Object.entries(metadataTags || {})
+        .filter(([key, value]) => EMBED_METADATA_TAG_KEYS.has(key) && (typeof value === 'string' || typeof value === 'number') && value !== '')
+        .flatMap(([key, value]) => ['-metadata', `${key}=${value}`]);
+}
+
 // Edits "in place" from the user's perspective, but ffmpeg can never read
 // and write the same file at once -- same temp-then-rename pattern
 // swapLibraryDownload (library.mjs) uses for quality swaps: write to
@@ -2371,9 +2385,7 @@ async function embedMetadataIntoFile({ inputPath, metadataTags, thumbnailPath, k
         const ext = path.extname(resolvedInput);
         const tempPath = `${resolvedInput.slice(0, -ext.length)}.new${ext}`;
         const duration = await getMediaDurationSeconds(resolvedInput);
-        const metadataArgs = Object.entries(metadataTags || {})
-            .filter(([, value]) => !!value)
-            .flatMap(([key, value]) => ['-metadata', `${key}=${value}`]);
+        const metadataArgs = buildFfmpegMetadataArgs(metadataTags);
 
         if (thumbnailPath && /^https?:\/\//i.test(thumbnailPath)) {
             try {

@@ -179,9 +179,36 @@ function isLongVideoForPostprocess(durationSeconds: number | null | undefined): 
 // getVideoInfoPython failure was displaying that wrapper verbatim instead of
 // the actual classified message underneath). Strips it down to just the
 // real message; a no-op on any string that doesn't have that shape.
+// SEC-009: remote thumbnail URLs come from third-party metadata and some end
+// up inside CSS (MUI CardMedia's `image` prop renders
+// background-image: url("...")), where a crafted value could break out of
+// the url() and inject declarations. Only https URLs are allowed through,
+// re-serialized by the URL parser (which percent-encodes quotes), and
+// anything still carrying a backslash -- the one CSS-string escape
+// character the serializer can leave in place -- is dropped.
+function safeRemoteImageUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== 'https:') return undefined;
+  const href = parsed.href;
+  return /["'\\\s]/.test(href) ? undefined : href;
+}
+
+// SEC-009: a YouTube video id is always exactly 11 characters from this set;
+// anything else (e.g. "../", "?", "#") could redirect an embed built from it.
+const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+function isValidYouTubeVideoId(videoId: string | null | undefined): boolean {
+  return !!videoId && YOUTUBE_VIDEO_ID_PATTERN.test(videoId);
+}
+
 function cleanElectronErrorMessage(message: string): string {
   return message.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '');
 }
 
-export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, getBestDownloadedEpoch, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage, isLongVideoForPostprocess };
+export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, getBestDownloadedEpoch, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage, isLongVideoForPostprocess, safeRemoteImageUrl, isValidYouTubeVideoId };
 
