@@ -79,6 +79,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "bench:library": "node scripts/perf/bench-library.mjs",
     "prepare": "husky"
   },
   "dependencies": {
