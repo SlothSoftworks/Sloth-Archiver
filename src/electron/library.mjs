@@ -308,14 +308,43 @@ export function sanitizeForFilesystem(input, maxLength = 100) {
 // targetPath is genuinely inside libraryDir, or null otherwise -- callers
 // that need to throw do so themselves with their own wording; main.mjs's
 // app-video:// handler instead turns a null into a 403 response.
+//
+// No configured library means nothing is inside it -- not "anything under
+// the process's cwd", which is what path.resolve('') would silently turn an
+// unset libraryDir into. Both sides are compared by their real (symlink-
+// resolved) location, so a symlink placed inside the library that points
+// outside it is rejected rather than followed. The returned path is still
+// the plain path.resolve() form, not the realpath, so callers keep seeing
+// the same path shape they passed in (e.g. macOS's /var vs /private/var).
 export function resolveInsideLibrary(libraryDir, targetPath) {
-    const resolvedLibraryDir = path.resolve(libraryDir || '');
-    const resolvedTarget = path.resolve(targetPath || '');
-    const relative = path.relative(resolvedLibraryDir, resolvedTarget);
+    if (!libraryDir || !targetPath) return null;
+    const resolvedTarget = path.resolve(targetPath);
+    const relative = path.relative(realpathOfExistingPrefix(libraryDir), realpathOfExistingPrefix(resolvedTarget));
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
         return null;
     }
     return resolvedTarget;
+}
+
+// fs.realpathSync throws for a path that doesn't exist yet, but plenty of
+// resolveInsideLibrary's callers legitimately ask about one (a temp file
+// about to be written, a folder about to be created). Resolves the deepest
+// ancestor that does exist and re-appends the rest unchanged -- a
+// not-yet-existing segment can't be a symlink, so nothing is lost.
+function realpathOfExistingPrefix(targetPath) {
+    const resolved = path.resolve(targetPath);
+    const pending = [];
+    let current = resolved;
+    for (;;) {
+        try {
+            return path.join(fs.realpathSync(current), ...pending);
+        } catch {
+            const parent = path.dirname(current);
+            if (parent === current) return resolved;
+            pending.unshift(path.basename(current));
+            current = parent;
+        }
+    }
 }
 
 export function channelFolderName(channel) {

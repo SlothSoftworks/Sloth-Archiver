@@ -55,6 +55,7 @@ import {
   listClips,
   deleteClip,
   updateClipFile,
+  resolveInsideLibrary,
 } from './library.mjs';
 
 let libraryDir;
@@ -127,6 +128,64 @@ describe('sanitizeForFilesystem', () => {
     expect(sanitizeForFilesystem('CON')).toBe('CON_');
     expect(sanitizeForFilesystem('con')).toBe('con_');
     expect(sanitizeForFilesystem('LPT1')).toBe('LPT1_');
+  });
+});
+
+describe('resolveInsideLibrary', () => {
+  it('resolves a path inside the library, including one that does not exist yet', () => {
+    const existing = path.join(libraryDir, 'Channel');
+    fs.mkdirSync(existing);
+    expect(resolveInsideLibrary(libraryDir, existing)).toBe(existing);
+    const notYetWritten = path.join(libraryDir, 'Channel', 'abc123', '1', 'metadata.json');
+    expect(resolveInsideLibrary(libraryDir, notYetWritten)).toBe(notYetWritten);
+  });
+
+  it('rejects the library root itself, parent traversal, and outside paths', () => {
+    expect(resolveInsideLibrary(libraryDir, libraryDir)).toBeNull();
+    expect(resolveInsideLibrary(libraryDir, path.join(libraryDir, '..', 'elsewhere'))).toBeNull();
+    expect(resolveInsideLibrary(libraryDir, os.tmpdir())).toBeNull();
+  });
+
+  // SEC-010: an unset library used to resolve to the process's cwd, turning
+  // "nothing is inside the library" into "anything under cwd is".
+  it('rejects everything when no library folder is configured', () => {
+    const underCwd = path.join(process.cwd(), 'package.json');
+    expect(resolveInsideLibrary('', underCwd)).toBeNull();
+    expect(resolveInsideLibrary(undefined, underCwd)).toBeNull();
+    expect(resolveInsideLibrary(null, 'package.json')).toBeNull();
+  });
+
+  it('rejects a falsy target path', () => {
+    expect(resolveInsideLibrary(libraryDir, '')).toBeNull();
+    expect(resolveInsideLibrary(libraryDir, undefined)).toBeNull();
+  });
+
+  // SEC-010: a symlink inside the library pointing outside it used to pass
+  // the lexical check, after which fs/net.fetch would follow it.
+  it.skipIf(process.platform === 'win32')('rejects a symlink inside the library that points outside it', () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-outside-'));
+    try {
+      fs.writeFileSync(path.join(outsideDir, 'secret.txt'), 'secret');
+      fs.symlinkSync(outsideDir, path.join(libraryDir, 'escape'));
+      expect(resolveInsideLibrary(libraryDir, path.join(libraryDir, 'escape', 'secret.txt'))).toBeNull();
+      expect(resolveInsideLibrary(libraryDir, path.join(libraryDir, 'escape', 'not-yet.txt'))).toBeNull();
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('accepts a library folder that is itself reached through a symlink', () => {
+    const linkParent = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-link-'));
+    try {
+      const linkedLibrary = path.join(linkParent, 'library');
+      fs.symlinkSync(libraryDir, linkedLibrary);
+      fs.writeFileSync(path.join(libraryDir, 'video.mp4'), 'data');
+      const viaLink = path.join(linkedLibrary, 'video.mp4');
+      expect(resolveInsideLibrary(linkedLibrary, viaLink)).toBe(viaLink);
+      expect(resolveInsideLibrary(libraryDir, viaLink)).toBe(viaLink);
+    } finally {
+      fs.rmSync(linkParent, { recursive: true, force: true });
+    }
   });
 });
 
