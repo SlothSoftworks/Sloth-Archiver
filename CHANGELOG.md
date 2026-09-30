@@ -4,6 +4,23 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [Unreleased]
+- **Security hardening pass.** No new features, but several ways the app
+  could be pushed into doing something it shouldn't are now closed off:
+  - Thumbnails and channel icons from video metadata are only fetched over
+    HTTPS from public addresses, with a size limit and a timeout. A failed
+    fetch no longer wipes out the thumbnail you already had.
+  - "Open file", "Show in folder" and "Open folder" only work on files in
+    your library or ones the app just downloaded, and never open programs or
+    scripts.
+  - Picking a whole drive or a missing folder as your library or download
+    folder is now refused, with the reason shown in Options.
+  - Library files reached through a shortcut (symlink) that points outside
+    the library folder are no longer served to the player.
+  - The error log now caps its size (keeping one older copy) and shows your
+    home folder as `~`, and the Options screen reminds you it can contain
+    file paths and video links before you share it.
+
 ## [1.5.0] — 2026-09-27
 - **Add local video files straight into your library.** A new upload button
   in the library's bottom panel opens a dialog that copies a file from
