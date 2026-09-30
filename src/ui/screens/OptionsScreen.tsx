@@ -129,6 +129,10 @@ export default function OptionsScreen() {
   const [browserSavedMessage, setBrowserSavedMessage] = useState('');
   const [downloadDir, setDownloadDirState] = useState('');
   const [libraryDir, setLibraryDirState] = useState('');
+  // The main process rejects a folder it can't safely use (a drive root, a
+  // missing folder -- SEC-014); its reason is shown under that setting.
+  const [downloadDirError, setDownloadDirError] = useState('');
+  const [libraryDirError, setLibraryDirError] = useState('');
   const [errorLogExists, setErrorLogExists] = useState(false);
   const [customConvertFormats, setCustomConvertFormatsState] = useState<string[]>([]);
   const [maxSimultaneousDownloads, setMaxSimultaneousDownloadsState] = useState(1);
@@ -275,7 +279,8 @@ export default function OptionsScreen() {
       defaultPath: downloadDir || undefined,
     });
     if (result.canceled || !result.filePaths?.[0]) return;
-    await window.electronAPI.setDownloadDir(result.filePaths[0]);
+    const saved = await window.electronAPI.setDownloadDir(result.filePaths[0]);
+    setDownloadDirError(saved.success ? '' : saved.message || 'That folder can\'t be used.');
     await refreshDownloadDir();
   };
 
@@ -286,7 +291,8 @@ export default function OptionsScreen() {
       defaultPath: libraryDir || undefined,
     });
     if (result.canceled || !result.filePaths?.[0]) return;
-    await window.electronAPI.setLibraryDir(result.filePaths[0]);
+    const saved = await window.electronAPI.setLibraryDir(result.filePaths[0]);
+    setLibraryDirError(saved.success ? '' : saved.message || 'That folder can\'t be used.');
     await refreshLibraryDir();
   };
 
@@ -446,6 +452,9 @@ export default function OptionsScreen() {
                 {downloadDir || 'Using system default'}
               </Typography>
             </Stack>
+            {downloadDirError && (
+              <Alert severity="error" variant="outlined" sx={{ mt: 2 }}>{downloadDirError}</Alert>
+            )}
           </Grid>
 
           <Grid size={{ xs: 12, sm: 6 }} sx={dividerTop}>
@@ -463,6 +472,9 @@ export default function OptionsScreen() {
                 {libraryDir || 'Not set'}
               </Typography>
             </Stack>
+            {libraryDirError && (
+              <Alert severity="error" variant="outlined" sx={{ mt: 2 }}>{libraryDirError}</Alert>
+            )}
           </Grid>
 
           <Grid size={{ xs: 12, sm: 6 }} sx={dividerTopAndLeftOnSm}>

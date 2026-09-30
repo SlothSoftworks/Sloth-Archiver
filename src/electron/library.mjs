@@ -318,8 +318,13 @@ export function sanitizeForFilesystem(input, maxLength = 100) {
 // the same path shape they passed in (e.g. macOS's /var vs /private/var).
 export function resolveInsideLibrary(libraryDir, targetPath) {
     if (!libraryDir || !targetPath) return null;
+    const realLibraryDir = realpathOfExistingPrefix(libraryDir);
+    // A filesystem root can't be picked as the library any more
+    // (validateDirectorySetting, settings.mjs -- SEC-014), but a value saved
+    // before that check existed would otherwise make the whole disk "inside".
+    if (path.parse(realLibraryDir).root === realLibraryDir) return null;
     const resolvedTarget = path.resolve(targetPath);
-    const relative = path.relative(realpathOfExistingPrefix(libraryDir), realpathOfExistingPrefix(resolvedTarget));
+    const relative = path.relative(realLibraryDir, realpathOfExistingPrefix(resolvedTarget));
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
         return null;
     }

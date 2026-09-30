@@ -11,7 +11,7 @@ import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs'
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
 import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail } from './library.mjs';
-import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT } from './settings.mjs';
+import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
@@ -423,10 +423,12 @@ ipcMain.handle('settings:getDownloadDir', async () => {
 });
 
 ipcMain.handle('settings:setDownloadDir', async (e, dir) => {
+    const { dir: validDir, error } = validateDirectorySetting(dir);
+    if (!validDir) return { success: false, message: error };
     const settings = readSettings();
-    settings.downloadDir = dir;
+    settings.downloadDir = validDir;
     writeSettings(settings);
-    return { success: true, downloadDir: dir };
+    return { success: true, downloadDir: validDir };
 });
 
 // Unlike downloadDir, deliberately no fallback to a default location here --
@@ -438,16 +440,18 @@ ipcMain.handle('settings:getLibraryDir', async () => {
 });
 
 ipcMain.handle('settings:setLibraryDir', async (e, dir) => {
+    const { dir: validDir, error } = validateDirectorySetting(dir);
+    if (!validDir) return { success: false, message: error };
     const settings = readSettings();
-    settings.libraryDir = dir;
+    settings.libraryDir = validDir;
     // A different library root may not even have the previously-active
     // tag's folder -- reset to the one tag every library can always resolve.
     settings.activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME;
     writeSettings(settings);
     // Switching to a different library folder mid-session should reflect
     // immediately, not show whatever the previous folder's scan found.
-    refreshLibraryIndex(dir, DEFAULT_LIBRARY_DIR_NAME);
-    return { success: true, libraryDir: dir };
+    refreshLibraryIndex(validDir, DEFAULT_LIBRARY_DIR_NAME);
+    return { success: true, libraryDir: validDir };
 });
 
 // SubLibrary switching -- listTags enumerates real tag folders (library.json
@@ -665,12 +669,12 @@ ipcMain.handle('settings:setEmbedMetadataByDefault', async (e, value) => {
 // string list, not validated against ffmpeg's own muxer list.
 ipcMain.handle('settings:getCustomConvertFormats', async () => {
     const { customConvertFormats } = readSettings();
-    return { customConvertFormats: Array.isArray(customConvertFormats) ? customConvertFormats : [] };
+    return { customConvertFormats: normalizeCustomConvertFormats(customConvertFormats) };
 });
 
 ipcMain.handle('settings:setCustomConvertFormats', async (e, formats) => {
     const settings = readSettings();
-    settings.customConvertFormats = Array.isArray(formats) ? formats : [];
+    settings.customConvertFormats = normalizeCustomConvertFormats(formats);
     writeSettings(settings);
     return { success: true, customConvertFormats: settings.customConvertFormats };
 });
@@ -1274,10 +1278,12 @@ app.on("ready", async () => {
 })
 
 ipcMain.handle('dialog:openFolder', async (e, options) => dialog.showOpenDialog({
+    // Only title/buttonLabel/defaultPath come from the renderer (SEC-014) --
+    // spread first so properties below can never be overridden.
+    ...pickFolderDialogOptions(options),
     // createDirectory only affects macOS (shows a "New Folder" button in the
     // panel); Windows' native folder picker already always allows this.
     properties: ['openDirectory', 'createDirectory'],
-    ...options
 }));
 
 // A broad real-world video-extension list, not getSupportedVideoFilters()'s
@@ -1376,15 +1382,16 @@ ipcMain.handle('library:changeThumbnail', async (e, { videoDir, mode, timestampS
     }
 });
 
-ipcMain.handle('dialog:saveVideoFile', async (e, defaultName = 'ytVid', options) => {
+// No renderer-supplied options object (SEC-014) -- every field is fixed
+// here; the renderer only suggests a file name.
+ipcMain.handle('dialog:saveVideoFile', async (e, defaultName) => {
     const { downloadDir } = readSettings();
     const baseDir = downloadDir || app.getPath('downloads');
     const result = await dialog.showSaveDialog({
         title: 'Save Video',
         buttonLabel: 'Save',
-        defaultPath: path.join(baseDir, defaultName),
+        defaultPath: path.join(baseDir, typeof defaultName === 'string' && defaultName ? defaultName : 'ytVid'),
         filters: getSupportedVideoFilters(),
-        ...options
     });
     if (!result.canceled && result.filePath) rememberAppPath(result.filePath);
     return result;

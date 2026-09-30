@@ -155,6 +155,11 @@ describe('resolveInsideLibrary', () => {
     expect(resolveInsideLibrary(null, 'package.json')).toBeNull();
   });
 
+  it('rejects everything when the library is a filesystem root', () => {
+    const root = path.parse(libraryDir).root;
+    expect(resolveInsideLibrary(root, path.join(libraryDir, 'video.mp4'))).toBeNull();
+  });
+
   it('rejects a falsy target path', () => {
     expect(resolveInsideLibrary(libraryDir, '')).toBeNull();
     expect(resolveInsideLibrary(libraryDir, undefined)).toBeNull();

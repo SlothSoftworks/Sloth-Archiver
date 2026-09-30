@@ -74,7 +74,7 @@ declare global {
             setCookiesConfig: (payload: { cookiesMode: 'file' | 'browser'; cookiesBrowser: string }) => Promise<{ success: boolean; cookiesMode: 'file' | 'browser'; cookiesBrowser: string }>
             setCookiesPersistAcrossSessions: (persist: boolean) => Promise<{ success: boolean; cookiesPersistAcrossSessions: boolean }>
             getDownloadDir: () => Promise<{ downloadDir: string }>
-            setDownloadDir: (dir: string) => Promise<{ success: boolean; downloadDir: string }>
+            setDownloadDir: (dir: string) => Promise<{ success: boolean; downloadDir?: string; message?: string }>
             checkFileExists: (filePath: string) => Promise<boolean>
             checkForYtdlpUpdate: () => Promise<{ current: string; latest: string | null; updateAvailable: boolean }>
             startYtdlpUpdate: () => Promise<{ success: boolean; version: string }>
@@ -85,7 +85,7 @@ declare global {
             getFfmpegVersion: () => Promise<string | null>
             deleteVideoInfoCacheEntry: (url: string) => Promise<{ success: boolean; existed: boolean }>
             getLibraryDir: () => Promise<{ libraryDir: string }>
-            setLibraryDir: (dir: string) => Promise<{ success: boolean; libraryDir: string }>
+            setLibraryDir: (dir: string) => Promise<{ success: boolean; libraryDir?: string; message?: string }>
             listLibraryTags: () => Promise<{ tags: LibraryTag[] }>
             createLibraryTag: (name: string) => Promise<{ success: boolean; tag?: LibraryTag; message?: string }>
             listVideoTags: () => Promise<{ tags: VideoTagsMap }>

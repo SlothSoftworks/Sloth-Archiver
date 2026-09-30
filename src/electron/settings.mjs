@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 
 // A factory, not bare module-level functions, so this stays a pure Node
 // module with no Electron dependency (same reasoning as library.mjs/
@@ -105,4 +106,62 @@ export const EMBED_METADATA_BY_DEFAULT_DEFAULT = true;
 
 export function clampEmbedMetadataByDefault(value) {
     return typeof value === 'boolean' ? value : EMBED_METADATA_BY_DEFAULT_DEFAULT;
+}
+
+// SEC-014: directory settings used to persist whatever the renderer sent.
+// libraryDir in particular is the root of every containment check
+// (resolveInsideLibrary, library.mjs) -- setting it to "/" would make the
+// whole filesystem "inside the library". Only a real, existing, absolute
+// directory that isn't a filesystem root is accepted. Returns the resolved
+// directory, or null plus a user-facing reason.
+export function validateDirectorySetting(dir) {
+    if (typeof dir !== 'string' || dir.trim() === '') {
+        return { dir: null, error: 'No folder was selected.' };
+    }
+    if (!path.isAbsolute(dir)) {
+        return { dir: null, error: 'The folder path must be absolute.' };
+    }
+    const resolved = path.resolve(dir);
+    if (path.parse(resolved).root === resolved) {
+        return { dir: null, error: 'A drive or filesystem root can\'t be used -- pick or create a folder inside it.' };
+    }
+    let stat;
+    try {
+        stat = fs.statSync(resolved);
+    } catch {
+        return { dir: null, error: 'That folder doesn\'t exist.' };
+    }
+    if (!stat.isDirectory()) {
+        return { dir: null, error: 'That path is not a folder.' };
+    }
+    return { dir: resolved, error: null };
+}
+
+// Custom "Convert to" formats end up as an output file extension and an
+// ffmpeg target, so only plain short alphanumeric extensions are kept --
+// the same shape OptionsScreen.tsx already normalizes to (trimmed,
+// lowercased, de-duplicated) before sending, enforced here too.
+export const CUSTOM_CONVERT_FORMATS_MAX = 50;
+const CONVERT_FORMAT_PATTERN = /^[a-z0-9]{1,16}$/;
+
+export function normalizeCustomConvertFormats(formats) {
+    if (!Array.isArray(formats)) return [];
+    const cleaned = formats
+        .filter((f) => typeof f === 'string')
+        .map((f) => f.trim().toLowerCase())
+        .filter((f) => CONVERT_FORMAT_PATTERN.test(f));
+    return Array.from(new Set(cleaned)).slice(0, CUSTOM_CONVERT_FORMATS_MAX);
+}
+
+// SEC-014: the folder picker used to spread a renderer-supplied options
+// object straight into dialog.showOpenDialog, letting a caller override
+// properties/filters/etc. Only the cosmetic fields the UI actually sets are
+// passed through, and only as strings.
+export function pickFolderDialogOptions(options) {
+    const picked = {};
+    for (const key of ['title', 'buttonLabel', 'defaultPath']) {
+        const value = options?.[key];
+        if (typeof value === 'string' && value !== '') picked[key] = value;
+    }
+    return picked;
 }
