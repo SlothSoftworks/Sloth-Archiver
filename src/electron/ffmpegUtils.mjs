@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { redactHomeDir } from './logFile.mjs';
 
 // ffmpeg's stderr is a wall of banner/build-config/stream-metadata noise even
 // on success, with the real failure cause buried in there as plain text.
@@ -24,7 +25,9 @@ const FFMPEG_FRIENDLY_ERRORS = [
 ];
 
 export function summarizeFfmpegError(stderr, code) {
-    const candidateLines = (stderr || '')
+    // The summary is shown in the UI, so the home directory (and with it the
+    // OS username) in any path ffmpeg echoed back is shown as "~" (SEC-016).
+    const candidateLines = redactHomeDir(stderr || '')
         .split('\n')
         .map((line) => line.trim())
         .filter((line) => line && !FFMPEG_NOISE_LINE.test(line));

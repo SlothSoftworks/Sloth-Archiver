@@ -15,6 +15,7 @@ import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize,
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
+import { createRotatingLogWriter, redactHomeDir } from './logFile.mjs';
 import { ensurePlayablePreview } from './previewCache.mjs';
 import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
 import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
@@ -24,9 +25,12 @@ import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_
 export { looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, buildResolutions, reshapeVideoInfo, isDeadVideoInfo, makeCookiesArgs, reapStaleCookieCopies };
 
 const logFile = path.join(app.getPath("userData"), "main.log");
+// Size-capped and home-directory-redacted (SEC-016, see logFile.mjs) -- this
+// is the file users are pointed at when reporting a bug.
+const writeLogLine = createRotatingLogWriter(logFile);
 function log(...args) {
-    const msg = `${new Date().toISOString()} ${args.map(String).join(" ")}`;
-    fs.appendFileSync(logFile, msg + "\n");
+    const msg = redactHomeDir(`${new Date().toISOString()} ${args.map(String).join(" ")}`);
+    writeLogLine(msg);
     console.log(msg);
 }
 
@@ -1669,7 +1673,10 @@ ipcMain.handle('downloadVideoWithProgressUpdates', (event, options) => {
     // A retry reuses the same downloadArgs/rawDir as the first attempt, so it
     // resumes from whatever yt-dlp already partially wrote rather than
     // restarting from zero.
-    async function handleFailure({ kind, message }, attempt) {
+    async function handleFailure({ kind, message: rawMessage }, attempt) {
+        // Raw yt-dlp stderr ends up in this message and on screen -- shown
+        // with the home directory as "~" (SEC-016).
+        const message = redactHomeDir(rawMessage);
         if (kind === ERROR_KINDS.CANCELLED) {
             log(`[download] ${options.requestId} attempt ${attempt} cancelled: ${message}`);
             finishDownload();

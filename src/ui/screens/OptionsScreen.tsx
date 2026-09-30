@@ -746,6 +746,10 @@ export default function OptionsScreen() {
               If something crashes or behaves unexpectedly, this file has the details -- useful to
               check yourself or attach when reporting a bug.
             </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              It can include file paths and the links of videos you downloaded (your home folder
+              is shown as ~), so look it over before sharing it publicly.
+            </Typography>
             <Stack direction="row" spacing={2} alignItems="center">
               <Button
                 variant="outlined"
