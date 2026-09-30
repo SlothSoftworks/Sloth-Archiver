@@ -10,6 +10,11 @@ describe('redactHomeDir (SEC-016)', () => {
     expect(redactHomeDir(text, '/home/alice', 'linux')).toBe('ERROR: unable to open ~/Videos/a.mp4 (copied from ~/Downloads/a.mp4)');
   });
 
+  it('does not touch a sibling directory that merely starts with the same name', () => {
+    expect(redactHomeDir('/home/alice2/a.mp4 /home/alice/b.mp4 /home/alice', '/home/alice', 'linux')).toBe('/home/alice2/a.mp4 ~/b.mp4 ~');
+    expect(redactHomeDir('C:\\Users\\Carol2\\a C:\\Users\\Carol\\b', 'C:\\Users\\Carol', 'win32')).toBe('C:\\Users\\Carol2\\a ~\\b');
+  });
+
   it('ignores a trailing separator on the home directory', () => {
     expect(redactHomeDir('/Users/bob/Movies/x.mkv', '/Users/bob/', 'darwin')).toBe('~/Movies/x.mkv');
   });

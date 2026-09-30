@@ -22,11 +22,13 @@ export function redactHomeDir(text, homeDir = os.homedir(), platform = process.p
     if (typeof text !== 'string' || !homeDir) return text;
     const trimmed = homeDir.replace(/[\\/]+$/, '');
     if (trimmed.length < 2 || /^[A-Za-z]:$/.test(trimmed)) return text;
+    // The lookahead stops /home/alice from also matching /home/alice2.
+    const boundary = '(?![A-Za-z0-9._-])';
     if (platform === 'win32') {
         const pattern = trimmed.split(/[\\/]/).map(escapeRegExp).join('[\\\\/]');
-        return text.replace(new RegExp(pattern, 'gi'), '~');
+        return text.replace(new RegExp(pattern + boundary, 'gi'), '~');
     }
-    return text.split(trimmed).join('~');
+    return text.replace(new RegExp(escapeRegExp(trimmed) + boundary, 'g'), '~');
 }
 
 // Returns a function that appends one line to filePath, first moving the
