@@ -68,6 +68,7 @@ import {
   resolveOpenExternallyTarget,
   isAllowedRendererHost,
   buildFfmpegMetadataArgs,
+  selectTagsToRefresh,
   rememberAppPath,
   makeCookiesArgs,
   reapStaleCookieCopies,
@@ -550,6 +551,30 @@ describe('buildFfmpegMetadataArgs (SEC-009)', () => {
 
   it('tolerates a missing tags object', () => {
     expect(buildFfmpegMetadataArgs(undefined)).toEqual([]);
+  });
+});
+
+describe('selectTagsToRefresh (sublibrary-scoped rescans)', () => {
+  const nothingCached = () => false;
+
+  it('skips a write to a sublibrary that is neither active nor cached', () => {
+    expect(selectTagsToRefresh(['Music'], 'DefaultLibrary', nothingCached)).toEqual([]);
+  });
+
+  it('refreshes the written sublibrary when it is the active one', () => {
+    expect(selectTagsToRefresh(['Music'], 'Music', nothingCached)).toEqual(['Music']);
+  });
+
+  it('refreshes a non-active sublibrary when it is the one in the cache (bulk-add duplicate checks read it)', () => {
+    expect(selectTagsToRefresh(['Music'], 'DefaultLibrary', (tag) => tag === 'Music')).toEqual(['Music']);
+  });
+
+  it('never rescans the active sublibrary for a write that only touched another one', () => {
+    expect(selectTagsToRefresh(['Music', 'Music'], 'DefaultLibrary', (tag) => tag === 'Music')).not.toContain('DefaultLibrary');
+  });
+
+  it('de-duplicates, drops empty tags, and refreshes the active one last so it ends up cached', () => {
+    expect(selectTagsToRefresh(['DefaultLibrary', 'Music', null, 'Music'], 'DefaultLibrary', (tag) => tag === 'Music')).toEqual(['Music', 'DefaultLibrary']);
   });
 });
 

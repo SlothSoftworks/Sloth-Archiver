@@ -1428,6 +1428,25 @@ export function getLibraryIndex(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAM
     return indexPromise;
 }
 
+// True when the in-memory index cache currently holds (or is building) this
+// sublibrary's scan. The cache holds exactly one sublibrary at a time, so a
+// write to a sublibrary that isn't cached has nothing stale to refresh --
+// the next getLibraryIndex() for it scans fresh anyway.
+export function isLibraryIndexCachedFor(libraryDir, libraryTag) {
+    return !!indexPromise && indexPromiseDir === libraryDir && indexPromiseTag === libraryTag;
+}
+
+// The sublibrary (tag folder name) a path inside the library belongs to --
+// its first path segment under libraryDir -- or null for a path outside it.
+// Lets a write that only knows its videoDir refresh the sublibrary it
+// actually changed instead of assuming the active one.
+export function libraryTagForPath(libraryDir, targetPath) {
+    if (!libraryDir || !targetPath) return null;
+    const relative = path.relative(path.resolve(libraryDir), path.resolve(targetPath));
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
+    return relative.split(path.sep)[0];
+}
+
 export function refreshLibraryIndex(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAME) {
     indexPromise = scanLibrary(libraryDir, libraryTag);
     indexPromiseDir = libraryDir;

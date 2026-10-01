@@ -29,6 +29,8 @@ import {
   refreshLibraryIndex,
   findVideoInIndex,
   createVideoLookup,
+  isLibraryIndexCachedFor,
+  libraryTagForPath,
   writePlaylistSnapshot,
   enrichPlaylistEntry,
   listPlaylistSnapshots,
@@ -1490,6 +1492,32 @@ describe('transferVideoTags', () => {
 
     // No target manifest should have been created for a transfer that moved nothing.
     expect(fs.existsSync(libraryTagDir(libraryDir, 'Music'))).toBe(false);
+  });
+});
+
+describe('libraryTagForPath', () => {
+  it('returns the sublibrary folder a path lives in', () => {
+    expect(libraryTagForPath(libraryDir, path.join(libraryDir, 'Music', 'Channel', 'abc'))).toBe('Music');
+    expect(libraryTagForPath(libraryDir, path.join(libraryDir, 'DefaultLibrary', 'NonYT', 'soundcloud', 'h'))).toBe('DefaultLibrary');
+  });
+
+  it('returns null for the library root itself, outside paths and missing input', () => {
+    expect(libraryTagForPath(libraryDir, libraryDir)).toBeNull();
+    expect(libraryTagForPath(libraryDir, os.tmpdir())).toBeNull();
+    expect(libraryTagForPath('', path.join(libraryDir, 'Music'))).toBeNull();
+    expect(libraryTagForPath(libraryDir, '')).toBeNull();
+  });
+});
+
+describe('isLibraryIndexCachedFor', () => {
+  it('tracks exactly which library/sublibrary the single-slot cache holds', async () => {
+    await refreshLibraryIndex(libraryDir, 'Music');
+    expect(isLibraryIndexCachedFor(libraryDir, 'Music')).toBe(true);
+    expect(isLibraryIndexCachedFor(libraryDir, 'DefaultLibrary')).toBe(false);
+    expect(isLibraryIndexCachedFor('/somewhere/else', 'Music')).toBe(false);
+    await getLibraryIndex(libraryDir, 'DefaultLibrary');
+    expect(isLibraryIndexCachedFor(libraryDir, 'Music')).toBe(false);
+    expect(isLibraryIndexCachedFor(libraryDir, 'DefaultLibrary')).toBe(true);
   });
 });
 
