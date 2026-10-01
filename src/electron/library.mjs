@@ -316,6 +316,15 @@ export function sanitizeForFilesystem(input, maxLength = 100) {
 // outside it is rejected rather than followed. The returned path is still
 // the plain path.resolve() form, not the realpath, so callers keep seeing
 // the same path shape they passed in (e.g. macOS's /var vs /private/var).
+// path.relative() output that climbs out of its base: exactly "..", or
+// starting with a "../" segment. Not a bare startsWith('..') -- that also
+// matched a legitimate folder whose *name* begins with two dots (a channel
+// called "..Something", or the sanitizer's ".._.._x"), refusing it as if it
+// were outside the library.
+function climbsOutOfBase(relative) {
+    return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+}
+
 export function resolveInsideLibrary(libraryDir, targetPath) {
     if (!libraryDir || !targetPath) return null;
     const realLibraryDir = realpathOfExistingPrefix(libraryDir);
@@ -325,7 +334,7 @@ export function resolveInsideLibrary(libraryDir, targetPath) {
     if (path.parse(realLibraryDir).root === realLibraryDir) return null;
     const resolvedTarget = path.resolve(targetPath);
     const relative = path.relative(realLibraryDir, realpathOfExistingPrefix(resolvedTarget));
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    if (!relative || climbsOutOfBase(relative)) {
         return null;
     }
     return resolvedTarget;
@@ -1471,7 +1480,7 @@ export function isLibraryIndexCachedFor(libraryDir, libraryTag) {
 export function libraryTagForPath(libraryDir, targetPath) {
     if (!libraryDir || !targetPath) return null;
     const relative = path.relative(path.resolve(libraryDir), path.resolve(targetPath));
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
+    if (!relative || climbsOutOfBase(relative)) return null;
     return relative.split(path.sep)[0];
 }
 

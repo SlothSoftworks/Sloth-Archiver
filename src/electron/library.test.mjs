@@ -159,6 +159,14 @@ describe('resolveInsideLibrary', () => {
     expect(resolveInsideLibrary(null, 'package.json')).toBeNull();
   });
 
+  it('accepts a folder whose name merely starts with two dots', () => {
+    const dotted = path.join(libraryDir, 'DefaultLibrary', '..Dots Channel', 'abc123');
+    expect(resolveInsideLibrary(libraryDir, dotted)).toBe(dotted);
+    expect(resolveInsideLibrary(libraryDir, path.join(libraryDir, '.._.._x'))).toBe(path.join(libraryDir, '.._.._x'));
+    expect(libraryTagForPath(libraryDir, path.join(libraryDir, '..Music', 'x'))).toBe('..Music');
+    expect(resolveInsideLibrary(libraryDir, path.join(libraryDir, '..', 'x'))).toBeNull();
+  });
+
   it('rejects everything when the library is a filesystem root', () => {
     const root = path.parse(libraryDir).root;
     expect(resolveInsideLibrary(root, path.join(libraryDir, 'video.mp4'))).toBeNull();
