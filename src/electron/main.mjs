@@ -16,6 +16,7 @@ import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscap
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
 import { createRotatingLogWriter, redactHomeDir } from './logFile.mjs';
+import { buildLibraryExport, parseLibraryExport, importLibraryExport, summarizeExport, IMPORT_MAX_BYTES } from './libraryExport.mjs';
 import { ensurePlayablePreview } from './previewCache.mjs';
 import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
 import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
@@ -1194,6 +1195,121 @@ ipcMain.handle('library:deleteLocalFiles', async (e, { videoDirs }) => {
     await refreshIndexAfterWrite(libraryDir, videoDirs.map((videoDir) => libraryTagOfVideoDir(libraryDir, videoDir)));
     return { success: results.every((r) => r.success), results };
 });
+
+// Library export/import (see libraryExport.mjs for the format and the
+// metadata-only, add-only rules). The main process opens both file dialogs
+// itself, so the renderer never supplies a path to read or write.
+ipcMain.handle('library:exportToFile', async () => {
+    const { libraryDir } = readSettings();
+    if (!libraryDir) return { success: false, message: 'No library folder is configured -- set one in Options first.' };
+    const stamp = new Date().toISOString().slice(0, 10);
+    const result = await dialog.showSaveDialog({
+        title: 'Export library',
+        buttonLabel: 'Export',
+        defaultPath: path.join(app.getPath('documents'), `SlothArchiver-library-${stamp}.json`),
+        filters: [{ name: 'SlothArchiver library export', extensions: ['json'] }],
+    });
+    if (result.canceled || !result.filePath) return { success: false, canceled: true };
+    try {
+        const data = await buildLibraryExport(libraryDir, app.getVersion());
+        // Temp-then-rename so a failed write never leaves a truncated export
+        // where an older, good one used to be.
+        const tempPath = `${result.filePath}.partial`;
+        await fs.promises.writeFile(tempPath, JSON.stringify(data), 'utf-8');
+        await fs.promises.rename(tempPath, result.filePath);
+        log(`[library-export] wrote ${result.filePath}`);
+        return { success: true, filePath: result.filePath, counts: summarizeExport(data) };
+    } catch (err) {
+        log('[library-export] failed', err instanceof Error ? err.stack : String(err));
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// An import is two steps: preview (pick + parse the file, dry-run the
+// import, return what it *would* do) and apply (run it for real). The parsed
+// export is held here between the two, keyed by a one-time token, so the
+// renderer only ever confirms -- it never hands the data back.
+let pendingLibraryImport = null;
+
+ipcMain.handle('library:previewImport', async () => {
+    const { libraryDir } = readSettings();
+    if (!libraryDir) return { success: false, message: 'No library folder is configured -- set one in Options first.' };
+    const result = await dialog.showOpenDialog({
+        title: 'Import library',
+        buttonLabel: 'Choose',
+        properties: ['openFile'],
+        filters: [{ name: 'SlothArchiver library export', extensions: ['json'] }],
+    });
+    if (result.canceled || !result.filePaths?.[0]) return { success: false, canceled: true };
+    const filePath = result.filePaths[0];
+    try {
+        const { size } = await fs.promises.stat(filePath);
+        if (size > IMPORT_MAX_BYTES) return { success: false, message: 'That file is too large to be a library export.' };
+        const data = parseLibraryExport(await fs.promises.readFile(filePath, 'utf-8'));
+        const { summary } = await importLibraryExport(libraryDir, data, { dryRun: true });
+        const token = crypto.randomUUID();
+        pendingLibraryImport = { token, data };
+        return {
+            success: true,
+            token,
+            fileName: path.basename(filePath),
+            exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : null,
+            counts: summarizeExport(data),
+            plan: summary,
+        };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+ipcMain.handle('library:applyImport', async (e, token) => {
+    if (!pendingLibraryImport || pendingLibraryImport.token !== token) {
+        return { success: false, message: 'This import is no longer pending -- choose the file again.' };
+    }
+    const { data } = pendingLibraryImport;
+    pendingLibraryImport = null;
+    const { libraryDir } = readSettings();
+    try {
+        const { summary, touchedTags, followUps } = await importLibraryExport(libraryDir, data);
+        log(`[library-import] ${JSON.stringify(summary)}`);
+        if (await refreshIndexAfterWrite(libraryDir, touchedTags)) notifyLibraryBackgroundUpdate();
+        fetchImportedImages(libraryDir, touchedTags, followUps);
+        return { success: true, summary };
+    } catch (err) {
+        log('[library-import] failed', err instanceof Error ? err.stack : String(err));
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// An export carries no images, so imported videos/channels/playlists fetch
+// theirs the same way a fresh add does -- in the background, a few at a time,
+// best effort (each ensure* call swallows and logs its own failure). One
+// index refresh at the end rather than per image.
+async function fetchImportedImages(libraryDir, touchedTags, followUps) {
+    const tasks = [];
+    const seenChannels = new Set();
+    for (const video of followUps.videos) {
+        if (video.thumbnailUrl) tasks.push(() => ensureVideoThumbnail(video.videoDir, video.thumbnailUrl));
+        if (video.channelId && !seenChannels.has(video.channelDir)) {
+            seenChannels.add(video.channelDir);
+            tasks.push(() => ensureChannelIcon(video.channelDir, video.channelId));
+        }
+    }
+    for (const playlist of followUps.playlists) {
+        tasks.push(() => ensurePlaylistThumbnail(playlist.playlistDir, resolvePlaylistThumbnailUrl(playlist.metadata)));
+    }
+    if (tasks.length === 0) return;
+    const IMPORT_IMAGE_CONCURRENCY = 3;
+    let next = 0;
+    await Promise.all(Array.from({ length: IMPORT_IMAGE_CONCURRENCY }, async () => {
+        while (next < tasks.length) {
+            const task = tasks[next++];
+            await task();
+        }
+    }));
+    log(`[library-import] image fetch finished (${tasks.length} items)`);
+    if (await refreshIndexAfterWrite(libraryDir, touchedTags)) notifyLibraryBackgroundUpdate();
+}
 
 // Kick off the initial scan in the background at startup -- deliberately not
 // awaited, since this could be scanning an arbitrarily large library.

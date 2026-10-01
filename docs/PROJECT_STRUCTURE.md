@@ -134,6 +134,22 @@ copy of yt-dlp's public key, and unzipping the result. Deliberately zero third-p
 OpenPGP-signature parser to do the job, delegating all actual cryptography to
 Node's built-in `crypto` module.
 
+### `libraryExport.mjs`
+
+Library export/import (Options -> Library Backup). Export walks every
+sublibrary with `scanLibrary` and writes one JSON file with each video's
+versions (`metadata.json` contents), the sublibrary's video labels and its
+saved playlist snapshots -- metadata only: local file paths are cleared,
+and media, clips and thumbnails aren't included. Import is add-only:
+existing sublibraries, videos, versions and playlists are never changed;
+an existing video only gains the versions it doesn't have yet. The import
+file is treated as untrusted -- its shape is validated, every folder name
+it names is re-sanitized and checked with `resolveInsideLibrary`. The IPC
+side (`library:exportToFile`, `library:previewImport`,
+`library:applyImport` in `main.mjs`) opens both file dialogs itself and
+shows a dry-run preview before anything is written; thumbnails and channel
+icons for imported entries are fetched afterwards in the background.
+
 ### `utils/constants.mjs`
 
 A couple of small, static values shared by a few handlers in `main.mjs` (the

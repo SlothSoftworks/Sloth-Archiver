@@ -15,6 +15,21 @@ type OpenFolderResult = {
     canceled: boolean;
 };
 
+// Library export/import (libraryExport.mjs). counts describes the export
+// file; plan/summary is what the import did (or, for a preview, would do).
+export type LibraryExportCounts = { sublibraries: number; videos: number; versions: number; playlists: number };
+export type LibraryImportSummary = {
+    sublibrariesCreated: number;
+    videosAdded: number;
+    versionsAdded: number;
+    videosAlreadyPresent: number;
+    localFilesSkipped: number;
+    invalidSkipped: number;
+    playlistsAdded: number;
+    playlistsAlreadyPresent: number;
+    labelsApplied: number;
+};
+
 // Mirrors LibraryScreen.tsx's own SortField/SortDirection unions.
 type LibrarySortField = 'title' | 'uploadDate' | 'dateAdded' | 'channel' | 'downloaded' | 'quality';
 type LibrarySortDirection = 'asc' | 'desc';
@@ -148,6 +163,9 @@ declare global {
             deleteLocalFiles: (videoDirs: string[]) => Promise<{ success: boolean; results: { videoDir: string; success: boolean; error?: string }[] }>
             onLibraryBackgroundUpdate: (callback: () => void) => void
             removeLibraryBackgroundUpdateListener: () => void
+            exportLibrary: () => Promise<{ success: boolean; canceled?: boolean; filePath?: string; counts?: LibraryExportCounts; message?: string }>
+            previewLibraryImport: () => Promise<{ success: boolean; canceled?: boolean; token?: string; fileName?: string; exportedAt?: string | null; counts?: LibraryExportCounts; plan?: LibraryImportSummary; message?: string }>
+            applyLibraryImport: (token: string) => Promise<{ success: boolean; summary?: LibraryImportSummary; message?: string }>
             saveExportedFile: (payload: { defaultName: string; extensions: string[]; inputPath?: string }) => Promise<{ filePath?: string; canceled: boolean }>
             extractMp3FromFile: (payload: { inputPath: string; outputPath: string }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
             convertFileFormat: (payload: { inputPath: string; outputPath: string; format: string; forceReencode?: boolean }) => Promise<{ success: boolean; outputPath?: string; message?: string }>

@@ -111,6 +111,19 @@ function ensureLibraryTagMetadata(libraryDir, tagName = DEFAULT_LIBRARY_DIR_NAME
     return metadata;
 }
 
+// Library import (libraryExport.mjs): recreates a sublibrary from an export
+// under its original display name and creation date, rather than
+// createLibraryTag's "name = folder name, created now". A no-op for a folder
+// that already has a manifest.
+export function ensureImportedLibraryTag(libraryDir, folderName, sublibraryName, createdEpoch) {
+    const metadataPath = libraryTagManifestPath(libraryDir, folderName);
+    if (fs.existsSync(metadataPath)) return ensureLibraryTagMetadata(libraryDir, folderName);
+    fs.mkdirSync(libraryTagDir(libraryDir, folderName), { recursive: true });
+    const metadata = { sublibraryName: sublibraryName || folderName, createdEpoch: Number.isFinite(createdEpoch) ? createdEpoch : Date.now() };
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    return metadata;
+}
+
 // Enumerates every real tag/sublibrary folder directly under libraryDir --
 // "real" meaning it has a parseable library.json, same test a random
 // unrelated folder a user happens to keep alongside their library would
@@ -1666,6 +1679,12 @@ export function enrichPlaylistEntry({ libraryDir, libraryTag = DEFAULT_LIBRARY_D
 // ever has the one epoch writePlaylistSnapshot created, but reads whichever
 // is newest by name rather than assuming a specific one, same defensive
 // stance enrichPlaylistEntry already takes above.
+// Exported for libraryExport.mjs -- the newest epoch folder of a saved
+// playlist, or null when there's no snapshot there.
+export function findPlaylistEpochDir(playlistDir) {
+    return resolvePlaylistEpochDir(playlistDir);
+}
+
 function resolvePlaylistEpochDir(playlistDir) {
     if (!fs.existsSync(playlistDir)) return null;
     const epochNames = fs.readdirSync(playlistDir, { withFileTypes: true })

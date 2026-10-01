@@ -21,6 +21,15 @@ Future releases will log what actually changed from the previous one.
     home folder as `~`, and the Options screen reminds you it can contain
     file paths and video links before you share it.
 
+- **Export and import your library.** Options -> Library Backup saves every
+  sublibrary's videos (all versions), labels and saved playlists to a single
+  file, and imports one back -- e.g. to move your library to another
+  computer. It's the library's information, not the video files: imported
+  videos show as not downloaded and can be downloaded from there. Importing
+  shows you what it will add before doing anything, and never changes or
+  removes what's already in your library; local-file entries are skipped
+  since there's nothing to download them from. Thumbnails fill in on their
+  own in the background afterwards.
 - **Much faster with big libraries.** Loading and refreshing the library is
   about 9× faster (a 20,000-video library refreshes in under a second
   instead of ~6 seconds). Opening or refreshing a very large saved playlist

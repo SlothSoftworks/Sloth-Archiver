@@ -32,6 +32,7 @@ import { POPULAR_CONVERT_FORMATS, SUGGESTED_EXTRA_CONVERT_FORMATS } from '../../
 import { MAX_SIMULTANEOUS_DOWNLOADS_CEILING } from '../../utils/constants.ts';
 import { formatEpochLabel } from '../../utils/utils.ts';
 import BulkDeleteConfirmDialog from '../components/BulkDeleteConfirmDialog';
+import LibraryBackupSection from '../components/LibraryBackupSection';
 
 // Display labels for yt-dlp's --cookies-from-browser browser keys -- kept
 // here rather than main.mjs's SUPPORTED_COOKIE_BROWSERS (the source of truth
@@ -764,6 +765,10 @@ export default function OptionsScreen() {
                 variant="outlined"
               />
             </Stack>
+          </Grid>
+
+          <Grid size={{ xs: 12, sm: 6 }} sx={dividerTop}>
+            <LibraryBackupSection libraryConfigured={!!libraryDir} />
           </Grid>
         </Grid>
       </OptionsGroup>

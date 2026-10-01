@@ -48,6 +48,9 @@ it('exposes exactly electronAPI and electronAPIPythonDownload on the main world'
 // [electronAPI key, args to call it with, expected ipcRenderer.invoke call]
 const invokeTable = [
   ['pickFolder', [{ title: 't' }], ['dialog:openFolder', { title: 't' }]],
+  ['exportLibrary', [], ['library:exportToFile']],
+  ['previewLibraryImport', [], ['library:previewImport']],
+  ['applyLibraryImport', ['tok'], ['library:applyImport', 'tok']],
   ['saveVideoFile', ['name', 'fmt', { x: 1 }], ['dialog:saveVideoFile', 'name']],
   ['getVideoInfoPython', ['url', { o: 1 }], ['getVideoInfoPython', 'url', { o: 1 }]],
   ['openDirectory', ['/p'], ['system:openDirectory', '/p']],
