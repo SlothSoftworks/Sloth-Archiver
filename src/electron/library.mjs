@@ -1886,11 +1886,10 @@ export function listPlaylistSnapshots({ libraryDir, libraryTag = DEFAULT_LIBRARY
 // until an explicit "Refresh from YouTube".
 //
 // When no index is handed in, this forces a genuine refreshLibraryIndex()
-// rescan rather than reusing getLibraryIndex()'s cache, which is only
-// invalidated by mutations this process itself knows about -- an entry a
-// playlist *refresh* just discovered, whose video already existed in the
-// library, could otherwise still show no link. A playlist detail view is
-// opened rarely enough that a full rescan here is cheap insurance.
+// rescan. library:getPlaylist (main.mjs) now passes the cached index
+// instead -- every library write keeps that cache exact (patched per video
+// folder, PERF-002/008) -- so this fallback only applies to callers that
+// don't have one.
 export async function getPlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAME, playlistId, index }) {
     const playlistDir = path.join(libraryTagDir(libraryDir, libraryTag), PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
     const epochDir = resolvePlaylistEpochDir(playlistDir);

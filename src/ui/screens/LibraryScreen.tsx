@@ -508,12 +508,12 @@ export default function LibraryScreen() {
         setBulkDeleteDialogOpen(false);
         clearSelection();
       }
-      // The index already refreshed server-side inside the IPC handler --
-      // this just pulls the updated channels list, same pattern as
-      // refreshChannelsSilently. deleteEntries also pruned any deleted
+      // The index already updated server-side inside the IPC handler --
+      // this just pulls the (cached, already-patched) channels list, same
+      // pattern as refreshChannelsSilently. deleteEntries also pruned any deleted
       // videos out of the tag map server-side, in one batched write --
       // refetch to pick that up too.
-      const index = await window.electronAPI.refreshLibraryIndex();
+      const index = await window.electronAPI.getLibraryIndex();
       handleChannelsUpdated(index.channels);
       await refreshVideoTags();
     } finally {
@@ -534,7 +534,7 @@ export default function LibraryScreen() {
         setBulkDeleteLocalFilesDialogOpen(false);
         clearSelection();
       }
-      const index = await window.electronAPI.refreshLibraryIndex();
+      const index = await window.electronAPI.getLibraryIndex();
       handleChannelsUpdated(index.channels);
     } finally {
       setBulkDeletingLocalFiles(false);
@@ -562,13 +562,13 @@ export default function LibraryScreen() {
         setMoveDialogOpen(false);
         clearSelection();
       }
-      // The index already refreshed server-side inside the IPC handler --
-      // this just pulls the updated channels list, same pattern as
-      // refreshChannelsSilently. moveEntries also transferred the moved
+      // The index already updated server-side inside the IPC handler --
+      // this just pulls the (cached, already-patched) channels list, same
+      // pattern as refreshChannelsSilently. moveEntries also transferred the moved
       // videos' tags to the target sublibrary's manifest server-side, in one
       // batched write each -- refetch this sublibrary's map to pick up
       // whatever got removed from it.
-      const index = await window.electronAPI.refreshLibraryIndex();
+      const index = await window.electronAPI.getLibraryIndex();
       handleChannelsUpdated(index.channels);
       await refreshVideoTags();
     } finally {
@@ -600,7 +600,7 @@ export default function LibraryScreen() {
   // while already viewing a video's detail, where swapping to a spinner
   // would be a jarring regression rather than a background update.
   const refreshChannelsSilently = async () => {
-    const index = await window.electronAPI.refreshLibraryIndex();
+    const index = await window.electronAPI.getLibraryIndex();
     setChannels(index.channels);
   };
 
@@ -620,7 +620,7 @@ export default function LibraryScreen() {
   // only the root `channels` list (leaving `selectedVideo` stale) would
   // never grow or shrink that list after adding/deleting a version.
   const handleVersionsChanged = async () => {
-    const index = await window.electronAPI.refreshLibraryIndex();
+    const index = await window.electronAPI.getLibraryIndex();
     setChannels(index.channels);
     setSelectedChannel((prev) => (prev && index.channels.find((c) => c.channelFolderName === prev.channelFolderName)) || prev);
     setSelectedVideo((prev) => {
@@ -677,7 +677,7 @@ export default function LibraryScreen() {
         navigate('/library', { replace: true });
         return;
       }
-      const index = await window.electronAPI.refreshLibraryIndex();
+      const index = await window.electronAPI.getLibraryIndex();
       setChannels(index.channels);
       const targetChannel = index.channels.find((c) => c.videos.some((v) => v.videoDir === result.videoDir));
       const targetVideo = targetChannel?.videos.find((v) => v.videoDir === result.videoDir);

@@ -35,7 +35,11 @@ Future releases will log what actually changed from the previous one.
   instead of ~6 seconds). Opening or refreshing a very large saved playlist
   no longer freezes the app (previously up to minutes against a big
   library). Adding to or downloading into one sublibrary no longer re-reads
-  a different, larger sublibrary that happens to be selected.
+  a different, larger sublibrary that happens to be selected. After a
+  download, add, delete or move, the library now updates just the videos
+  that changed instead of re-reading everything -- bulk-adding into a
+  20,000-video library costs about 2 ms of library bookkeeping per item
+  instead of ~3 seconds.
 
 ## [1.5.0] — 2026-09-27
 - **Add local video files straight into your library.** A new upload button

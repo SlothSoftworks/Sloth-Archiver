@@ -22,10 +22,13 @@ import {
     refreshLibraryIndex,
     findVideoInIndex,
     createVideoLookup,
+    getLibraryIndex,
+    updateLibraryIndexForVideoDirs,
     writeLibraryEntry,
     recordLibraryDownload,
     reconcilePlaylistSnapshot,
     libraryTagDir,
+    DEFAULT_LIBRARY_DIR_NAME,
 } from '../../src/electron/library.mjs';
 import { generateLibraryFixture, generatePlaylistFixture, buildPlaylistEntries, fixtureVideoId, DISTRIBUTIONS } from './libraryFixture.mjs';
 
@@ -177,11 +180,15 @@ async function benchSingleMutation(libraryDir, index) {
     const video = videos[Math.floor(videos.length / 2)];
     const writes = [];
     const rescans = [];
+    const patches = [];
     for (let i = 0; i < 3; i++) {
         writes.push(timeSync(() => recordLibraryDownload({ videoDir: video.videoDir, epoch: video.latestEpoch, filePath: path.join(video.videoDir, video.latestEpoch, 'video.mp4'), resolution: '1080', format: 'mp4' })).ms);
         rescans.push((await timeAsync(() => refreshLibraryIndex(libraryDir))).ms);
+        // What library:recordDownload does now (PERF-002): patch the one
+        // folder into the cached index (the rescan above left it cached).
+        patches.push((await timeAsync(() => updateLibraryIndexForVideoDirs(libraryDir, DEFAULT_LIBRARY_DIR_NAME, [video.videoDir]))).ms);
     }
-    return { metadataWriteMs: round(median(writes), 2), rescanAfterWriteMs: round(median(rescans)) };
+    return { metadataWriteMs: round(median(writes), 2), rescanAfterWriteMs: round(median(rescans)), patchAfterWriteMs: round(median(patches), 2) };
 }
 
 // PERF-009 (second half): one lookup, hit and miss (a miss walks everything).
@@ -221,9 +228,14 @@ function benchSearch(index) {
 // fetch settles) and library:recordDownload (write + awaited rescan). The
 // Library screen's own onLibraryBackgroundUpdate refresh (a 4th rescan when
 // that screen is open) is not included. Added entries are removed after.
-async function benchBulkAdd(libraryDir, items) {
+// incremental: replay the handlers as they are now (PERF-002/008) -- the
+// duplicate check against the cached index (library:findVideo), then a
+// one-folder patch where each handler used to rescan. Otherwise the
+// pre-fix sequence of three full rescans.
+async function benchBulkAdd(libraryDir, items, incremental) {
     const perItem = [];
     const added = [];
+    if (incremental) await refreshLibraryIndex(libraryDir);
     const realNow = Date.now;
     let fakeNow = 1_900_000_000_000;
     Date.now = () => fakeNow++;
@@ -231,12 +243,14 @@ async function benchBulkAdd(libraryDir, items) {
         for (let i = 0; i < items; i++) {
             const id = `b${String(i).padStart(10, '0')}`;
             const { ms } = await timeAsync(async () => {
+                const update = (dir) => (incremental ? updateLibraryIndexForVideoDirs(libraryDir, DEFAULT_LIBRARY_DIR_NAME, [dir]) : refreshLibraryIndex(libraryDir));
+                if (incremental) findVideoInIndex(await getLibraryIndex(libraryDir), id);
                 const { videoDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: { id, title: `Bulk item ${i}`, uploader: 'Bulk Channel', channelId: 'UCbulk', originalUrl: `https://www.youtube.com/watch?v=${id}`, description: 'bulk', resolutions: [] } });
                 added.push(videoDir);
-                await refreshLibraryIndex(libraryDir);
-                await refreshLibraryIndex(libraryDir);
+                await update(videoDir);
+                await update(videoDir);
                 recordLibraryDownload({ videoDir, epoch: String(metadata.addedEpoch), filePath: path.join(videoDir, String(metadata.addedEpoch), 'video.mp4'), resolution: '720', format: 'mp4' });
-                await refreshLibraryIndex(libraryDir);
+                await update(videoDir);
             });
             perItem.push(ms);
         }
@@ -246,10 +260,11 @@ async function benchBulkAdd(libraryDir, items) {
         fs.rmSync(path.join(libraryTagDir(libraryDir), 'Bulk Channel'), { recursive: true, force: true });
     }
     const window = Math.max(1, Math.min(10, Math.floor(items / 3)));
+    const prefix = incremental ? 'bulkIncremental' : 'bulk';
     return {
-        bulkItems: items,
-        bulkMsPerItemFirst: round(median(perItem.slice(0, window))),
-        bulkMsPerItemLast: round(median(perItem.slice(-window))),
+        [`${prefix}Items`]: items,
+        [`${prefix}MsPerItemFirst`]: round(median(perItem.slice(0, window)), 2),
+        [`${prefix}MsPerItemLast`]: round(median(perItem.slice(-window)), 2),
     };
 }
 
@@ -295,7 +310,8 @@ async function main() {
             Object.assign(row, benchFindVideo(index, summary.videoIdsCount));
             Object.assign(row, benchSearch(index));
             if (distribution === 'archive') {
-                Object.assign(row, await benchBulkAdd(libraryDir, size >= 100000 ? 5 : size >= 20000 ? 15 : 50));
+                Object.assign(row, await benchBulkAdd(libraryDir, size >= 100000 ? 5 : size >= 20000 ? 15 : 50, false));
+                Object.assign(row, await benchBulkAdd(libraryDir, 200, true));
                 const videoIds = Array.from({ length: summary.videoIdsCount }, (_, i) => fixtureVideoId(i));
                 for (const playlistSize of args.playlistSizes) {
                     if (size !== Math.min(...args.sizes) && size !== Math.max(...args.sizes)) continue;

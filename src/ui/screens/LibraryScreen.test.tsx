@@ -813,11 +813,13 @@ describe('LibraryScreen', () => {
     it('deletes the selection via the confirm dialog and clears it on success', async () => {
       const user = userEvent.setup();
       (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
-      (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
-        channels: [{ channelFolderName: 'Channel B', displayName: 'Channel B', channelIconPath: null, videos: [makeVideo({ videoFolderName: 'vidB', videoDir: '/lib/Channel B/vidB', metadata: { ...makeVideo().metadata, videoId: 'vidB', channel: 'Channel B', title: 'Beta Video' } })] }],
-      });
       render(<LibraryScreen />);
       await screen.findByText('Alpha Video');
+      // After the delete, the screen re-reads the (main-process-patched)
+      // cached index -- getLibraryIndex, not a forced rescan.
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+        channels: [{ channelFolderName: 'Channel B', displayName: 'Channel B', channelIconPath: null, videos: [makeVideo({ videoFolderName: 'vidB', videoDir: '/lib/Channel B/vidB', metadata: { ...makeVideo().metadata, videoId: 'vidB', channel: 'Channel B', title: 'Beta Video' } })] }],
+      });
 
       await user.click(screen.getByRole('checkbox', { name: 'Select Alpha Video' }));
       await user.click(screen.getByRole('button', { name: /Delete from library/ }));
@@ -828,6 +830,7 @@ describe('LibraryScreen', () => {
       await waitFor(() => expect(window.electronAPI.deleteLibraryEntries).toHaveBeenCalledWith(['/lib/Channel A/vidA']));
       expect(screen.queryByText('Delete 1 video?')).not.toBeInTheDocument();
       expect(await screen.findByText('Beta Video')).toBeInTheDocument();
+      expect(window.electronAPI.refreshLibraryIndex).not.toHaveBeenCalled();
       expect(screen.queryByText('Alpha Video')).not.toBeInTheDocument();
     });
 

@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, isLibraryIndexCachedFor, libraryTagForPath } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -761,11 +761,35 @@ function libraryTagOfVideoDir(libraryDir, videoDir) {
     return libraryTagForPath(libraryDir, videoDir) || readSettings().activeLibraryTag || DEFAULT_LIBRARY_DIR_NAME;
 }
 
+// PERF-002/008: the per-video counterpart to refreshIndexAfterWrite, for
+// every write that knows which video folders it touched (nearly all of
+// them). Same choice of *which* sublibraries need updating, but a cached
+// one is patched -- only the touched folders re-read
+// (updateLibraryIndexForVideoDirs) -- instead of rescanned. Only an active
+// sublibrary that isn't the cached one still gets a full scan, since there's
+// no index to patch. Resolves true when the active sublibrary changed.
+async function updateIndexAfterVideoWrites(libraryDir, videoDirs) {
+    const { activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    const dirsByTag = new Map();
+    for (const videoDir of videoDirs.filter(Boolean)) {
+        const tag = libraryTagOfVideoDir(libraryDir, videoDir);
+        if (!dirsByTag.has(tag)) dirsByTag.set(tag, []);
+        dirsByTag.get(tag).push(videoDir);
+    }
+    const isCached = (tag) => isLibraryIndexCachedFor(libraryDir, tag);
+    const tags = selectTagsToRefresh([...dirsByTag.keys()], activeLibraryTag, isCached);
+    for (const tag of tags) {
+        if (isCached(tag)) await updateLibraryIndexForVideoDirs(libraryDir, tag, dirsByTag.get(tag));
+        else await refreshLibraryIndex(libraryDir, tag);
+    }
+    return tags.includes(activeLibraryTag);
+}
+
 // Background follow-up shared by the add/override/version/refresh handlers:
-// once the thumbnail/icon fetch settles, refresh what needs it and tell the
-// Library tab only if the sublibrary it shows actually changed.
-function refreshAfterBackgroundFetch(libraryDir, libraryTag) {
-    return refreshIndexAfterWrite(libraryDir, [libraryTag]).then((activeChanged) => {
+// once the thumbnail/icon fetch settles, patch in the new images and tell
+// the Library tab only if the sublibrary it shows actually changed.
+function updateAfterBackgroundFetch(libraryDir, videoDirs) {
+    return updateIndexAfterVideoWrites(libraryDir, videoDirs).then((activeChanged) => {
         if (activeChanged) notifyLibraryBackgroundUpdate();
     });
 }
@@ -780,11 +804,11 @@ ipcMain.handle('library:addEntry', async (e, videoMetaData, targetTag) => {
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const libraryTag = targetTag || activeLibraryTag;
     const result = writeLibraryEntry({ libraryDir, libraryTag, videoMetaData });
-    await refreshIndexAfterWrite(libraryDir, [libraryTag]);
+    await updateIndexAfterVideoWrites(libraryDir, [result.videoDir]);
     Promise.all([
         ensureChannelIcon(result.channelDir, videoMetaData.channelId),
         ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail),
-    ]).then(() => refreshAfterBackgroundFetch(libraryDir, libraryTag));
+    ]).then(() => updateAfterBackgroundFetch(libraryDir, [result.videoDir]));
     // epoch included alongside videoDir -- bulk-add (useBulkAddQueue.tsx) needs
     // it immediately to kick off a download for the entry it just created,
     // without a second round-trip to look it back up.
@@ -798,11 +822,13 @@ ipcMain.handle('library:overrideEntry', async (e, { videoMetaData, existingVideo
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const libraryTag = targetTag || activeLibraryTag;
     const result = overrideLibraryEntry({ libraryDir, libraryTag, videoMetaData, existingVideoDir });
-    await refreshIndexAfterWrite(libraryDir, [libraryTag]);
+    // Both folders: the replacement may land somewhere other than the
+    // entry it replaced (e.g. a channel rename moves its folder).
+    await updateIndexAfterVideoWrites(libraryDir, [existingVideoDir, result.videoDir]);
     Promise.all([
         ensureChannelIcon(result.channelDir, videoMetaData.channelId),
         ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail),
-    ]).then(() => refreshAfterBackgroundFetch(libraryDir, libraryTag));
+    ]).then(() => updateAfterBackgroundFetch(libraryDir, [result.videoDir]));
     return { success: true, videoDir: result.videoDir };
 });
 
@@ -813,12 +839,11 @@ ipcMain.handle('library:overrideEntry', async (e, { videoMetaData, existingVideo
 ipcMain.handle('library:addVersion', async (e, { videoDir, videoMetaData }) => {
     const { libraryDir } = readSettings();
     const result = addLibraryVersion({ libraryDir, videoDir, videoMetaData });
-    const libraryTag = libraryTagOfVideoDir(libraryDir, result.videoDir);
-    await refreshIndexAfterWrite(libraryDir, [libraryTag]);
+    await updateIndexAfterVideoWrites(libraryDir, [result.videoDir]);
     Promise.all([
         ensureChannelIcon(path.dirname(result.videoDir), videoMetaData.channelId),
         ensureVideoThumbnail(result.videoDir, videoMetaData.thumbnail),
-    ]).then(() => refreshAfterBackgroundFetch(libraryDir, libraryTag));
+    ]).then(() => updateAfterBackgroundFetch(libraryDir, [result.videoDir]));
     return { success: true, videoDir: result.videoDir, epoch: result.epoch, metadata: result.metadata };
 });
 
@@ -829,12 +854,11 @@ ipcMain.handle('library:addVersion', async (e, { videoDir, videoMetaData }) => {
 ipcMain.handle('library:refreshEntry', async (e, { videoDir, epoch, videoMetaData }) => {
     const { libraryDir } = readSettings();
     const metadata = refreshLibraryEntryMetadata({ libraryDir, videoDir, epoch, videoMetaData });
-    const libraryTag = libraryTagOfVideoDir(libraryDir, videoDir);
-    await refreshIndexAfterWrite(libraryDir, [libraryTag]);
+    await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
     Promise.all([
         ensureChannelIcon(path.dirname(videoDir), videoMetaData.channelId),
         ensureVideoThumbnail(videoDir, videoMetaData.thumbnail),
-    ]).then(() => refreshAfterBackgroundFetch(libraryDir, libraryTag));
+    ]).then(() => updateAfterBackgroundFetch(libraryDir, [videoDir]));
     return { success: true, metadata };
 });
 
@@ -848,7 +872,7 @@ ipcMain.handle('library:checkAndRepairEpochFiles', async (e, { videoDir, epoch }
     try {
         const result = checkAndRepairEpochFiles({ libraryDir, videoDir, epoch });
         if (result.videoRepaired || result.audioRepaired) {
-            refreshAfterBackgroundFetch(libraryDir, libraryTagOfVideoDir(libraryDir, videoDir));
+            updateAfterBackgroundFetch(libraryDir, [videoDir]);
         }
         return { success: true, ...result };
     } catch (err) {
@@ -990,7 +1014,11 @@ ipcMain.handle('library:listPlaylists', async () => {
 ipcMain.handle('library:getPlaylist', async (e, playlistId) => {
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     if (!libraryDir) return { playlist: null };
-    return { playlist: await getPlaylistSnapshot({ libraryDir, libraryTag: activeLibraryTag, playlistId }) };
+    // The cached index is kept exact by every write (patched in place, see
+    // updateIndexAfterVideoWrites), so opening a playlist no longer needs
+    // getPlaylistSnapshot's own full-rescan fallback.
+    const index = await getLibraryIndex(libraryDir, activeLibraryTag);
+    return { playlist: await getPlaylistSnapshot({ libraryDir, libraryTag: activeLibraryTag, playlistId, index }) };
 });
 
 // The explicit "Refresh" action -- re-fetches the playlist from yt-dlp using
@@ -1103,7 +1131,7 @@ ipcMain.handle('library:findVideo', async (e, videoId, libraryTag) => {
 ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, resolution, format, kind }) => {
     const metadata = recordLibraryDownload({ videoDir, epoch, filePath, resolution, format, kind });
     const { libraryDir } = readSettings();
-    await refreshIndexAfterWrite(libraryDir, [libraryTagOfVideoDir(libraryDir, videoDir)]);
+    await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
     const metadataTags = buildEmbedMetadataTags(metadata);
     await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
     return { success: true };
@@ -1111,13 +1139,17 @@ ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, 
 
 ipcMain.handle('library:savePlaybackPosition', async (e, { videoDir, epoch, positionSeconds }) => {
     savePlaybackPosition({ videoDir, epoch, positionSeconds });
+    // The position lives in the index's metadata (the resume offer reads
+    // it) -- a one-folder patch keeps the cached index exact, now that the
+    // Library tab reads the cache instead of forcing rescans.
+    await updateIndexAfterVideoWrites(readSettings().libraryDir, [videoDir]);
     return { success: true };
 });
 
 ipcMain.handle('library:swapDownload', async (e, { videoDir, epoch, tempFilePath, oldFilePath, resolution, format, kind }) => {
     const { libraryDir } = readSettings();
     const metadata = swapLibraryDownload({ libraryDir, videoDir, epoch, tempFilePath, oldFilePath, resolution, format, kind });
-    await refreshIndexAfterWrite(libraryDir, [libraryTagOfVideoDir(libraryDir, videoDir)]);
+    await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
     const filePath = kind === 'audio' ? metadata.downloadedAudioFilePath : metadata.downloadedFilePath;
     const metadataTags = buildEmbedMetadataTags(metadata);
     await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
@@ -1126,9 +1158,8 @@ ipcMain.handle('library:swapDownload', async (e, { videoDir, epoch, tempFilePath
 
 ipcMain.handle('library:deleteEntry', async (e, { videoDir, epoch }) => {
     const { libraryDir } = readSettings();
-    const libraryTag = libraryTagOfVideoDir(libraryDir, videoDir);
     const { videoDeleted } = deleteLibraryEntry({ libraryDir, videoDir, epoch });
-    await refreshIndexAfterWrite(libraryDir, [libraryTag]);
+    await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
     return { success: true, videoDeleted };
 });
 
@@ -1149,21 +1180,23 @@ ipcMain.handle('library:deleteEntries', async (e, { videoDirs }) => {
     // One batched read-modify-write of the sublibrary's tag map instead of
     // touching it per video -- see removeVideosFromTags (library.mjs).
     removeVideosFromTags(libraryDir, activeLibraryTag, results.filter((r) => r.success && r.videoId).map((r) => r.videoId));
-    await refreshIndexAfterWrite(libraryDir, videoDirs.map((videoDir) => libraryTagOfVideoDir(libraryDir, videoDir)));
+    await updateIndexAfterVideoWrites(libraryDir, videoDirs);
     return { success: results.every((r) => r.success), results };
 });
 
 // Batched "Move selected" -- moves N whole videos into a different
 // sublibrary tag (see moveLibraryEntry, library.mjs) and refreshes once at
 // the end, same shape as deleteEntries/deleteLocalFiles above: both the
-// source and target sublibraries changed, and refreshIndexAfterWrite only
-// rescans whichever of them is active or cached -- the other scans fresh the
-// next time someone switches to it.
+// source and target folders are patched into whichever of the two
+// sublibraries is active or cached -- the other scans fresh the next time
+// someone switches to it.
 ipcMain.handle('library:moveEntries', async (e, { videoDirs, targetTag }) => {
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    const movedTo = [];
     const results = videoDirs.map((videoDir) => {
         try {
-            const { videoId } = moveLibraryEntry({ libraryDir, videoDir, targetTag });
+            const { videoId, videoDir: targetVideoDir } = moveLibraryEntry({ libraryDir, videoDir, targetTag });
+            movedTo.push(targetVideoDir);
             return { videoDir, success: true, videoId };
         } catch (err) {
             return { videoDir, success: false, error: err instanceof Error ? err.message : String(err) };
@@ -1173,7 +1206,7 @@ ipcMain.handle('library:moveEntries', async (e, { videoDirs, targetTag }) => {
     // source sublibrary's manifest to the target's, instead of touching
     // either file per video -- see transferVideoTags (library.mjs).
     transferVideoTags(libraryDir, activeLibraryTag, targetTag, results.filter((r) => r.success && r.videoId).map((r) => r.videoId));
-    await refreshIndexAfterWrite(libraryDir, [...videoDirs.map((videoDir) => libraryTagOfVideoDir(libraryDir, videoDir)), targetTag]);
+    await updateIndexAfterVideoWrites(libraryDir, [...videoDirs, ...movedTo]);
     return { success: results.every((r) => r.success), results };
 });
 
@@ -1192,7 +1225,7 @@ ipcMain.handle('library:deleteLocalFiles', async (e, { videoDirs }) => {
             return { videoDir, success: false, error: err instanceof Error ? err.message : String(err) };
         }
     });
-    await refreshIndexAfterWrite(libraryDir, videoDirs.map((videoDir) => libraryTagOfVideoDir(libraryDir, videoDir)));
+    await updateIndexAfterVideoWrites(libraryDir, videoDirs);
     return { success: results.every((r) => r.success), results };
 });
 
@@ -1516,8 +1549,7 @@ ipcMain.handle('library:addLocalFile', async (e, { sourceFilePath, formFields, m
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const libraryTag = targetTag || activeLibraryTag;
     const result = await addLocalFileEntry({ libraryDir, libraryTag, sourceFilePath, formFields, ffmpegRunner, mode, videoDir });
-    const tagForRefresh = mode === 'add' || mode === 'override' ? libraryTag : libraryTagOfVideoDir(libraryDir, result.videoDir);
-    if (await refreshIndexAfterWrite(libraryDir, [tagForRefresh])) notifyLibraryBackgroundUpdate();
+    if (await updateIndexAfterVideoWrites(libraryDir, [videoDir, result.videoDir])) notifyLibraryBackgroundUpdate();
     return { success: true, videoDir: result.videoDir, epoch: result.epoch };
 });
 
@@ -1550,7 +1582,7 @@ ipcMain.handle('library:changeThumbnail', async (e, { videoDir, mode, timestampS
     }
     try {
         const thumbnailPath = await replaceLibraryThumbnail({ videoDir: resolvedVideoDir, ffmpegRunner, source });
-        if (await refreshIndexAfterWrite(libraryDir, [libraryTagOfVideoDir(libraryDir, resolvedVideoDir)])) notifyLibraryBackgroundUpdate();
+        if (await updateIndexAfterVideoWrites(libraryDir, [resolvedVideoDir])) notifyLibraryBackgroundUpdate();
         return { success: true, thumbnailPath };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
@@ -2417,6 +2449,8 @@ ipcMain.handle('library:createClip', async (e, { videoDir, inputPath, start, end
             durationSeconds,
             clipTimestamps: { start, end },
         });
+        // clipCount rides along in the index.
+        await updateIndexAfterVideoWrites(libraryDir, [resolvedVideoDir]);
         return { success: true, clip };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
@@ -2435,7 +2469,9 @@ ipcMain.handle('library:getClips', async (e, { videoDir }) => {
 ipcMain.handle('library:deleteClip', async (e, { videoDir, clipId }) => {
     const { libraryDir } = readSettings();
     try {
-        return deleteClip({ libraryDir, videoDir, clipId });
+        const result = deleteClip({ libraryDir, videoDir, clipId });
+        await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
+        return result;
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
