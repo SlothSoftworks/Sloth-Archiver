@@ -31,6 +31,7 @@ import {
   createVideoLookup,
   isLibraryIndexCachedFor,
   libraryTagForPath,
+  createScanYielder,
   writePlaylistSnapshot,
   enrichPlaylistEntry,
   listPlaylistSnapshots,
@@ -1492,6 +1493,24 @@ describe('transferVideoTags', () => {
 
     // No target manifest should have been created for a transfer that moved nothing.
     expect(fs.existsSync(libraryTagDir(libraryDir, 'Music'))).toBe(false);
+  });
+});
+
+describe('createScanYielder (PERF-001)', () => {
+  it('hands the event loop back only once the interval has elapsed', async () => {
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const yieldIfDue = createScanYielder();
+    let immediateRan = false;
+    setImmediate(() => { immediateRan = true; });
+
+    now += 2;
+    await yieldIfDue(); // 2 ms in: no yield, so the pending setImmediate can't have run
+    expect(immediateRan).toBe(false);
+
+    now += 10;
+    await yieldIfDue(); // past the interval: yields, letting queued work run
+    expect(immediateRan).toBe(true);
   });
 });
 

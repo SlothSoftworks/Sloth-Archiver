@@ -1244,10 +1244,32 @@ export function findVideoThumbnailPath(videoDir, entries = null) {
 // exists in exactly one place. Returns null when the folder is unreadable or
 // has no valid video in it, so both callers can just `continue` on a falsy
 // result the same way the old single inline loop did.
-async function scanChannelLikeFolder(channelPath) {
+// PERF-001 (reports/PerformanceAnalysis.md): the scan used to await one
+// fs.promises call after another -- three or so per video -- and each
+// awaited call costs several thread-pool round trips (an fsp.readFile is
+// open + stat + read + close), ~185 us each on the benchmark machine
+// against ~6 us for readFileSync. That overhead, not disk speed, was the
+// scan's cost: ~32 s warm for a 100k-video library. The walk now reads
+// synchronously and hands the event loop back every SCAN_YIELD_INTERVAL_MS,
+// so IPC (download progress, other handlers) still gets a turn at least
+// that often while a big library scans. The trade-off: on very slow storage
+// (a network share) one blocking read can now hold the main process for
+// that read's own latency, where the async version wouldn't have.
+const SCAN_YIELD_INTERVAL_MS = 8;
+
+export function createScanYielder() {
+    let lastYield = performance.now();
+    return async function yieldIfDue() {
+        if (performance.now() - lastYield < SCAN_YIELD_INTERVAL_MS) return;
+        await new Promise((resolve) => setImmediate(resolve));
+        lastYield = performance.now();
+    };
+}
+
+async function scanChannelLikeFolder(channelPath, yieldIfDue) {
     let videoEntries;
     try {
-        videoEntries = await fsp.readdir(channelPath, { withFileTypes: true });
+        videoEntries = fs.readdirSync(channelPath, { withFileTypes: true });
     } catch {
         return null;
     }
@@ -1255,11 +1277,12 @@ async function scanChannelLikeFolder(channelPath) {
     const videos = [];
     for (const videoEntry of videoEntries) {
         if (!videoEntry.isDirectory()) continue;
+        await yieldIfDue();
         const videoPath = path.join(channelPath, videoEntry.name);
 
         let epochEntries;
         try {
-            epochEntries = await fsp.readdir(videoPath, { withFileTypes: true });
+            epochEntries = fs.readdirSync(videoPath, { withFileTypes: true });
         } catch {
             continue;
         }
@@ -1281,7 +1304,7 @@ async function scanChannelLikeFolder(channelPath) {
         const epochs = [];
         for (const epochName of epochNames) {
             try {
-                const raw = await fsp.readFile(path.join(videoPath, epochName, 'metadata.json'), 'utf-8');
+                const raw = fs.readFileSync(path.join(videoPath, epochName, 'metadata.json'), 'utf-8');
                 const epochMetadata = JSON.parse(raw);
                 epochs.push({ epoch: epochName, metadata: epochMetadata });
                 if (!metadata) {
@@ -1298,7 +1321,11 @@ async function scanChannelLikeFolder(channelPath) {
         // Cheap (one JSON parse) -- only the count rides along in the main
         // index; the full per-clip list is fetched lazily via
         // library:getClips when the Clip Collection view actually opens.
-        const clipCount = readClipsManifest(videoPath).length;
+        // Skipped outright when there's no clips/ folder (most videos):
+        // a failed read costs a thrown ENOENT per video, measurably more
+        // than the listing check.
+        const hasClipsDir = epochEntries.some((e) => e.isDirectory() && e.name === CLIPS_DIR_NAME);
+        const clipCount = hasClipsDir ? readClipsManifest(videoPath).length : 0;
 
         videos.push({
             videoFolderName: videoEntry.name,
@@ -1357,10 +1384,11 @@ export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_N
 
     let channelEntries;
     try {
-        channelEntries = await fsp.readdir(scanRoot, { withFileTypes: true });
+        channelEntries = fs.readdirSync(scanRoot, { withFileTypes: true });
     } catch {
         return index;
     }
+    const yieldIfDue = createScanYielder();
 
     for (const channelEntry of channelEntries) {
         if (!channelEntry.isDirectory()) continue;
@@ -1370,14 +1398,14 @@ export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_N
             const nonytRoot = path.join(scanRoot, channelEntry.name);
             let platformEntries;
             try {
-                platformEntries = await fsp.readdir(nonytRoot, { withFileTypes: true });
+                platformEntries = fs.readdirSync(nonytRoot, { withFileTypes: true });
             } catch {
                 continue;
             }
             for (const platformEntry of platformEntries) {
                 if (!platformEntry.isDirectory()) continue;
                 const platformPath = path.join(nonytRoot, platformEntry.name);
-                const result = await scanChannelLikeFolder(platformPath);
+                const result = await scanChannelLikeFolder(platformPath, yieldIfDue);
                 if (!result) continue;
                 index.channels.push({
                     channelFolderName: path.join(NONYT_DIR_NAME, platformEntry.name),
@@ -1392,7 +1420,7 @@ export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_N
         }
 
         const channelPath = path.join(scanRoot, channelEntry.name);
-        const result = await scanChannelLikeFolder(channelPath);
+        const result = await scanChannelLikeFolder(channelPath, yieldIfDue);
         if (!result) continue;
 
         index.channels.push({
