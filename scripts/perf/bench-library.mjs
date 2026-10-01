@@ -21,6 +21,7 @@ import {
     scanLibrary,
     refreshLibraryIndex,
     findVideoInIndex,
+    createVideoLookup,
     writeLibraryEntry,
     recordLibraryDownload,
     reconcilePlaylistSnapshot,
@@ -254,7 +255,7 @@ async function benchBulkAdd(libraryDir, items) {
 
 // PERF-009: reconcile a large saved playlist against this library. All
 // synchronous -- its duration is exactly how long the main process is
-// blocked. The localFiles pass (a findVideoInIndex per entry) is also timed
+// blocked. The localFiles pass (one videoId lookup per entry) is also timed
 // alone, since writePlaylistSnapshot runs the same pass on first save.
 function benchReconcile(libraryDir, index, videoIds, playlistSize) {
     const playlistId = `PLbench${playlistSize}`;
@@ -262,7 +263,9 @@ function benchReconcile(libraryDir, index, videoIds, playlistSize) {
     generatePlaylistFixture({ libraryDir, playlistId, entries });
     const fresh = entries.map((e, i) => (i % 10 === 0 ? { ...e, title: `${e.title} (edited)` } : e));
     const { ms } = timeSync(() => reconcilePlaylistSnapshot({ libraryDir, playlistId, freshEntries: fresh, index }));
-    const { ms: lookupMs } = timeSync(() => { for (const e of fresh) findVideoInIndex(index, e.videoId); });
+    // The localFiles pass the way the library code does it today (one
+    // createVideoLookup map, then a lookup per entry).
+    const { ms: lookupMs } = timeSync(() => { const lookupVideo = createVideoLookup(index); for (const e of fresh) lookupVideo(e.videoId); });
     fs.rmSync(path.join(libraryTagDir(libraryDir), 'playlists', playlistId), { recursive: true, force: true });
     return { playlistEntries: playlistSize, reconcileMs: round(ms), reconcileLookupPassMs: round(lookupMs) };
 }

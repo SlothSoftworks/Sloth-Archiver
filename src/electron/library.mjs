@@ -1461,6 +1461,32 @@ export function findVideoInIndex(index, videoId, platform) {
     return null;
 }
 
+// findVideoInIndex walks every channel/video, which is fine for one lookup
+// but not for one per playlist entry: a 50k-entry playlist against a 100k-
+// video library spent ~141 s blocked in that loop (PERF-009,
+// reports/PerformanceAnalysis.md). This builds a videoId map once and
+// returns a lookup with exactly findVideoInIndex's semantics -- same
+// first-match order (channels, then videos, as the index lists them), same
+// optional platform filter -- for callers that look up many ids against the
+// same index. Built per call rather than cached on the index object, so a
+// lookup can never go stale.
+export function createVideoLookup(index) {
+    const byVideoId = new Map();
+    for (const channel of index.channels) {
+        for (const video of channel.videos) {
+            const matches = byVideoId.get(video.metadata.videoId);
+            if (matches) matches.push({ channel, video });
+            else byVideoId.set(video.metadata.videoId, [{ channel, video }]);
+        }
+    }
+    return function lookupVideo(videoId, platform) {
+        const matches = byVideoId.get(videoId);
+        if (!matches) return null;
+        if (!platform) return matches[0];
+        return matches.find(({ video }) => (video.metadata.platform || 'youtube') === platform) || null;
+    };
+}
+
 // A title that's missing, or that's literally just the video's own id, means
 // "we don't actually know this video's title" -- yt-dlp's flat-playlist
 // listing sometimes has no title at all for an entry (most often an
@@ -1497,8 +1523,9 @@ export function writePlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIBRARY
     fs.mkdirSync(epochDir, { recursive: true });
 
     const localFiles = {};
+    const lookupVideo = createVideoLookup(index);
     for (const entry of entries) {
-        const match = findVideoInIndex(index, entry.videoId);
+        const match = lookupVideo(entry.videoId);
         localFiles[entry.videoId] = match ? match.video.videoDir : null;
     }
 
@@ -1714,8 +1741,9 @@ export async function getPlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIB
 
     const resolvedIndex = index || await refreshLibraryIndex(libraryDir, libraryTag);
     const localFiles = {};
+    const lookupVideo = createVideoLookup(resolvedIndex);
     for (const entry of metadata.entries || []) {
-        const match = findVideoInIndex(resolvedIndex, entry.videoId);
+        const match = lookupVideo(entry.videoId);
         localFiles[entry.videoId] = match ? match.video.videoDir : null;
     }
 
@@ -1798,8 +1826,9 @@ export function reconcilePlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIB
     const removed = oldMetadata.entries.filter((e) => !freshVideoIds.has(e.videoId)).length;
 
     const localFiles = {};
+    const lookupVideo = createVideoLookup(index);
     for (const entry of reconciledEntries) {
-        const match = findVideoInIndex(index, entry.videoId);
+        const match = lookupVideo(entry.videoId);
         localFiles[entry.videoId] = match ? match.video.videoDir : null;
     }
 

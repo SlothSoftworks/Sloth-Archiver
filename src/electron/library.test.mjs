@@ -28,6 +28,7 @@ import {
   getLibraryIndex,
   refreshLibraryIndex,
   findVideoInIndex,
+  createVideoLookup,
   writePlaylistSnapshot,
   enrichPlaylistEntry,
   listPlaylistSnapshots,
@@ -1489,6 +1490,34 @@ describe('transferVideoTags', () => {
 
     // No target manifest should have been created for a transfer that moved nothing.
     expect(fs.existsSync(libraryTagDir(libraryDir, 'Music'))).toBe(false);
+  });
+});
+
+describe('createVideoLookup (PERF-009)', () => {
+  const video = (videoId, platform, tag) => ({ videoDir: `/lib/${tag}`, metadata: { videoId, platform } });
+  const index = {
+    channels: [
+      { displayName: 'A', videos: [video('x', undefined, 'a-x'), video('dup', 'youtube', 'a-dup')] },
+      { displayName: 'B', videos: [video('dup', 'soundcloud', 'b-dup'), video('y', null, 'b-y')] },
+      { displayName: 'C', videos: [video('dup', 'youtube', 'c-dup')] },
+    ],
+  };
+
+  it('answers exactly like findVideoInIndex for hits, misses, duplicates and the platform filter', () => {
+    const lookupVideo = createVideoLookup(index);
+    const cases = [
+      ['x'], ['y'], ['missing'], ['dup'],
+      ['dup', 'youtube'], ['dup', 'soundcloud'], ['dup', 'vimeo'],
+      ['x', 'youtube'], ['y', 'youtube'], ['x', 'soundcloud'],
+    ];
+    for (const [id, platform] of cases) {
+      expect(lookupVideo(id, platform)).toEqual(findVideoInIndex(index, id, platform));
+    }
+    expect(lookupVideo('dup').video.videoDir).toBe('/lib/a-dup');
+  });
+
+  it('handles an empty index', () => {
+    expect(createVideoLookup({ channels: [] })('x')).toBeNull();
   });
 });
 
