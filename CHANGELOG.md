@@ -21,6 +21,13 @@ Future releases will log what actually changed from the previous one.
     home folder as `~`, and the Options screen reminds you it can contain
     file paths and video links before you share it.
 
+- **Much faster with big libraries.** Loading and refreshing the library is
+  about 9× faster (a 20,000-video library refreshes in under a second
+  instead of ~6 seconds). Opening or refreshing a very large saved playlist
+  no longer freezes the app (previously up to minutes against a big
+  library). Adding to or downloading into one sublibrary no longer re-reads
+  a different, larger sublibrary that happens to be selected.
+
 ## [1.5.0] — 2026-09-27
 - **Add local video files straight into your library.** A new upload button
   in the library's bottom panel opens a dialog that copies a file from
