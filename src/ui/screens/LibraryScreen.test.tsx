@@ -8,6 +8,7 @@ import LibraryScreen from './LibraryScreen';
 import { BulkAddProvider, useBulkAddQueue, type BulkAddItem } from '../hooks/useBulkAddQueue.tsx';
 import { LibraryTagsProvider } from '../hooks/useLibraryTags.tsx';
 import { BackgroundPlayerProvider } from '../hooks/useBackgroundPlayer.tsx';
+import type { LibraryChannel, LibraryVideo } from '../../types';
 
 // LibraryScreen reads/matches deep-link routes (useMatch/useNavigate, for
 // /library/video/:videoId) -- needs a real Router context, same reason
@@ -40,13 +41,14 @@ function renderAt(path: string, ui: ReactElement) {
 // wires through (video, onBack, onDeleted, onVersionsChanged) are correct.
 vi.mock('./LibraryVideoDetail', () => ({
   default: ({ video, onBack, onDeleted, onVersionsChanged }: {
-    video: { videoFolderName: string };
+    video: { videoFolderName: string; metadata?: { description?: string | null } };
     onBack: () => void;
     onDeleted: () => void;
     onVersionsChanged: () => void;
   }) => (
     <div>
       <div>Detail: {video.videoFolderName}</div>
+      {video.metadata?.description && <div>Description: {video.metadata.description}</div>}
       <button onClick={onBack}>mock-back</button>
       <button onClick={onDeleted}>mock-deleted</button>
       <button onClick={onVersionsChanged}>mock-versions-changed</button>
@@ -94,9 +96,27 @@ function makeChannels() {
   ];
 }
 
+// The detail view renders the *full* entry (useFullLibraryVideo ->
+// getLibraryVideo), since the index is a summary (PERF-004). Serve it from
+// whatever index the test most recently handed the screen, newest first,
+// so per-test index overrides apply to the detail view too.
+async function findVideoInServedIndexes(videoDir: string) {
+  const served = [
+    ...vi.mocked(window.electronAPI.getLibraryIndex).mock.results,
+    ...vi.mocked(window.electronAPI.refreshLibraryIndex).mock.results,
+  ].reverse();
+  for (const result of served) {
+    const index = await result.value;
+    const video = index?.channels.flatMap((c: LibraryChannel) => c.videos).find((v: LibraryVideo) => v.videoDir === videoDir);
+    if (video) return { success: true, video };
+  }
+  return { success: false, message: 'not found' };
+}
+
 beforeEach(() => {
   window.electronAPI = {
     ...window.electronAPI,
+    getLibraryVideo: vi.fn(findVideoInServedIndexes),
     getLibraryDir: vi.fn().mockResolvedValue({ libraryDir: '/lib' }),
     getLibraryIndex: vi.fn().mockResolvedValue({ channels: makeChannels() }),
     getLibraryViewMode: vi.fn().mockResolvedValue({ libraryViewMode: 'channel' }),
@@ -252,6 +272,30 @@ describe('LibraryScreen', () => {
     await user.click(screen.getByRole('button', { name: 'mock-deleted' }));
 
     expect(await screen.findByText('Beta Video')).toBeInTheDocument(); // back at the flat root list
+  });
+
+  // PERF-004: the index is a summary without descriptions -- the detail
+  // view must be handed the full entry, fetched for just that video.
+  it('opens the detail view with the full entry, not the summary from the index', async () => {
+    const user = userEvent.setup();
+    const full = makeVideo({ metadata: { ...makeVideo().metadata, description: 'Only in the full entry' } });
+    // The fixture only fills the fields LibraryScreen reads.
+    vi.mocked(window.electronAPI.getLibraryVideo).mockResolvedValue({ success: true, video: full as unknown as LibraryVideo });
+    (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+    render(<LibraryScreen />);
+    await user.click(await screen.findByText('Alpha Video'));
+
+    expect(await screen.findByText('Description: Only in the full entry')).toBeInTheDocument();
+    expect(window.electronAPI.getLibraryVideo).toHaveBeenCalledWith('/lib/Channel A/vidA');
+  });
+
+  it('still opens the detail view from the summary if the full entry can\'t be loaded', async () => {
+    const user = userEvent.setup();
+    vi.mocked(window.electronAPI.getLibraryVideo).mockResolvedValue({ success: false, message: 'gone' });
+    (window.electronAPI.getLibraryViewMode as ReturnType<typeof vi.fn>).mockResolvedValue({ libraryViewMode: 'video' });
+    render(<LibraryScreen />);
+    await user.click(await screen.findByText('Alpha Video'));
+    expect(await screen.findByText('Detail: vidA')).toBeInTheDocument();
   });
 
   it('manual refresh re-fetches the index', async () => {

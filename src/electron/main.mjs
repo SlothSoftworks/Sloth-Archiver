@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -698,14 +698,23 @@ ipcMain.handle('settings:setCustomConvertFormats', async (e, formats) => {
     return { success: true, customConvertFormats: settings.customConvertFormats };
 });
 
+// Both return the summary form (PERF-004, summarizeLibraryIndex): the
+// detail-only metadata fields are left out, and the video detail view loads
+// its one full entry through library:getVideo instead.
 ipcMain.handle('library:getIndex', async () => {
     const { libraryDir, activeLibraryTag: libraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
-    return getLibraryIndex(libraryDir, libraryTag);
+    return summarizeLibraryIndex(await getLibraryIndex(libraryDir, libraryTag));
 });
 
 ipcMain.handle('library:refreshIndex', async () => {
     const { libraryDir, activeLibraryTag: libraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
-    return refreshLibraryIndex(libraryDir, libraryTag);
+    return summarizeLibraryIndex(await refreshLibraryIndex(libraryDir, libraryTag));
+});
+
+ipcMain.handle('library:getVideo', async (e, videoDir) => {
+    const { libraryDir } = readSettings();
+    const video = readLibraryVideoEntry(libraryDir, videoDir);
+    return video ? { success: true, video } : { success: false, message: 'This video is no longer in your library.' };
 });
 
 // User-triggered from the Library tab's channel view -- unlike the
@@ -715,7 +724,7 @@ ipcMain.handle('library:refreshChannelIcon', async (e, { channelFolderName, chan
     const { libraryDir, activeLibraryTag: libraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const channelDir = path.join(libraryTagDir(libraryDir, libraryTag), channelFolderName);
     await ensureChannelIcon(channelDir, channelId, { force: true });
-    return refreshLibraryIndex(libraryDir, libraryTag);
+    return summarizeLibraryIndex(await refreshLibraryIndex(libraryDir, libraryTag));
 });
 
 // The channel-icon/video-thumbnail fetches below are fire-and-forget, so

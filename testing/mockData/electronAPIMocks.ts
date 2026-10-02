@@ -92,6 +92,7 @@ export const electronAPIMock = {
     getEmbedMetadataByDefault: async () => ({ embedMetadataByDefault: true }),
     setEmbedMetadataByDefault: async () => ({ success: true, embedMetadataByDefault: true }),
     getLibraryIndex: async () => ({ channels: [] }),
+    getLibraryVideo: async () => ({ success: false, message: 'Not available in the mock bridge.' }),
     refreshLibraryIndex: async () => ({ channels: [] }),
     refreshChannelIcon: async () => ({ channels: [] }),
     addLibraryEntry: async () => ({ success: true, videoDir: '', epoch: '' }),

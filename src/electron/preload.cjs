@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getEmbedMetadataByDefault: () => ipcRenderer.invoke('settings:getEmbedMetadataByDefault'),
     setEmbedMetadataByDefault: (value) => ipcRenderer.invoke('settings:setEmbedMetadataByDefault', value),
     getLibraryIndex: () => ipcRenderer.invoke('library:getIndex'),
+    getLibraryVideo: (videoDir) => ipcRenderer.invoke('library:getVideo', videoDir),
     refreshLibraryIndex: () => ipcRenderer.invoke('library:refreshIndex'),
     refreshChannelIcon: (payload) => ipcRenderer.invoke('library:refreshChannelIcon', payload),
     addLibraryEntry: (videoMetaData, targetTag) => ipcRenderer.invoke('library:addEntry', videoMetaData, targetTag),

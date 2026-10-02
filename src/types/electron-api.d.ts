@@ -1,4 +1,4 @@
-import type { LibraryVideoMetadata, PlaylistEntry, PlaylistSummary, PlaylistSnapshot, LibraryClip } from '../types';
+import type { LibraryVideo, LibraryVideoMetadata, PlaylistEntry, PlaylistSummary, PlaylistSnapshot, LibraryClip } from '../types';
 
 export {}
 
@@ -133,6 +133,7 @@ declare global {
             getEmbedMetadataByDefault: () => Promise<{ embedMetadataByDefault: boolean }>
             setEmbedMetadataByDefault: (value: boolean) => Promise<{ success: boolean; embedMetadataByDefault: boolean }>
             getLibraryIndex: () => Promise<LibraryIndex>
+            getLibraryVideo: (videoDir: string) => Promise<{ success: boolean; video?: LibraryVideo; message?: string }>
             refreshLibraryIndex: () => Promise<LibraryIndex>
             refreshChannelIcon: (payload: { channelFolderName: string; channelId: string | null }) => Promise<LibraryIndex>
             addLibraryEntry: (videoMetaData: T, targetTag?: string) => Promise<{ success: boolean; videoDir: string; epoch: string }>

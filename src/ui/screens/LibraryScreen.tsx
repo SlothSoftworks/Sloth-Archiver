@@ -54,6 +54,7 @@ import { convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBes
 import { useBackgroundPlayer, resolvePlayableSource } from '../hooks/useBackgroundPlayer.tsx';
 import { parseClipTimestampSeconds } from './FfmpegUtilitiesPanel';
 import LibraryVideoDetail from './LibraryVideoDetail';
+import { useFullLibraryVideo } from '../hooks/useFullLibraryVideo';
 import PlaylistsSection, { type PlaylistBulkBar } from '../components/PlaylistsSection';
 import LibrarySearchBar from '../components/LibrarySearchBar';
 import LibraryBottomBar from '../components/LibraryBottomBar';
@@ -170,6 +171,8 @@ export default function LibraryScreen() {
   const [channels, setChannels] = useState<LibraryChannel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<LibraryChannel | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<LibraryVideo | null>(null);
+  // The index is a summary (PERF-004); the detail view gets the full entry.
+  const fullSelectedVideo = useFullLibraryVideo(selectedVideo);
   const [viewMode, setViewMode] = useState<LibraryViewMode>('channel');
   const [librarySection, setLibrarySection] = useState<LibrarySection>('videos');
   const [thumbnailSize, setThumbnailSize] = useState(220); // overwritten by load()
@@ -738,8 +741,13 @@ export default function LibraryScreen() {
   ) : librarySection === 'playlists' ? (
     <PlaylistsSection onBulkBarUpdate={setPlaylistBulkBar} />
   ) : selectedVideo ? (
+    !fullSelectedVideo ? (
+      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 6 }}>
+        <CircularProgress />
+      </Box>
+    ) : (
     <LibraryVideoDetail
-      video={selectedVideo}
+      video={fullSelectedVideo}
       onBack={() => setSelectedVideo(null)}
       onLibraryChanged={refreshChannelsSilently}
       onDeleted={handleVideoDeleted}
@@ -751,6 +759,7 @@ export default function LibraryScreen() {
       initialClipStartSeconds={deepLinkClipStartSeconds}
       initialClipEndSeconds={deepLinkClipEndSeconds}
     />
+    )
   ) : selectedChannel ? (
     <VideoGrid
       channel={selectedChannel}

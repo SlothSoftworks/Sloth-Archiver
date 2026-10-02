@@ -1488,6 +1488,73 @@ export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_N
     return index;
 }
 
+// PERF-004: the index handed to the renderer used to carry every field of
+// every version's metadata -- ~300 MB at 100k videos, ~40% of it
+// descriptions -- though only the video detail view reads the heavier
+// fields, and only for the one video it shows. The summary drops those
+// (the detail view loads its full entry on demand via readLibraryVideoEntry
+// / library:getVideo). A drop list rather than an allow list on purpose: a
+// field this misses is only extra bytes, while one an allow list missed
+// would silently break whatever reads it.
+export const DETAIL_ONLY_METADATA_FIELDS = ['description', 'resolutions', 'tags', 'categories', 'music', 'license'];
+
+function summarizeMetadata(metadata) {
+    const summary = { ...metadata };
+    for (const field of DETAIL_ONLY_METADATA_FIELDS) delete summary[field];
+    return summary;
+}
+
+// Summaries are cached per *channel* object, not just per index: index and
+// channel objects are never modified after they're built, and
+// patchLibraryIndex reuses every channel it didn't touch -- so after a
+// write, summarizing the new index only does work for the changed
+// channel(s) instead of the whole library (~0.75 s at 100k videos).
+const channelSummaries = new WeakMap();
+const indexSummaries = new WeakMap();
+
+// A video's metadata and its latest epoch's metadata are the same object in
+// the full index; that sharing is kept (one summary per original object),
+// so structured clone still sends it once rather than twice.
+function summarizeChannel(channel) {
+    const cached = channelSummaries.get(channel);
+    if (cached) return cached;
+    const summaries = new Map();
+    const summaryOf = (metadata) => {
+        if (!summaries.has(metadata)) summaries.set(metadata, summarizeMetadata(metadata));
+        return summaries.get(metadata);
+    };
+    const summary = {
+        ...channel,
+        videos: channel.videos.map((video) => ({
+            ...video,
+            metadata: summaryOf(video.metadata),
+            epochs: video.epochs.map((e) => ({ ...e, metadata: summaryOf(e.metadata) })),
+        })),
+    };
+    channelSummaries.set(channel, summary);
+    return summary;
+}
+
+// The renderer-facing form of an index: same shape, minus
+// DETAIL_ONLY_METADATA_FIELDS on every metadata object.
+export function summarizeLibraryIndex(index) {
+    const cached = indexSummaries.get(index);
+    if (cached) return cached;
+    const summary = { ...index, channels: index.channels.map(summarizeChannel) };
+    indexSummaries.set(index, summary);
+    return summary;
+}
+
+// One video's full index entry (every metadata field, every version), read
+// straight from its folder -- for the detail view, which needs the fields
+// summarizeLibraryIndex drops. null if it's outside the library or has no
+// readable version.
+export function readLibraryVideoEntry(libraryDir, videoDir) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) return null;
+    return readVideoEntry(resolvedVideoDir, path.basename(resolvedVideoDir));
+}
+
 // PERF-002/008: brings an index up to date after writes to specific video
 // folders by re-reading only those folders (plus each affected channel's
 // own listing for its icon) instead of the whole sublibrary. Handles a

@@ -32,6 +32,10 @@ import {
   isLibraryIndexCachedFor,
   libraryTagForPath,
   createScanYielder,
+  summarizeLibraryIndex,
+  patchLibraryIndex,
+  readLibraryVideoEntry,
+  DETAIL_ONLY_METADATA_FIELDS,
   writePlaylistSnapshot,
   enrichPlaylistEntry,
   listPlaylistSnapshots,
@@ -1501,6 +1505,67 @@ describe('transferVideoTags', () => {
 
     // No target manifest should have been created for a transfer that moved nothing.
     expect(fs.existsSync(libraryTagDir(libraryDir, 'Music'))).toBe(false);
+  });
+});
+
+describe('summarizeLibraryIndex / readLibraryVideoEntry (PERF-004)', () => {
+  async function buildIndex() {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ tags: ['a'], categories: ['c'], license: 'cc' }) });
+    addLibraryVersion({ libraryDir, videoDir, videoMetaData: baseVideoMetaData({ title: 'Second' }) });
+    return { videoDir, index: await scanLibrary(libraryDir) };
+  }
+
+  it('drops only the detail-only fields from every version, keeping the shape', async () => {
+    const { index } = await buildIndex();
+    const summary = summarizeLibraryIndex(index);
+    const [video] = summary.channels[0].videos;
+    for (const metadata of [video.metadata, ...video.epochs.map((e) => e.metadata)]) {
+      for (const field of DETAIL_ONLY_METADATA_FIELDS) expect(metadata).not.toHaveProperty(field);
+      expect(metadata.title).toBeTruthy();
+      expect(metadata).toHaveProperty('downloadedFilePath');
+    }
+    expect(video.epochs).toHaveLength(2);
+    expect(Object.keys(video).sort()).toEqual(Object.keys(index.channels[0].videos[0]).sort());
+  });
+
+  it('keeps the latest version\'s metadata shared with the video\'s own, so it is sent once', async () => {
+    const { index } = await buildIndex();
+    const [video] = summarizeLibraryIndex(index).channels[0].videos;
+    expect(video.metadata).toBe(video.epochs[0].metadata);
+  });
+
+  it('never modifies the full index, and caches the summary per index object', async () => {
+    const { index } = await buildIndex();
+    const before = JSON.parse(JSON.stringify(index));
+    const summary = summarizeLibraryIndex(index);
+    expect(index).toEqual(before);
+    expect(index.channels[0].videos[0].metadata.description).toBe('desc');
+    expect(summarizeLibraryIndex(index)).toBe(summary);
+  });
+
+  it('after a patch, re-summarizes only the changed channel', async () => {
+    writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'a1', uploader: 'Unchanged' }) });
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'b1', uploader: 'Changed' }) });
+    const index = await scanLibrary(libraryDir);
+    const before = summarizeLibraryIndex(index);
+    addLibraryVersion({ libraryDir, videoDir, videoMetaData: baseVideoMetaData({ id: 'b1', uploader: 'Changed', title: 'v2' }) });
+    const patched = patchLibraryIndex(index, libraryDir, DEFAULT_LIBRARY_DIR_NAME, [videoDir]);
+    const after = summarizeLibraryIndex(patched);
+    const byName = (summary, name) => summary.channels.find((c) => c.displayName === name);
+    expect(byName(after, 'Unchanged')).toBe(byName(before, 'Unchanged'));
+    expect(byName(after, 'Changed')).not.toBe(byName(before, 'Changed'));
+    expect(byName(after, 'Changed').videos[0].epochs).toHaveLength(2);
+    expect(after).toEqual(summarizeLibraryIndex(await scanLibrary(libraryDir)));
+  });
+
+  it('reads one video\'s full entry, identical to its entry in a full scan', async () => {
+    const { videoDir, index } = await buildIndex();
+    expect(readLibraryVideoEntry(libraryDir, videoDir)).toEqual(index.channels[0].videos[0]);
+  });
+
+  it('refuses a path outside the library and returns null for a missing video', () => {
+    expect(readLibraryVideoEntry(libraryDir, os.tmpdir())).toBeNull();
+    expect(readLibraryVideoEntry(libraryDir, path.join(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Nope', 'missing'))).toBeNull();
   });
 });
 

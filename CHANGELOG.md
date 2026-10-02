@@ -39,7 +39,9 @@ Future releases will log what actually changed from the previous one.
   download, add, delete or move, the library now updates just the videos
   that changed instead of re-reading everything -- bulk-adding into a
   20,000-video library costs about 2 ms of library bookkeeping per item
-  instead of ~3 seconds.
+  instead of ~3 seconds. The library data sent to the Library tab is also
+  about 60% smaller now (long descriptions and other details are loaded
+  only for the video you open).
 
 ## [1.5.0] — 2026-09-27
 - **Add local video files straight into your library.** A new upload button
