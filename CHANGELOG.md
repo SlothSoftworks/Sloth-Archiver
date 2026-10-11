@@ -4,9 +4,30 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
-## [Unreleased]
-- **Security hardening pass.** No new features, but several ways the app
-  could be pushed into doing something it shouldn't are now closed off:
+## [1.6.0] — 2026-10-10
+- **Export and import your library.** Options → Library Backup saves every
+  sublibrary's videos (all versions), labels and saved playlists to a single
+  file, and imports one back — e.g. to move your library to another
+  computer. It's the library's information, not the video files: imported
+  videos show as not downloaded and can be downloaded from there. Importing
+  shows you what it will add before doing anything, and never changes or
+  removes what's already in your library; local-file entries are skipped
+  since there's nothing to download them from. Thumbnails fill in on their
+  own in the background afterwards.
+- **Much faster with big libraries.** Loading and refreshing the library
+  takes a fraction of the time it used to — re-reading a 20,000-video
+  library from disk now takes under a second.
+  - Opening or refreshing a very large saved playlist no longer freezes the
+    app (previously up to minutes against a big library).
+  - After a download, add, delete or move, the library now updates just the
+    videos that changed instead of re-reading everything — bulk-adding into
+    a 20,000-video library costs about 2 ms of library bookkeeping per item
+    instead of ~3 seconds — and adding to or downloading into one sublibrary
+    no longer re-reads a different, larger one that happens to be selected.
+  - The library data sent to the Library tab is about 60% smaller (long
+    descriptions and other details are loaded only for the video you open).
+- **Security hardening pass.** Several ways the app could be pushed into
+  doing something it shouldn't are now closed off:
   - Thumbnails and channel icons from video metadata are only fetched over
     HTTPS from public addresses, with a size limit and a timeout. A failed
     fetch no longer wipes out the thumbnail you already had.
@@ -15,33 +36,15 @@ Future releases will log what actually changed from the previous one.
     scripts.
   - Picking a whole drive or a missing folder as your library or download
     folder is now refused, with the reason shown in Options.
-  - Library files reached through a shortcut (symlink) that points outside
-    the library folder are no longer served to the player.
+  - A shortcut (symlink) inside the library folder that points outside it is
+    no longer followed.
   - The error log now caps its size (keeping one older copy) and shows your
-    home folder as `~`, and the Options screen reminds you it can contain
-    file paths and video links before you share it.
-
-- **Export and import your library.** Options -> Library Backup saves every
-  sublibrary's videos (all versions), labels and saved playlists to a single
-  file, and imports one back -- e.g. to move your library to another
-  computer. It's the library's information, not the video files: imported
-  videos show as not downloaded and can be downloaded from there. Importing
-  shows you what it will add before doing anything, and never changes or
-  removes what's already in your library; local-file entries are skipped
-  since there's nothing to download them from. Thumbnails fill in on their
-  own in the background afterwards.
-- **Much faster with big libraries.** Loading and refreshing the library is
-  about 9× faster (a 20,000-video library refreshes in under a second
-  instead of ~6 seconds). Opening or refreshing a very large saved playlist
-  no longer freezes the app (previously up to minutes against a big
-  library). Adding to or downloading into one sublibrary no longer re-reads
-  a different, larger sublibrary that happens to be selected. After a
-  download, add, delete or move, the library now updates just the videos
-  that changed instead of re-reading everything -- bulk-adding into a
-  20,000-video library costs about 2 ms of library bookkeeping per item
-  instead of ~3 seconds. The library data sent to the Library tab is also
-  about 60% smaller now (long descriptions and other details are loaded
-  only for the video you open).
+    home folder as `~` — as do download and conversion error messages — and
+    the Options screen reminds you it can contain file paths and video links
+    before you share it.
+- **Fixed videos in a channel whose name starts with two dots** (e.g.
+  "..Something") being refused by every library action, as if they were
+  stored outside the library folder.
 
 ## [1.5.0] — 2026-09-27
 - **Add local video files straight into your library.** A new upload button
