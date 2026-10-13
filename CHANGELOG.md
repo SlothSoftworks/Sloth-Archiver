@@ -4,7 +4,34 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
-## [1.6.0] — 2026-10-10
+## [1.6.0] — 2026-10-12
+- **Archive a whole YouTube channel, picking exactly which videos you
+  want.** Paste a channel link into the Downloader tab (or on its own into
+  the bulk add dialog) and the app opens a channel view instead of failing
+  to read it as a video. It lists the channel's regular videos — not Shorts
+  or live streams — with a live count while it reads them, and marks the
+  ones already in the sublibrary you're adding to. From there you choose
+  videos into a download queue, decide whether to also download each one and
+  at what quality, and add them.
+  - The video list can be searched by title, filtered to a single date or a
+    date range, and sorted by title or date; "select all" covers everything
+    matching the current filter, across pages. Dates in this list are
+    approximate — YouTube's channel list onlsy gives each video's age ("3
+    days ago", "4 years ago"), so older videos show just a month or a year.
+    The exact upload date is saved once a video is in your library.
+  - When downloading is on, an estimated total download size is shown for
+    the chosen videos and quality. It's a rough estimate worked out from
+    video length, and real sizes can differ a lot.
+  - Chosen videos go into a backlog that is worked through a batch at a time
+    (you pick the batch size) and shown at the top of the bulk add panel,
+    with its progress and Pause, Resume and Remove buttons. The backlog is
+    saved, so you can close the app partway and press Resume next time — a
+    dot on the bulk add button reminds you one is waiting.
+  - The backlog pauses itself, with the reason shown, when YouTube asks for
+    a bot check or starts limiting requests, when the connection drops, when
+    the disk is full, or when several videos fail in a row. Videos that
+    can't be added (age-restricted, private, members-only, not available in
+    your region) stay listed with the reason, to retry or dismiss.
 - **Export and import your library.** Options → Library Backup saves every
   sublibrary's videos (all versions), labels and saved playlists to a single
   file, and imports one back — e.g. to move your library to another
@@ -45,6 +72,16 @@ Future releases will log what actually changed from the previous one.
 - **Fixed videos in a channel whose name starts with two dots** (e.g.
   "..Something") being refused by every library action, as if they were
   stored outside the library folder.
+- **Fixed bulk add checking the wrong sublibrary for duplicates.** When
+  adding to a sublibrary other than the selected one, "already in library"
+  was decided against the selected one — so videos could be skipped that
+  weren't in the destination, or added again when they already were.
+  - Fixed starting a second bulk add with different options (download,
+    quality, destination) changing how videos still waiting from the first
+    one were handled.
+  - The bulk add panel now shows only the 200 most recent finished items,
+    with a line saying how many earlier ones are hidden; anything waiting,
+    in progress or failed is always shown.
 
 ## [1.5.0] — 2026-09-27
 - **Add local video files straight into your library.** A new upload button
