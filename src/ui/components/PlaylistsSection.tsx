@@ -392,22 +392,13 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
 
   const loadDetail = async (playlistId: string) => {
     setDetailLoading(true);
-    // refreshLibraryIndex, not the plain (possibly cached) getLibraryIndex --
-    // getPlaylistSnapshot (library.mjs) already does a fresh rescan of its
-    // own to build `playlist.localFiles`, specifically so a recently-
-    // downloaded video shows up immediately rather than waiting for
-    // whatever invalidated getLibraryIndex()'s in-memory cache elsewhere.
-    // Building videoByDir from the cached version here reintroduced exactly
-    // that staleness one level up: localFiles could already point at a
-    // videoDir this map didn't have yet, so "Go to library" (needs only
-    // localFiles) would work while quality chips and "Add to queue" (both
-    // also need videoByDir.get(videoDir) to find a match) silently came up
-    // empty for that same, genuinely-downloaded entry -- intermittently,
-    // depending on whether something had happened to refresh the cache
-    // since.
+    // The cached index: the main process keeps it exact after every library
+    // write (patching the touched video folders), so a recently-downloaded
+    // video is already in it -- this used to force a full rescan to avoid a
+    // stale cache, which at large library sizes cost seconds per open.
     const [{ playlist }, index] = await Promise.all([
       window.electronAPI.getPlaylist(playlistId),
-      window.electronAPI.refreshLibraryIndex(),
+      window.electronAPI.getLibraryIndex(),
       refreshVideoTags(),
     ]);
     setSelectedPlaylist(playlist);

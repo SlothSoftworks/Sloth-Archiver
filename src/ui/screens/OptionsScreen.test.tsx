@@ -142,6 +142,22 @@ describe('OptionsScreen', () => {
     expect(await screen.findByText('/new-downloads')).toBeInTheDocument();
   });
 
+  it('shows the main process\'s reason when a picked library folder is rejected, and clears it on a later success', async () => {
+    const user = userEvent.setup();
+    (window.electronAPI.pickFolder as ReturnType<typeof vi.fn>).mockResolvedValue({ canceled: false, filePaths: ['/'] });
+    (window.electronAPI.setLibraryDir as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ success: false, message: 'A drive or filesystem root can\'t be used.' });
+    renderScreen();
+
+    const buttons = screen.getAllByRole('button', { name: 'Choose folder' });
+    await user.click(buttons[1]); // Library Folder
+    expect(await screen.findByText('A drive or filesystem root can\'t be used.')).toBeInTheDocument();
+    expect(screen.getByText('Not set')).toBeInTheDocument();
+
+    (window.electronAPI.pickFolder as ReturnType<typeof vi.fn>).mockResolvedValue({ canceled: false, filePaths: ['/library'] });
+    await user.click(buttons[1]);
+    await waitFor(() => expect(screen.queryByText('A drive or filesystem root can\'t be used.')).not.toBeInTheDocument());
+  });
+
   it('does not persist anything when the folder picker is cancelled', async () => {
     const user = userEvent.setup();
     (window.electronAPI.pickFolder as ReturnType<typeof vi.fn>).mockResolvedValue({ canceled: true, filePaths: [] });

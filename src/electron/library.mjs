@@ -111,6 +111,19 @@ function ensureLibraryTagMetadata(libraryDir, tagName = DEFAULT_LIBRARY_DIR_NAME
     return metadata;
 }
 
+// Library import (libraryExport.mjs): recreates a sublibrary from an export
+// under its original display name and creation date, rather than
+// createLibraryTag's "name = folder name, created now". A no-op for a folder
+// that already has a manifest.
+export function ensureImportedLibraryTag(libraryDir, folderName, sublibraryName, createdEpoch) {
+    const metadataPath = libraryTagManifestPath(libraryDir, folderName);
+    if (fs.existsSync(metadataPath)) return ensureLibraryTagMetadata(libraryDir, folderName);
+    fs.mkdirSync(libraryTagDir(libraryDir, folderName), { recursive: true });
+    const metadata = { sublibraryName: sublibraryName || folderName, createdEpoch: Number.isFinite(createdEpoch) ? createdEpoch : Date.now() };
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    return metadata;
+}
+
 // Enumerates every real tag/sublibrary folder directly under libraryDir --
 // "real" meaning it has a parseable library.json, same test a random
 // unrelated folder a user happens to keep alongside their library would
@@ -308,14 +321,57 @@ export function sanitizeForFilesystem(input, maxLength = 100) {
 // targetPath is genuinely inside libraryDir, or null otherwise -- callers
 // that need to throw do so themselves with their own wording; main.mjs's
 // app-video:// handler instead turns a null into a 403 response.
+//
+// No configured library means nothing is inside it -- not "anything under
+// the process's cwd", which is what path.resolve('') would silently turn an
+// unset libraryDir into. Both sides are compared by their real (symlink-
+// resolved) location, so a symlink placed inside the library that points
+// outside it is rejected rather than followed. The returned path is still
+// the plain path.resolve() form, not the realpath, so callers keep seeing
+// the same path shape they passed in (e.g. macOS's /var vs /private/var).
+// path.relative() output that climbs out of its base: exactly "..", or
+// starting with a "../" segment. Not a bare startsWith('..') -- that also
+// matched a legitimate folder whose *name* begins with two dots (a channel
+// called "..Something", or the sanitizer's ".._.._x"), refusing it as if it
+// were outside the library.
+function climbsOutOfBase(relative) {
+    return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+}
+
 export function resolveInsideLibrary(libraryDir, targetPath) {
-    const resolvedLibraryDir = path.resolve(libraryDir || '');
-    const resolvedTarget = path.resolve(targetPath || '');
-    const relative = path.relative(resolvedLibraryDir, resolvedTarget);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    if (!libraryDir || !targetPath) return null;
+    const realLibraryDir = realpathOfExistingPrefix(libraryDir);
+    // A filesystem root can't be picked as the library any more
+    // (validateDirectorySetting, settings.mjs -- SEC-014), but a value saved
+    // before that check existed would otherwise make the whole disk "inside".
+    if (path.parse(realLibraryDir).root === realLibraryDir) return null;
+    const resolvedTarget = path.resolve(targetPath);
+    const relative = path.relative(realLibraryDir, realpathOfExistingPrefix(resolvedTarget));
+    if (!relative || climbsOutOfBase(relative)) {
         return null;
     }
     return resolvedTarget;
+}
+
+// fs.realpathSync throws for a path that doesn't exist yet, but plenty of
+// resolveInsideLibrary's callers legitimately ask about one (a temp file
+// about to be written, a folder about to be created). Resolves the deepest
+// ancestor that does exist and re-appends the rest unchanged -- a
+// not-yet-existing segment can't be a symlink, so nothing is lost.
+function realpathOfExistingPrefix(targetPath) {
+    const resolved = path.resolve(targetPath);
+    const pending = [];
+    let current = resolved;
+    for (;;) {
+        try {
+            return path.join(fs.realpathSync(current), ...pending);
+        } catch {
+            const parent = path.dirname(current);
+            if (parent === current) return resolved;
+            pending.unshift(path.basename(current));
+            current = parent;
+        }
+    }
 }
 
 export function channelFolderName(channel) {
@@ -1210,10 +1266,137 @@ export function findVideoThumbnailPath(videoDir, entries = null) {
 // exists in exactly one place. Returns null when the folder is unreadable or
 // has no valid video in it, so both callers can just `continue` on a falsy
 // result the same way the old single inline loop did.
-async function scanChannelLikeFolder(channelPath) {
+// PERF-001 (reports/PerformanceAnalysis.md): the scan used to await one
+// fs.promises call after another -- three or so per video -- and each
+// awaited call costs several thread-pool round trips (an fsp.readFile is
+// open + stat + read + close), ~185 us each on the benchmark machine
+// against ~6 us for readFileSync. That overhead, not disk speed, was the
+// scan's cost: ~32 s warm for a 100k-video library. The walk now reads
+// synchronously and hands the event loop back every SCAN_YIELD_INTERVAL_MS,
+// so IPC (download progress, other handlers) still gets a turn at least
+// that often while a big library scans. The trade-off: on very slow storage
+// (a network share) one blocking read can now hold the main process for
+// that read's own latency, where the async version wouldn't have.
+const SCAN_YIELD_INTERVAL_MS = 8;
+
+export function createScanYielder() {
+    let lastYield = performance.now();
+    return async function yieldIfDue() {
+        if (performance.now() - lastYield < SCAN_YIELD_INTERVAL_MS) return;
+        await new Promise((resolve) => setImmediate(resolve));
+        lastYield = performance.now();
+    };
+}
+
+// One video folder's index entry -- its epochs (newest first), latest
+// valid metadata, thumbnail and clip count -- or null when it has no epoch
+// with readable metadata (such a folder is left out of the index). Shared
+// by the full scan and patchLibraryIndex, so both build identical entries.
+function readVideoEntry(videoPath, videoFolderName) {
+    let epochEntries;
+    try {
+        epochEntries = fs.readdirSync(videoPath, { withFileTypes: true });
+    } catch {
+        return null;
+    }
+
+    // Epoch folder names are Date.now() timestamps -- numeric descending
+    // sort puts the most recent attempt first. clips/ is a reserved
+    // sibling directory (CLIPS_DIR_NAME), explicitly excluded here the
+    // same way PLAYLISTS_DIR_NAME is excluded one level up -- without
+    // this it would fall into this filter, sort unpredictably
+    // (Number('clips') is NaN), and only be skipped by the
+    // metadata.json read below happening to fail.
+    const epochNames = epochEntries
+        .filter((e) => e.isDirectory() && e.name !== CLIPS_DIR_NAME)
+        .map((e) => e.name)
+        .sort((a, b) => Number(b) - Number(a));
+
+    let metadata = null;
+    let latestEpoch = null;
+    const epochs = [];
+    for (const epochName of epochNames) {
+        try {
+            const raw = fs.readFileSync(path.join(videoPath, epochName, 'metadata.json'), 'utf-8');
+            const epochMetadata = JSON.parse(raw);
+            epochs.push({ epoch: epochName, metadata: epochMetadata });
+            if (!metadata) {
+                metadata = epochMetadata;
+                latestEpoch = epochName;
+            }
+        } catch {
+            continue;
+        }
+    }
+
+    if (!metadata) return null;
+
+    // Cheap (one JSON parse) -- only the count rides along in the main
+    // index; the full per-clip list is fetched lazily via
+    // library:getClips when the Clip Collection view actually opens.
+    // Skipped outright when there's no clips/ folder (most videos):
+    // a failed read costs a thrown ENOENT per video, measurably more
+    // than the listing check.
+    const hasClipsDir = epochEntries.some((e) => e.isDirectory() && e.name === CLIPS_DIR_NAME);
+    const clipCount = hasClipsDir ? readClipsManifest(videoPath).length : 0;
+
+    return {
+        videoFolderName,
+        videoDir: videoPath,
+        latestEpoch,
+        metadata,
+        epochs,
+        thumbnailPath: findVideoThumbnailPath(videoPath, epochEntries),
+        clipCount,
+    };
+}
+
+// Newest-added first; ties broken by folder name so the order never
+// depends on how the OS happens to list a directory -- which also lets a
+// patched index (patchLibraryIndex) come out in exactly the same order.
+function compareVideoEntries(a, b) {
+    return ((b.metadata.addedEpoch || 0) - (a.metadata.addedEpoch || 0))
+        || (a.videoFolderName < b.videoFolderName ? -1 : a.videoFolderName > b.videoFolderName ? 1 : 0);
+}
+
+function compareChannelEntries(a, b) {
+    return a.displayName.localeCompare(b.displayName)
+        || (a.channelFolderName < b.channelFolderName ? -1 : a.channelFolderName > b.channelFolderName ? 1 : 0);
+}
+
+// A channel's index entry from its (already sorted) videos. channelKey is
+// its folder relative to the sublibrary: "<channel>" for YouTube, or
+// "NonYT/<platform>" for a platform group, which has no channel icon.
+function buildChannelEntry(channelKey, channelPath, videos, iconEntryName) {
+    const segments = channelKey.split(path.sep);
+    if (segments.length === 2 && segments[0] === NONYT_DIR_NAME) {
+        return {
+            channelFolderName: channelKey,
+            displayName: segments[1],
+            channelIconPath: null,
+            isPlatformGroup: true,
+            platform: segments[1],
+            videos,
+        };
+    }
+    return {
+        channelFolderName: channelKey,
+        displayName: videos[0]?.metadata.channel || channelKey,
+        channelIconPath: iconEntryName ? path.join(channelPath, iconEntryName) : null,
+        videos,
+    };
+}
+
+// Cached by ensureChannelIcon (main.mjs) the first time a video from a
+// channel gets added.
+function findChannelIconName(dirEntries) {
+    return dirEntries.find((e) => e.isFile() && e.name.startsWith('channel-icon.'))?.name || null;
+}
+
+async function scanChannelLikeFolder(channelPath, yieldIfDue) {
     let videoEntries;
     try {
-        videoEntries = await fsp.readdir(channelPath, { withFileTypes: true });
+        videoEntries = fs.readdirSync(channelPath, { withFileTypes: true });
     } catch {
         return null;
     }
@@ -1221,73 +1404,17 @@ async function scanChannelLikeFolder(channelPath) {
     const videos = [];
     for (const videoEntry of videoEntries) {
         if (!videoEntry.isDirectory()) continue;
-        const videoPath = path.join(channelPath, videoEntry.name);
-
-        let epochEntries;
-        try {
-            epochEntries = await fsp.readdir(videoPath, { withFileTypes: true });
-        } catch {
-            continue;
-        }
-
-        // Epoch folder names are Date.now() timestamps -- numeric descending
-        // sort puts the most recent attempt first. clips/ is a reserved
-        // sibling directory (CLIPS_DIR_NAME), explicitly excluded here the
-        // same way PLAYLISTS_DIR_NAME is excluded one level up -- without
-        // this it would fall into this filter, sort unpredictably
-        // (Number('clips') is NaN), and only be skipped by the
-        // metadata.json read below happening to fail.
-        const epochNames = epochEntries
-            .filter((e) => e.isDirectory() && e.name !== CLIPS_DIR_NAME)
-            .map((e) => e.name)
-            .sort((a, b) => Number(b) - Number(a));
-
-        let metadata = null;
-        let latestEpoch = null;
-        const epochs = [];
-        for (const epochName of epochNames) {
-            try {
-                const raw = await fsp.readFile(path.join(videoPath, epochName, 'metadata.json'), 'utf-8');
-                const epochMetadata = JSON.parse(raw);
-                epochs.push({ epoch: epochName, metadata: epochMetadata });
-                if (!metadata) {
-                    metadata = epochMetadata;
-                    latestEpoch = epochName;
-                }
-            } catch {
-                continue;
-            }
-        }
-
-        if (!metadata) continue;
-
-        // Cheap (one JSON parse) -- only the count rides along in the main
-        // index; the full per-clip list is fetched lazily via
-        // library:getClips when the Clip Collection view actually opens.
-        const clipCount = readClipsManifest(videoPath).length;
-
-        videos.push({
-            videoFolderName: videoEntry.name,
-            videoDir: videoPath,
-            latestEpoch,
-            metadata,
-            epochs,
-            thumbnailPath: findVideoThumbnailPath(videoPath, epochEntries),
-            clipCount,
-        });
+        await yieldIfDue();
+        const video = readVideoEntry(path.join(channelPath, videoEntry.name), videoEntry.name);
+        if (video) videos.push(video);
     }
 
     if (videos.length === 0) return null;
-    videos.sort((a, b) => (b.metadata.addedEpoch || 0) - (a.metadata.addedEpoch || 0));
-
-    // Cached by ensureChannelIcon (main.mjs) the first time a video from
-    // this channel gets added -- videoEntries already lists everything
-    // directly inside channelPath (files included), so this is a free
-    // lookup rather than a second readdir. Meaningless for a NonYT platform
-    // group (no per-uploader avatar concept), whose caller below ignores it.
-    const iconEntry = videoEntries.find((e) => e.isFile() && e.name.startsWith('channel-icon.'));
-
-    return { videos, iconEntry };
+    videos.sort(compareVideoEntries);
+    // videoEntries already lists everything directly inside channelPath
+    // (files included), so the icon is a free lookup rather than a second
+    // readdir.
+    return { videos, iconEntryName: findChannelIconName(videoEntries) };
 }
 
 // Bounded 3-level walk (channel/video/epoch), tolerant of partial or corrupt
@@ -1323,10 +1450,11 @@ export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_N
 
     let channelEntries;
     try {
-        channelEntries = await fsp.readdir(scanRoot, { withFileTypes: true });
+        channelEntries = fs.readdirSync(scanRoot, { withFileTypes: true });
     } catch {
         return index;
     }
+    const yieldIfDue = createScanYielder();
 
     for (const channelEntry of channelEntries) {
         if (!channelEntry.isDirectory()) continue;
@@ -1336,41 +1464,166 @@ export async function scanLibrary(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_N
             const nonytRoot = path.join(scanRoot, channelEntry.name);
             let platformEntries;
             try {
-                platformEntries = await fsp.readdir(nonytRoot, { withFileTypes: true });
+                platformEntries = fs.readdirSync(nonytRoot, { withFileTypes: true });
             } catch {
                 continue;
             }
             for (const platformEntry of platformEntries) {
                 if (!platformEntry.isDirectory()) continue;
                 const platformPath = path.join(nonytRoot, platformEntry.name);
-                const result = await scanChannelLikeFolder(platformPath);
+                const result = await scanChannelLikeFolder(platformPath, yieldIfDue);
                 if (!result) continue;
-                index.channels.push({
-                    channelFolderName: path.join(NONYT_DIR_NAME, platformEntry.name),
-                    displayName: platformEntry.name,
-                    channelIconPath: null,
-                    isPlatformGroup: true,
-                    platform: platformEntry.name,
-                    videos: result.videos,
-                });
+                index.channels.push(buildChannelEntry(path.join(NONYT_DIR_NAME, platformEntry.name), platformPath, result.videos, null));
             }
             continue;
         }
 
         const channelPath = path.join(scanRoot, channelEntry.name);
-        const result = await scanChannelLikeFolder(channelPath);
+        const result = await scanChannelLikeFolder(channelPath, yieldIfDue);
         if (!result) continue;
-
-        index.channels.push({
-            channelFolderName: channelEntry.name,
-            displayName: result.videos[0]?.metadata.channel || channelEntry.name,
-            channelIconPath: result.iconEntry ? path.join(channelPath, result.iconEntry.name) : null,
-            videos: result.videos,
-        });
+        index.channels.push(buildChannelEntry(channelEntry.name, channelPath, result.videos, result.iconEntryName));
     }
 
-    index.channels.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    index.channels.sort(compareChannelEntries);
     return index;
+}
+
+// PERF-004: the index handed to the renderer used to carry every field of
+// every version's metadata -- ~300 MB at 100k videos, ~40% of it
+// descriptions -- though only the video detail view reads the heavier
+// fields, and only for the one video it shows. The summary drops those
+// (the detail view loads its full entry on demand via readLibraryVideoEntry
+// / library:getVideo). A drop list rather than an allow list on purpose: a
+// field this misses is only extra bytes, while one an allow list missed
+// would silently break whatever reads it.
+export const DETAIL_ONLY_METADATA_FIELDS = ['description', 'resolutions', 'tags', 'categories', 'music', 'license'];
+
+function summarizeMetadata(metadata) {
+    const summary = { ...metadata };
+    for (const field of DETAIL_ONLY_METADATA_FIELDS) delete summary[field];
+    return summary;
+}
+
+// Summaries are cached per *channel* object, not just per index: index and
+// channel objects are never modified after they're built, and
+// patchLibraryIndex reuses every channel it didn't touch -- so after a
+// write, summarizing the new index only does work for the changed
+// channel(s) instead of the whole library (~0.75 s at 100k videos).
+const channelSummaries = new WeakMap();
+const indexSummaries = new WeakMap();
+
+// A video's metadata and its latest epoch's metadata are the same object in
+// the full index; that sharing is kept (one summary per original object),
+// so structured clone still sends it once rather than twice.
+function summarizeChannel(channel) {
+    const cached = channelSummaries.get(channel);
+    if (cached) return cached;
+    const summaries = new Map();
+    const summaryOf = (metadata) => {
+        if (!summaries.has(metadata)) summaries.set(metadata, summarizeMetadata(metadata));
+        return summaries.get(metadata);
+    };
+    const summary = {
+        ...channel,
+        videos: channel.videos.map((video) => ({
+            ...video,
+            metadata: summaryOf(video.metadata),
+            epochs: video.epochs.map((e) => ({ ...e, metadata: summaryOf(e.metadata) })),
+        })),
+    };
+    channelSummaries.set(channel, summary);
+    return summary;
+}
+
+// The renderer-facing form of an index: same shape, minus
+// DETAIL_ONLY_METADATA_FIELDS on every metadata object.
+export function summarizeLibraryIndex(index) {
+    const cached = indexSummaries.get(index);
+    if (cached) return cached;
+    const summary = { ...index, channels: index.channels.map(summarizeChannel) };
+    indexSummaries.set(index, summary);
+    return summary;
+}
+
+// One video's full index entry (every metadata field, every version), read
+// straight from its folder -- for the detail view, which needs the fields
+// summarizeLibraryIndex drops. null if it's outside the library or has no
+// readable version.
+export function readLibraryVideoEntry(libraryDir, videoDir) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) return null;
+    return readVideoEntry(resolvedVideoDir, path.basename(resolvedVideoDir));
+}
+
+// The spelling the filesystem itself uses for a path under scanRoot, when it
+// differs from the given one only by letter case; the given path otherwise
+// (missing folder, or a symlink that resolves somewhere else).
+function onDiskRelativePath(scanRoot, relative) {
+    try {
+        const real = path.relative(fs.realpathSync.native(scanRoot), fs.realpathSync.native(path.join(scanRoot, relative)));
+        return real.toLowerCase() === relative.toLowerCase() ? real : relative;
+    } catch {
+        return relative;
+    }
+}
+
+// PERF-002/008: brings an index up to date after writes to specific video
+// folders by re-reading only those folders (plus each affected channel's
+// own listing for its icon) instead of the whole sublibrary. Handles a
+// video added, updated, or removed, a channel appearing or disappearing,
+// and re-sorting -- the result is deep-equal to a fresh scanLibrary() as
+// long as nothing *else* changed on disk (that's what the full
+// refreshLibraryIndex is for). Returns a new index object; the one passed
+// in is not modified, since it may already have been handed out. Returns
+// null for a path it can't place (outside the sublibrary, or not shaped
+// like a video folder), so the caller can fall back to a full scan.
+export function patchLibraryIndex(index, libraryDir, libraryTag, videoDirs) {
+    const scanRoot = libraryTagDir(libraryDir, libraryTag);
+    const byChannel = new Map();
+    for (const videoDir of videoDirs) {
+        const relative = path.relative(scanRoot, videoDir);
+        if (!relative || climbsOutOfBase(relative)) return null;
+        const segments = relative.split(path.sep);
+        const isNonYt = segments[0] === NONYT_DIR_NAME;
+        if (segments.length !== (isNonYt ? 3 : 2) || segments[0] === PLAYLISTS_DIR_NAME) return null;
+        const givenChannelKey = path.join(...segments.slice(0, -1));
+        // On a case-insensitive disk (macOS, Windows) a write addressed to
+        // ".../alpha/x" lands in an existing "Alpha" folder, and a scan lists
+        // that folder under its on-disk name. Keying by the caller's spelling
+        // would add a second, phantom channel.
+        const channelKey = index.channels.some((c) => c.channelFolderName === givenChannelKey)
+            ? givenChannelKey
+            : onDiskRelativePath(scanRoot, givenChannelKey);
+        if (!byChannel.has(channelKey)) byChannel.set(channelKey, new Set());
+        byChannel.get(channelKey).add(path.join(scanRoot, channelKey, segments[segments.length - 1]));
+    }
+
+    const channels = [...index.channels];
+    for (const [channelKey, changedDirs] of byChannel) {
+        const channelPath = path.join(scanRoot, channelKey);
+        const position = channels.findIndex((c) => c.channelFolderName === channelKey);
+        const videos = (position >= 0 ? channels[position].videos : []).filter((v) => !changedDirs.has(v.videoDir));
+        for (const videoDir of changedDirs) {
+            const video = readVideoEntry(videoDir, path.basename(videoDir));
+            if (video) videos.push(video);
+        }
+        if (videos.length === 0) {
+            if (position >= 0) channels.splice(position, 1);
+            continue;
+        }
+        videos.sort(compareVideoEntries);
+        let iconEntryName = null;
+        try {
+            iconEntryName = findChannelIconName(fs.readdirSync(channelPath, { withFileTypes: true }));
+        } catch {
+            iconEntryName = null;
+        }
+        const entry = buildChannelEntry(channelKey, channelPath, videos, iconEntryName);
+        if (position >= 0) channels[position] = entry;
+        else channels.push(entry);
+    }
+    channels.sort(compareChannelEntries);
+    return { ...index, channels };
 }
 
 // getLibraryIndex reuses whatever scan is already in flight (or already
@@ -1394,10 +1647,47 @@ export function getLibraryIndex(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAM
     return indexPromise;
 }
 
+// True when the in-memory index cache currently holds (or is building) this
+// sublibrary's scan. The cache holds exactly one sublibrary at a time, so a
+// write to a sublibrary that isn't cached has nothing stale to refresh --
+// the next getLibraryIndex() for it scans fresh anyway.
+export function isLibraryIndexCachedFor(libraryDir, libraryTag) {
+    return !!indexPromise && indexPromiseDir === libraryDir && indexPromiseTag === libraryTag;
+}
+
+// The sublibrary (tag folder name) a path inside the library belongs to --
+// its first path segment under libraryDir -- or null for a path outside it.
+// Lets a write that only knows its videoDir refresh the sublibrary it
+// actually changed instead of assuming the active one.
+export function libraryTagForPath(libraryDir, targetPath) {
+    if (!libraryDir || !targetPath) return null;
+    const relative = path.relative(path.resolve(libraryDir), path.resolve(targetPath));
+    if (!relative || climbsOutOfBase(relative)) return null;
+    return relative.split(path.sep)[0];
+}
+
 export function refreshLibraryIndex(libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAME) {
     indexPromise = scanLibrary(libraryDir, libraryTag);
     indexPromiseDir = libraryDir;
     indexPromiseTag = libraryTag;
+    return indexPromise;
+}
+
+// The incremental counterpart to refreshLibraryIndex: after writes to the
+// given video folders, patches the cached index (patchLibraryIndex) instead
+// of rescanning the whole sublibrary. Chained onto the current cache entry,
+// so it applies after any scan or patch already in flight, in call order.
+// Returns the updated index promise, or null when this sublibrary isn't
+// the one cached (nothing to update -- its next getLibraryIndex scans
+// fresh anyway). Falls back to a full scan if the patch can't place a path
+// or the cached scan had failed.
+export function updateLibraryIndexForVideoDirs(libraryDir, libraryTag, videoDirs) {
+    if (!isLibraryIndexCachedFor(libraryDir, libraryTag)) return null;
+    const rescan = () => scanLibrary(libraryDir, libraryTag);
+    indexPromise = indexPromise.then(
+        (index) => patchLibraryIndex(index, libraryDir, libraryTag, videoDirs) ?? rescan(),
+        rescan,
+    );
     return indexPromise;
 }
 
@@ -1425,6 +1715,54 @@ export function findVideoInIndex(index, videoId, platform) {
         }
     }
     return null;
+}
+
+// findVideoInIndex walks every channel/video, which is fine for one lookup
+// but not for one per playlist entry: a 50k-entry playlist against a 100k-
+// video library spent ~141 s blocked in that loop (PERF-009,
+// reports/PerformanceAnalysis.md). This builds a videoId map once and
+// returns a lookup with exactly findVideoInIndex's semantics -- same
+// first-match order (channels, then videos, as the index lists them), same
+// optional platform filter -- for callers that look up many ids against the
+// same index. Built per call rather than cached on the index object, so a
+// lookup can never go stale.
+export function createVideoLookup(index) {
+    const byVideoId = new Map();
+    for (const channel of index.channels) {
+        for (const video of channel.videos) {
+            const matches = byVideoId.get(video.metadata.videoId);
+            if (matches) matches.push({ channel, video });
+            else byVideoId.set(video.metadata.videoId, [{ channel, video }]);
+        }
+    }
+    return function lookupVideo(videoId, platform) {
+        const matches = byVideoId.get(videoId);
+        if (!matches) return null;
+        if (!platform) return matches[0];
+        return matches.find(({ video }) => (video.metadata.platform || 'youtube') === platform) || null;
+    };
+}
+
+// What channel archiving needs to know about each of many YouTube video ids
+// at once: is it already in this sublibrary, and does any version of it
+// already have a downloaded file (library:findVideo only says where it is).
+// Ids that are not in the index are simply absent from the result.
+export function lookupVideosInIndex(index, videoIds) {
+    const lookupVideo = createVideoLookup(index);
+    const found = {};
+    for (const videoId of videoIds) {
+        if (typeof videoId !== 'string') continue;
+        const match = lookupVideo(videoId, 'youtube');
+        if (!match) continue;
+        const epochs = match.video.epochs || [];
+        found[videoId] = {
+            videoDir: match.video.videoDir,
+            latestEpoch: match.video.latestEpoch ?? null,
+            hasVideoFile: epochs.some((e) => !!e.metadata?.downloadedFilePath),
+            hasAudioFile: epochs.some((e) => !!e.metadata?.downloadedAudioFilePath),
+        };
+    }
+    return found;
 }
 
 // A title that's missing, or that's literally just the video's own id, means
@@ -1463,8 +1801,9 @@ export function writePlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIBRARY
     fs.mkdirSync(epochDir, { recursive: true });
 
     const localFiles = {};
+    const lookupVideo = createVideoLookup(index);
     for (const entry of entries) {
-        const match = findVideoInIndex(index, entry.videoId);
+        const match = lookupVideo(entry.videoId);
         localFiles[entry.videoId] = match ? match.video.videoDir : null;
     }
 
@@ -1549,6 +1888,12 @@ export function enrichPlaylistEntry({ libraryDir, libraryTag = DEFAULT_LIBRARY_D
 // ever has the one epoch writePlaylistSnapshot created, but reads whichever
 // is newest by name rather than assuming a specific one, same defensive
 // stance enrichPlaylistEntry already takes above.
+// Exported for libraryExport.mjs -- the newest epoch folder of a saved
+// playlist, or null when there's no snapshot there.
+export function findPlaylistEpochDir(playlistDir) {
+    return resolvePlaylistEpochDir(playlistDir);
+}
+
 function resolvePlaylistEpochDir(playlistDir) {
     if (!fs.existsSync(playlistDir)) return null;
     const epochNames = fs.readdirSync(playlistDir, { withFileTypes: true })
@@ -1649,11 +1994,10 @@ export function listPlaylistSnapshots({ libraryDir, libraryTag = DEFAULT_LIBRARY
 // until an explicit "Refresh from YouTube".
 //
 // When no index is handed in, this forces a genuine refreshLibraryIndex()
-// rescan rather than reusing getLibraryIndex()'s cache, which is only
-// invalidated by mutations this process itself knows about -- an entry a
-// playlist *refresh* just discovered, whose video already existed in the
-// library, could otherwise still show no link. A playlist detail view is
-// opened rarely enough that a full rescan here is cheap insurance.
+// rescan. library:getPlaylist (main.mjs) now passes the cached index
+// instead -- every library write keeps that cache exact (patched per video
+// folder, PERF-002/008) -- so this fallback only applies to callers that
+// don't have one.
 export async function getPlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAME, playlistId, index }) {
     const playlistDir = path.join(libraryTagDir(libraryDir, libraryTag), PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
     const epochDir = resolvePlaylistEpochDir(playlistDir);
@@ -1680,8 +2024,9 @@ export async function getPlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIB
 
     const resolvedIndex = index || await refreshLibraryIndex(libraryDir, libraryTag);
     const localFiles = {};
+    const lookupVideo = createVideoLookup(resolvedIndex);
     for (const entry of metadata.entries || []) {
-        const match = findVideoInIndex(resolvedIndex, entry.videoId);
+        const match = lookupVideo(entry.videoId);
         localFiles[entry.videoId] = match ? match.video.videoDir : null;
     }
 
@@ -1764,8 +2109,9 @@ export function reconcilePlaylistSnapshot({ libraryDir, libraryTag = DEFAULT_LIB
     const removed = oldMetadata.entries.filter((e) => !freshVideoIds.has(e.videoId)).length;
 
     const localFiles = {};
+    const lookupVideo = createVideoLookup(index);
     for (const entry of reconciledEntries) {
-        const match = findVideoInIndex(index, entry.videoId);
+        const match = lookupVideo(entry.videoId);
         localFiles[entry.videoId] = match ? match.video.videoDir : null;
     }
 

@@ -10,7 +10,7 @@ import ResizableMediaContainer from './ResizableMediaContainer';
 import LibraryVideoPlayerControls from './LibraryVideoPlayerControls';
 import PlayerContextMenu from './PlayerContextMenu';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
-import { buildAppVideoUrl } from '../../utils/utils.ts';
+import { buildAppVideoUrl, safeRemoteImageUrl } from '../../utils/utils.ts';
 import { useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 
 // getCurrentTime/getDuration return null (not a misleading 0) when no local
@@ -206,7 +206,9 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // Prefer the locally-cached, offline-capable thumbnail over the hotlinked
   // YouTube URL -- that URL is the fallback while the background fetch
   // hasn't landed yet.
-  const posterSrc = thumbnailPath ? buildAppVideoUrl(thumbnailPath, cacheBustKey) : (thumbnail || undefined);
+  // The remote fallback reaches CardMedia's CSS background-image, so it's
+  // vetted first (SEC-009); the app-video:// form is already URI-encoded.
+  const posterSrc = thumbnailPath ? buildAppVideoUrl(thumbnailPath, cacheBustKey) : safeRemoteImageUrl(thumbnail);
 
   const handleToggleLoop = () => { setLoopEnabled((v) => !v); setLoopSequenceEnabled(false); };
   // Turning loop sequence on seeks to the start marker immediately, per its

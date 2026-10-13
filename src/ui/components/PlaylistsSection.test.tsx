@@ -46,7 +46,7 @@ beforeEach(() => {
     ...window.electronAPI,
     listPlaylists: vi.fn().mockResolvedValue({ playlists: [{ playlistId: 'pl1', title: 'My Playlist', entryCount: 1, addedEpoch: 1, lastRefreshedEpoch: null, thumbnailUrl: null, thumbnailPath: null }] }),
     getPlaylist: vi.fn().mockResolvedValue({ playlist: makePlaylist() }),
-    refreshLibraryIndex: vi.fn().mockResolvedValue({ channels: [{ channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null, videos: [makeLibraryVideo()] }] }),
+    getLibraryIndex: vi.fn().mockResolvedValue({ channels: [{ channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null, videos: [makeLibraryVideo()] }] }),
     deleteLibraryEntries: vi.fn().mockResolvedValue({ success: true, results: [] }),
     deleteLocalFiles: vi.fn().mockResolvedValue({ success: true, results: [] }),
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
@@ -88,7 +88,7 @@ describe('PlaylistsSection bulk select', () => {
         localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
       }),
     });
-    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080' } }] })],
@@ -117,7 +117,7 @@ describe('PlaylistsSection bulk select', () => {
   });
 
   it('hides "Download selected" once the selection includes an already-downloaded video', async () => {
-    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080' } }] })],
@@ -188,7 +188,7 @@ describe('PlaylistsSection bulk select', () => {
         localFiles: { vidA: '/lib/Channel A/vidA', vidC: null },
       }),
     });
-    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080' } }] })],
@@ -252,7 +252,7 @@ describe('PlaylistsSection Add to queue', () => {
         localFiles: { vidA: '/lib/Channel A/vidA', vidB: null, vidC: '/lib/Channel A/vidC' },
       }),
     });
-    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [
@@ -286,7 +286,7 @@ describe('PlaylistsSection Add to queue', () => {
   });
 
   it('shows "Add to queue" on any downloaded entry (native or not), and enqueues it on click', async () => {
-    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080', channel: 'Channel A' } }] })],
@@ -304,7 +304,7 @@ describe('PlaylistsSection Add to queue', () => {
   });
 
   it('queues a non-native (MKV) entry via the on-the-fly preview generation, showing a loading spinner meanwhile', async () => {
-    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mkv', downloadedResolution: '1080', channel: 'Channel A' } }] })],
@@ -330,7 +330,7 @@ describe('PlaylistsSection Add to queue', () => {
   });
 
   it('shows a toast and doesn\'t enqueue when preview generation fails for a non-native entry', async () => {
-    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mkv', downloadedResolution: '1080', channel: 'Channel A' } }] })],
@@ -518,7 +518,7 @@ describe('PlaylistsSection tag/system filter', () => {
         localFiles: { vidA: '/lib/Channel A/vidA', vidC: '/lib/Channel A/vidC' },
       }),
     });
-    (window.electronAPI.refreshLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({
       channels: [{
         channelFolderName: 'Channel A', displayName: 'Channel A', channelIconPath: null,
         videos: [
@@ -686,8 +686,8 @@ describe('PlaylistsSection refresh fetches full data for entries missing a libra
       success: true, added: 1, removed: 0, updated: 0,
       missingFromLibraryEntries: [{ videoId: 'vidNew', title: 'New Video', url: 'https://youtube.com/watch?v=vidNew', thumbnailUrl: null, uploadDate: null }],
     });
-    window.electronAPI.getVideoInfoPython = vi.fn().mockResolvedValue({
-      data: { response: { id: 'vidNew', fullTitle: 'New Video', title: 'New Video', thumbnail: null, resolutions: [] } },
+    window.electronAPI.getVideoInfoResult = vi.fn().mockResolvedValue({
+      success: true, videoInfo: { id: 'vidNew', fullTitle: 'New Video', title: 'New Video', thumbnail: null, resolutions: [] }, fromCache: false,
     });
     window.electronAPI.findLibraryVideo = vi.fn().mockResolvedValue({ found: false });
     window.electronAPI.addLibraryEntry = vi.fn().mockResolvedValue({ success: true, videoDir: '/lib/Channel B/vidNew' });
@@ -702,7 +702,7 @@ describe('PlaylistsSection refresh fetches full data for entries missing a libra
 
     // Metadata-only: the new entry's real info gets fetched and written into
     // the library, but nothing is downloaded (no download-progress call).
-    await waitFor(() => expect(window.electronAPI.getVideoInfoPython).toHaveBeenCalledWith('https://youtube.com/watch?v=vidNew'));
+    await waitFor(() => expect(window.electronAPI.getVideoInfoResult).toHaveBeenCalledWith('https://youtube.com/watch?v=vidNew'));
     await waitFor(() => expect(window.electronAPI.addLibraryEntry).toHaveBeenCalled());
   });
 
@@ -715,8 +715,8 @@ describe('PlaylistsSection refresh fetches full data for entries missing a libra
       success: true, added: 0, removed: 0, updated: 0,
       missingFromLibraryEntries: [{ videoId: 'vidA', title: 'Alpha Video', url: 'https://youtube.com/watch?v=vidA', thumbnailUrl: null, uploadDate: '20260101' }],
     });
-    window.electronAPI.getVideoInfoPython = vi.fn().mockResolvedValue({
-      data: { response: { id: 'vidA', fullTitle: 'Alpha Video', title: 'Alpha Video', thumbnail: null, resolutions: [] } },
+    window.electronAPI.getVideoInfoResult = vi.fn().mockResolvedValue({
+      success: true, videoInfo: { id: 'vidA', fullTitle: 'Alpha Video', title: 'Alpha Video', thumbnail: null, resolutions: [] }, fromCache: false,
     });
     window.electronAPI.findLibraryVideo = vi.fn().mockResolvedValue({ found: false });
     window.electronAPI.addLibraryEntry = vi.fn().mockResolvedValue({ success: true, videoDir: '/lib/Channel A/vidA' });
@@ -729,7 +729,7 @@ describe('PlaylistsSection refresh fetches full data for entries missing a libra
 
     await user.click(screen.getByRole('button', { name: 'Refresh' }));
 
-    await waitFor(() => expect(window.electronAPI.getVideoInfoPython).toHaveBeenCalledWith('https://youtube.com/watch?v=vidA'));
+    await waitFor(() => expect(window.electronAPI.getVideoInfoResult).toHaveBeenCalledWith('https://youtube.com/watch?v=vidA'));
     await waitFor(() => expect(window.electronAPI.addLibraryEntry).toHaveBeenCalled());
   });
 });

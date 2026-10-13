@@ -8,8 +8,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     pickFolder: (options) => ipcRenderer.invoke('dialog:openFolder', options),
-    saveVideoFile: (defaultName, format, options) => ipcRenderer.invoke('dialog:saveVideoFile', defaultName, format, options),
+    saveVideoFile: (defaultName) => ipcRenderer.invoke('dialog:saveVideoFile', defaultName),
     getVideoInfoPython: (url, options) => ipcRenderer.invoke('getVideoInfoPython', url, options),
+    getVideoInfoResult: (url) => ipcRenderer.invoke('getVideoInfoResult', url),
     openDirectory: (path) => ipcRenderer.invoke('system:openDirectory', path),
     openFileInDirectory: (filePath) => ipcRenderer.invoke('system:openFileInDirectory', filePath),
     openFileExternally: (filePath) => ipcRenderer.invoke('system:openFileExternally', filePath),
@@ -64,6 +65,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getEmbedMetadataByDefault: () => ipcRenderer.invoke('settings:getEmbedMetadataByDefault'),
     setEmbedMetadataByDefault: (value) => ipcRenderer.invoke('settings:setEmbedMetadataByDefault', value),
     getLibraryIndex: () => ipcRenderer.invoke('library:getIndex'),
+    getLibraryVideo: (videoDir) => ipcRenderer.invoke('library:getVideo', videoDir),
     refreshLibraryIndex: () => ipcRenderer.invoke('library:refreshIndex'),
     refreshChannelIcon: (payload) => ipcRenderer.invoke('library:refreshChannelIcon', payload),
     addLibraryEntry: (videoMetaData, targetTag) => ipcRenderer.invoke('library:addEntry', videoMetaData, targetTag),
@@ -72,6 +74,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     refreshLibraryEntry: (videoDir, epoch, videoMetaData) => ipcRenderer.invoke('library:refreshEntry', { videoDir, epoch, videoMetaData }),
     checkAndRepairEpochFiles: (videoDir, epoch) => ipcRenderer.invoke('library:checkAndRepairEpochFiles', { videoDir, epoch }),
     findLibraryVideo: (videoId, libraryTag) => ipcRenderer.invoke('library:findVideo', videoId, libraryTag),
+    lookupLibraryVideos: (videoIds, libraryTag) => ipcRenderer.invoke('library:lookupVideos', videoIds, libraryTag),
     openLocalVideoFile: () => ipcRenderer.invoke('dialog:openLocalVideoFile'),
     openImageFile: () => ipcRenderer.invoke('dialog:openImageFile'),
     probeLocalFile: (filePath) => ipcRenderer.invoke('library:probeLocalFile', filePath),
@@ -93,6 +96,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     moveLibraryEntries: (videoDirs, targetTag) => ipcRenderer.invoke('library:moveEntries', { videoDirs, targetTag }),
     deleteLocalFiles: (videoDirs) => ipcRenderer.invoke('library:deleteLocalFiles', { videoDirs }),
     onLibraryBackgroundUpdate: (callback) => ipcRenderer.on('library:backgroundUpdate', () => callback()),
+    exportLibrary: () => ipcRenderer.invoke('library:exportToFile'),
+    previewLibraryImport: () => ipcRenderer.invoke('library:previewImport'),
+    applyLibraryImport: (token) => ipcRenderer.invoke('library:applyImport', token),
     removeLibraryBackgroundUpdateListener: () => ipcRenderer.removeAllListeners('library:backgroundUpdate'),
     saveExportedFile: (payload) => ipcRenderer.invoke('dialog:saveExportedFile', payload),
     extractMp3FromFile: (payload) => ipcRenderer.invoke('library:extractMp3', payload),
@@ -108,6 +114,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     embedFileMetadata: (payload) => ipcRenderer.invoke('library:embedMetadata', payload),
     onFfmpegUtilityProgress: (callback) => ipcRenderer.on('ffmpegUtilityProgress', (_event, data) => callback(data)),
     removeFfmpegUtilityProgressListener: () => ipcRenderer.removeAllListeners('ffmpegUtilityProgress'),
+    scanChannel: (scanId, url) => ipcRenderer.invoke('channelArchive:scan', scanId, url),
+    cancelChannelScan: (scanId) => ipcRenderer.invoke('channelArchive:cancelScan', scanId),
+    // Returns the attached listener for removeChannelScanProgressListener,
+    // same reasoning as onProgressUpdate below: the always-mounted provider
+    // and the screen can both be subscribed to this one channel.
+    onChannelScanProgress: (callback) => {
+        const listener = (_event, data) => callback(data);
+        ipcRenderer.on('channelArchive:scanProgress', listener);
+        return listener;
+    },
+    removeChannelScanProgressListener: (listener) => ipcRenderer.removeListener('channelArchive:scanProgress', listener),
+    getBacklog: () => ipcRenderer.invoke('backlog:get'),
+    addBacklogJob: (payload) => ipcRenderer.invoke('backlog:addJob', payload),
+    applyBacklogResults: (jobId, results) => ipcRenderer.invoke('backlog:applyResults', jobId, results),
+    retryBacklogErrors: () => ipcRenderer.invoke('backlog:retryErrors'),
+    dismissBacklogErrors: () => ipcRenderer.invoke('backlog:dismissErrors'),
+    clearBacklog: () => ipcRenderer.invoke('backlog:clear'),
     reportRendererError: (payload) => ipcRenderer.invoke('errorLog:report', payload),
     getErrorLogInfo: () => ipcRenderer.invoke('errorLog:getInfo'),
     openErrorLog: () => ipcRenderer.invoke('errorLog:open'),

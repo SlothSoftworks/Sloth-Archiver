@@ -62,6 +62,14 @@ import {
   assertValidHttpUrl,
   isValidClipTimestamp,
   resolveAppOrLibraryPath,
+  isShellExecutablePath,
+  resolveRevealTarget,
+  resolveOpenDirectoryTarget,
+  resolveOpenExternallyTarget,
+  isAllowedRendererHost,
+  buildFfmpegMetadataArgs,
+  selectTagsToRefresh,
+  describeBacklogState,
   rememberAppPath,
   makeCookiesArgs,
   reapStaleCookieCopies,
@@ -449,6 +457,152 @@ describe('resolveAppOrLibraryPath', () => {
     rememberAppPath('');
     rememberAppPath(null);
     expect(resolveAppOrLibraryPath(dir, '')).toBeNull();
+  });
+});
+
+describe('shell handler path guards (SEC-015)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-shell-'));
+  const videoDir = path.join(dir, 'DefaultLibrary', 'Channel', 'abc123');
+  fs.mkdirSync(path.join(videoDir, '1'), { recursive: true });
+  const media = path.join(videoDir, '1', 'video.mp4');
+  fs.writeFileSync(media, 'data');
+  const script = path.join(videoDir, '1', 'payload.command');
+  fs.writeFileSync(script, 'echo pwned');
+  const extensionless = path.join(videoDir, '1', 'payload');
+  fs.writeFileSync(extensionless, 'echo pwned');
+
+  it('flags executable, script and launcher types on every platform, case-insensitively', () => {
+    for (const name of ['a.exe', 'a.BAT', 'a.lnk', 'a.ps1', 'a.command', 'a.app', 'a.scpt', 'a.desktop', 'a.sh', 'a.AppImage', 'a.jar']) {
+      expect(isShellExecutablePath(name)).toBe(true);
+    }
+  });
+
+  it('flags an extensionless file, which macOS would run in Terminal', () => {
+    expect(isShellExecutablePath('/some/dir/payload')).toBe(true);
+  });
+
+  it('does not flag real media types', () => {
+    for (const name of ['v.mp4', 'v.MKV', 'v.webm', 'a.mp3', 'a.m4a', 'a.opus', 'a.flac', 'v.mov', 'v.ts']) {
+      expect(isShellExecutablePath(name)).toBe(false);
+    }
+  });
+
+  it('reveals library files and remembered app paths, nothing else', () => {
+    expect(resolveRevealTarget(dir, media)).toBe(media);
+    expect(resolveRevealTarget(dir, '/etc/passwd')).toBeNull();
+    const downloaded = path.join(os.tmpdir(), `sloth-archiver-test-reveal-${Date.now()}.mp4`);
+    expect(resolveRevealTarget(dir, downloaded)).toBeNull();
+    rememberAppPath(downloaded);
+    expect(resolveRevealTarget(dir, downloaded)).toBe(path.resolve(downloaded));
+  });
+
+  it('opens only existing directories inside the library', () => {
+    expect(resolveOpenDirectoryTarget(dir, path.join(dir, 'DefaultLibrary'))).toBe(path.join(dir, 'DefaultLibrary'));
+    expect(resolveOpenDirectoryTarget(dir, media)).toBeNull();
+    expect(resolveOpenDirectoryTarget(dir, path.join(videoDir, 'clips'))).toBeNull();
+    expect(resolveOpenDirectoryTarget(dir, os.tmpdir())).toBeNull();
+    expect(resolveOpenDirectoryTarget('', os.tmpdir())).toBeNull();
+  });
+
+  it('opens library media externally but refuses executables, folders and outside paths', () => {
+    expect(resolveOpenExternallyTarget(dir, media)).toBe(media);
+    expect(resolveOpenExternallyTarget(dir, script)).toBeNull();
+    expect(resolveOpenExternallyTarget(dir, extensionless)).toBeNull();
+    expect(resolveOpenExternallyTarget(dir, videoDir)).toBeNull();
+    expect(resolveOpenExternallyTarget(dir, path.join(videoDir, '1', 'missing.mp4'))).toBeNull();
+    expect(resolveOpenExternallyTarget(dir, '/etc/passwd')).toBeNull();
+  });
+
+  it('refuses a remembered app path that is an executable type', () => {
+    const outsideScript = path.join(os.tmpdir(), `sloth-archiver-test-${Date.now()}.sh`);
+    fs.writeFileSync(outsideScript, 'echo pwned');
+    try {
+      rememberAppPath(outsideScript);
+      expect(resolveOpenExternallyTarget(dir, outsideScript)).toBeNull();
+    } finally {
+      fs.rmSync(outsideScript, { force: true });
+    }
+  });
+});
+
+describe('isAllowedRendererHost (SEC-011)', () => {
+  it('accepts only this server\'s own loopback host:port', () => {
+    expect(isAllowedRendererHost('127.0.0.1:5173', 5173)).toBe(true);
+  });
+
+  it('rejects other ports, localhost, rebinding hostnames and a missing header', () => {
+    for (const host of ['127.0.0.1:5174', '127.0.0.1', 'localhost:5173', 'evil.example:5173', '127.0.0.1:5173.evil.example', '', undefined]) {
+      expect(isAllowedRendererHost(host, 5173)).toBe(false);
+    }
+  });
+});
+
+describe('buildFfmpegMetadataArgs (SEC-009)', () => {
+  it('emits one -metadata pair per known tag with a value', () => {
+    expect(buildFfmpegMetadataArgs({ title: 'T', artist: 'A', date: '20260101', description: '', album: null })).toEqual([
+      '-metadata', 'title=T', '-metadata', 'artist=A', '-metadata', 'date=20260101',
+    ]);
+  });
+
+  it('drops unknown or malformed keys and non-scalar values', () => {
+    expect(buildFfmpegMetadataArgs({
+      'title=x': 'a', 'comment\nfoo': 'b', '-y': 'c', encoder: 'd', genre: { toString: () => 'x' }, track: 3,
+    })).toEqual(['-metadata', 'track=3']);
+  });
+
+  it('tolerates a missing tags object', () => {
+    expect(buildFfmpegMetadataArgs(undefined)).toEqual([]);
+  });
+});
+
+describe('selectTagsToRefresh (sublibrary-scoped rescans)', () => {
+  const nothingCached = () => false;
+
+  it('skips a write to a sublibrary that is neither active nor cached', () => {
+    expect(selectTagsToRefresh(['Music'], 'DefaultLibrary', nothingCached)).toEqual([]);
+  });
+
+  it('refreshes the written sublibrary when it is the active one', () => {
+    expect(selectTagsToRefresh(['Music'], 'Music', nothingCached)).toEqual(['Music']);
+  });
+
+  it('refreshes a non-active sublibrary when it is the one in the cache (bulk-add duplicate checks read it)', () => {
+    expect(selectTagsToRefresh(['Music'], 'DefaultLibrary', (tag) => tag === 'Music')).toEqual(['Music']);
+  });
+
+  it('never rescans the active sublibrary for a write that only touched another one', () => {
+    expect(selectTagsToRefresh(['Music', 'Music'], 'DefaultLibrary', (tag) => tag === 'Music')).not.toContain('DefaultLibrary');
+  });
+
+  it('de-duplicates, drops empty tags, and refreshes the active one last so it ends up cached', () => {
+    expect(selectTagsToRefresh(['DefaultLibrary', 'Music', null, 'Music'], 'DefaultLibrary', (tag) => tag === 'Music')).toEqual(['Music', 'DefaultLibrary']);
+  });
+});
+
+describe('describeBacklogState', () => {
+  const done = { completedJobs: { totalCount: 0, doneCount: 0 } };
+  const job = { id: 'j', totalCount: 3, doneCount: 1, items: [{ videoId: 'aaaaaaaaaaa', status: 'pending' }, { videoId: 'bbbbbbbbbbb', status: 'error' }] };
+
+  it('reports counts and a matching library folder', () => {
+    const backlog = { version: 1, libraryDir: '/library', ...done, jobs: [job] };
+    expect(describeBacklogState(backlog, '/library')).toEqual({
+      backlog,
+      counts: { jobs: 1, pending: 1, errors: 1, total: 3, done: 1 },
+      libraryDir: '/library',
+      libraryDirMatches: true,
+    });
+  });
+
+  it('flags a backlog that was queued for a different library folder', () => {
+    expect(describeBacklogState({ version: 1, libraryDir: '/library', ...done, jobs: [job] }, '/elsewhere').libraryDirMatches).toBe(false);
+    expect(describeBacklogState({ version: 1, libraryDir: '/library', ...done, jobs: [job] }, '').libraryDirMatches).toBe(false);
+  });
+
+  it('treats an empty backlog as matching whatever the current folder is', () => {
+    expect(describeBacklogState({ version: 1, libraryDir: null, ...done, jobs: [] }, '/library')).toMatchObject({
+      counts: { jobs: 0, pending: 0, errors: 0, total: 0, done: 0 },
+      libraryDirMatches: true,
+    });
   });
 });
 

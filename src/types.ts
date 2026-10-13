@@ -20,7 +20,9 @@ export type LibraryVideoMetadata = {
     channel: string | null;
     title: string | null;
     fullTitle: string | null;
-    description: string | null;
+    // Absent in the summary index the Library tab receives (PERF-004,
+    // summarizeLibraryIndex) -- present on a full entry from getLibraryVideo.
+    description?: string | null;
     thumbnail: string | null;
     originalUrl: string | null;
     duration: number | null;

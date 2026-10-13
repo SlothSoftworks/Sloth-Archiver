@@ -221,6 +221,11 @@ than introducing a new one:
   offers direct local tools for extracting an MP3, converting to a different
   format, trimming a clip, and embedding metadata/cover art into the file — all
   running through the same local `ffmpeg` process the download pipeline uses.
+- **Library backup (export/import)** -- the whole library's metadata
+  (every sublibrary's videos and versions, labels, and saved playlists) can be
+  exported to one JSON file and imported into another install. It's a
+  metadata backup, not a file backup: imported videos show as not downloaded,
+  and importing only ever adds -- nothing already in the library is changed.
 - **Search and sorting** across the library and playlist views, and small
   quality-of-life touches like copy-link buttons and version-freshness indicators,
   make an otherwise large, flat collection of archived media easier to navigate.

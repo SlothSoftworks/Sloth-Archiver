@@ -28,6 +28,15 @@ import {
   getLibraryIndex,
   refreshLibraryIndex,
   findVideoInIndex,
+  createVideoLookup,
+  lookupVideosInIndex,
+  isLibraryIndexCachedFor,
+  libraryTagForPath,
+  createScanYielder,
+  summarizeLibraryIndex,
+  patchLibraryIndex,
+  readLibraryVideoEntry,
+  DETAIL_ONLY_METADATA_FIELDS,
   writePlaylistSnapshot,
   enrichPlaylistEntry,
   listPlaylistSnapshots,
@@ -55,6 +64,7 @@ import {
   listClips,
   deleteClip,
   updateClipFile,
+  resolveInsideLibrary,
 } from './library.mjs';
 
 let libraryDir;
@@ -127,6 +137,77 @@ describe('sanitizeForFilesystem', () => {
     expect(sanitizeForFilesystem('CON')).toBe('CON_');
     expect(sanitizeForFilesystem('con')).toBe('con_');
     expect(sanitizeForFilesystem('LPT1')).toBe('LPT1_');
+  });
+});
+
+describe('resolveInsideLibrary', () => {
+  it('resolves a path inside the library, including one that does not exist yet', () => {
+    const existing = path.join(libraryDir, 'Channel');
+    fs.mkdirSync(existing);
+    expect(resolveInsideLibrary(libraryDir, existing)).toBe(existing);
+    const notYetWritten = path.join(libraryDir, 'Channel', 'abc123', '1', 'metadata.json');
+    expect(resolveInsideLibrary(libraryDir, notYetWritten)).toBe(notYetWritten);
+  });
+
+  it('rejects the library root itself, parent traversal, and outside paths', () => {
+    expect(resolveInsideLibrary(libraryDir, libraryDir)).toBeNull();
+    expect(resolveInsideLibrary(libraryDir, path.join(libraryDir, '..', 'elsewhere'))).toBeNull();
+    expect(resolveInsideLibrary(libraryDir, os.tmpdir())).toBeNull();
+  });
+
+  // SEC-010: an unset library used to resolve to the process's cwd, turning
+  // "nothing is inside the library" into "anything under cwd is".
+  it('rejects everything when no library folder is configured', () => {
+    const underCwd = path.join(process.cwd(), 'package.json');
+    expect(resolveInsideLibrary('', underCwd)).toBeNull();
+    expect(resolveInsideLibrary(undefined, underCwd)).toBeNull();
+    expect(resolveInsideLibrary(null, 'package.json')).toBeNull();
+  });
+
+  it('accepts a folder whose name merely starts with two dots', () => {
+    const dotted = path.join(libraryDir, 'DefaultLibrary', '..Dots Channel', 'abc123');
+    expect(resolveInsideLibrary(libraryDir, dotted)).toBe(dotted);
+    expect(resolveInsideLibrary(libraryDir, path.join(libraryDir, '.._.._x'))).toBe(path.join(libraryDir, '.._.._x'));
+    expect(libraryTagForPath(libraryDir, path.join(libraryDir, '..Music', 'x'))).toBe('..Music');
+    expect(resolveInsideLibrary(libraryDir, path.join(libraryDir, '..', 'x'))).toBeNull();
+  });
+
+  it('rejects everything when the library is a filesystem root', () => {
+    const root = path.parse(libraryDir).root;
+    expect(resolveInsideLibrary(root, path.join(libraryDir, 'video.mp4'))).toBeNull();
+  });
+
+  it('rejects a falsy target path', () => {
+    expect(resolveInsideLibrary(libraryDir, '')).toBeNull();
+    expect(resolveInsideLibrary(libraryDir, undefined)).toBeNull();
+  });
+
+  // SEC-010: a symlink inside the library pointing outside it used to pass
+  // the lexical check, after which fs/net.fetch would follow it.
+  it.skipIf(process.platform === 'win32')('rejects a symlink inside the library that points outside it', () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-outside-'));
+    try {
+      fs.writeFileSync(path.join(outsideDir, 'secret.txt'), 'secret');
+      fs.symlinkSync(outsideDir, path.join(libraryDir, 'escape'));
+      expect(resolveInsideLibrary(libraryDir, path.join(libraryDir, 'escape', 'secret.txt'))).toBeNull();
+      expect(resolveInsideLibrary(libraryDir, path.join(libraryDir, 'escape', 'not-yet.txt'))).toBeNull();
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('accepts a library folder that is itself reached through a symlink', () => {
+    const linkParent = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-test-link-'));
+    try {
+      const linkedLibrary = path.join(linkParent, 'library');
+      fs.symlinkSync(libraryDir, linkedLibrary);
+      fs.writeFileSync(path.join(libraryDir, 'video.mp4'), 'data');
+      const viaLink = path.join(linkedLibrary, 'video.mp4');
+      expect(resolveInsideLibrary(linkedLibrary, viaLink)).toBe(viaLink);
+      expect(resolveInsideLibrary(libraryDir, viaLink)).toBe(viaLink);
+    } finally {
+      fs.rmSync(linkParent, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1425,6 +1506,178 @@ describe('transferVideoTags', () => {
 
     // No target manifest should have been created for a transfer that moved nothing.
     expect(fs.existsSync(libraryTagDir(libraryDir, 'Music'))).toBe(false);
+  });
+});
+
+describe('summarizeLibraryIndex / readLibraryVideoEntry (PERF-004)', () => {
+  async function buildIndex() {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ tags: ['a'], categories: ['c'], license: 'cc' }) });
+    addLibraryVersion({ libraryDir, videoDir, videoMetaData: baseVideoMetaData({ title: 'Second' }) });
+    return { videoDir, index: await scanLibrary(libraryDir) };
+  }
+
+  it('drops only the detail-only fields from every version, keeping the shape', async () => {
+    const { index } = await buildIndex();
+    const summary = summarizeLibraryIndex(index);
+    const [video] = summary.channels[0].videos;
+    for (const metadata of [video.metadata, ...video.epochs.map((e) => e.metadata)]) {
+      for (const field of DETAIL_ONLY_METADATA_FIELDS) expect(metadata).not.toHaveProperty(field);
+      expect(metadata.title).toBeTruthy();
+      expect(metadata).toHaveProperty('downloadedFilePath');
+    }
+    expect(video.epochs).toHaveLength(2);
+    expect(Object.keys(video).sort()).toEqual(Object.keys(index.channels[0].videos[0]).sort());
+  });
+
+  it('keeps the latest version\'s metadata shared with the video\'s own, so it is sent once', async () => {
+    const { index } = await buildIndex();
+    const [video] = summarizeLibraryIndex(index).channels[0].videos;
+    expect(video.metadata).toBe(video.epochs[0].metadata);
+  });
+
+  it('never modifies the full index, and caches the summary per index object', async () => {
+    const { index } = await buildIndex();
+    const before = JSON.parse(JSON.stringify(index));
+    const summary = summarizeLibraryIndex(index);
+    expect(index).toEqual(before);
+    expect(index.channels[0].videos[0].metadata.description).toBe('desc');
+    expect(summarizeLibraryIndex(index)).toBe(summary);
+  });
+
+  it('after a patch, re-summarizes only the changed channel', async () => {
+    writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'a1', uploader: 'Unchanged' }) });
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ id: 'b1', uploader: 'Changed' }) });
+    const index = await scanLibrary(libraryDir);
+    const before = summarizeLibraryIndex(index);
+    addLibraryVersion({ libraryDir, videoDir, videoMetaData: baseVideoMetaData({ id: 'b1', uploader: 'Changed', title: 'v2' }) });
+    const patched = patchLibraryIndex(index, libraryDir, DEFAULT_LIBRARY_DIR_NAME, [videoDir]);
+    const after = summarizeLibraryIndex(patched);
+    const byName = (summary, name) => summary.channels.find((c) => c.displayName === name);
+    expect(byName(after, 'Unchanged')).toBe(byName(before, 'Unchanged'));
+    expect(byName(after, 'Changed')).not.toBe(byName(before, 'Changed'));
+    expect(byName(after, 'Changed').videos[0].epochs).toHaveLength(2);
+    expect(after).toEqual(summarizeLibraryIndex(await scanLibrary(libraryDir)));
+  });
+
+  it('reads one video\'s full entry, identical to its entry in a full scan', async () => {
+    const { videoDir, index } = await buildIndex();
+    expect(readLibraryVideoEntry(libraryDir, videoDir)).toEqual(index.channels[0].videos[0]);
+  });
+
+  it('refuses a path outside the library and returns null for a missing video', () => {
+    expect(readLibraryVideoEntry(libraryDir, os.tmpdir())).toBeNull();
+    expect(readLibraryVideoEntry(libraryDir, path.join(libraryDir, DEFAULT_LIBRARY_DIR_NAME, 'Nope', 'missing'))).toBeNull();
+  });
+});
+
+describe('createScanYielder (PERF-001)', () => {
+  it('hands the event loop back only once the interval has elapsed', async () => {
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const yieldIfDue = createScanYielder();
+    let immediateRan = false;
+    setImmediate(() => { immediateRan = true; });
+
+    now += 2;
+    await yieldIfDue(); // 2 ms in: no yield, so the pending setImmediate can't have run
+    expect(immediateRan).toBe(false);
+
+    now += 10;
+    await yieldIfDue(); // past the interval: yields, letting queued work run
+    expect(immediateRan).toBe(true);
+  });
+});
+
+describe('libraryTagForPath', () => {
+  it('returns the sublibrary folder a path lives in', () => {
+    expect(libraryTagForPath(libraryDir, path.join(libraryDir, 'Music', 'Channel', 'abc'))).toBe('Music');
+    expect(libraryTagForPath(libraryDir, path.join(libraryDir, 'DefaultLibrary', 'NonYT', 'soundcloud', 'h'))).toBe('DefaultLibrary');
+  });
+
+  it('returns null for the library root itself, outside paths and missing input', () => {
+    expect(libraryTagForPath(libraryDir, libraryDir)).toBeNull();
+    expect(libraryTagForPath(libraryDir, os.tmpdir())).toBeNull();
+    expect(libraryTagForPath('', path.join(libraryDir, 'Music'))).toBeNull();
+    expect(libraryTagForPath(libraryDir, '')).toBeNull();
+  });
+});
+
+describe('isLibraryIndexCachedFor', () => {
+  it('tracks exactly which library/sublibrary the single-slot cache holds', async () => {
+    await refreshLibraryIndex(libraryDir, 'Music');
+    expect(isLibraryIndexCachedFor(libraryDir, 'Music')).toBe(true);
+    expect(isLibraryIndexCachedFor(libraryDir, 'DefaultLibrary')).toBe(false);
+    expect(isLibraryIndexCachedFor('/somewhere/else', 'Music')).toBe(false);
+    await getLibraryIndex(libraryDir, 'DefaultLibrary');
+    expect(isLibraryIndexCachedFor(libraryDir, 'Music')).toBe(false);
+    expect(isLibraryIndexCachedFor(libraryDir, 'DefaultLibrary')).toBe(true);
+  });
+});
+
+describe('createVideoLookup (PERF-009)', () => {
+  const video = (videoId, platform, tag) => ({ videoDir: `/lib/${tag}`, metadata: { videoId, platform } });
+  const index = {
+    channels: [
+      { displayName: 'A', videos: [video('x', undefined, 'a-x'), video('dup', 'youtube', 'a-dup')] },
+      { displayName: 'B', videos: [video('dup', 'soundcloud', 'b-dup'), video('y', null, 'b-y')] },
+      { displayName: 'C', videos: [video('dup', 'youtube', 'c-dup')] },
+    ],
+  };
+
+  it('answers exactly like findVideoInIndex for hits, misses, duplicates and the platform filter', () => {
+    const lookupVideo = createVideoLookup(index);
+    const cases = [
+      ['x'], ['y'], ['missing'], ['dup'],
+      ['dup', 'youtube'], ['dup', 'soundcloud'], ['dup', 'vimeo'],
+      ['x', 'youtube'], ['y', 'youtube'], ['x', 'soundcloud'],
+    ];
+    for (const [id, platform] of cases) {
+      expect(lookupVideo(id, platform)).toEqual(findVideoInIndex(index, id, platform));
+    }
+    expect(lookupVideo('dup').video.videoDir).toBe('/lib/a-dup');
+  });
+
+  it('handles an empty index', () => {
+    expect(createVideoLookup({ channels: [] })('x')).toBeNull();
+  });
+});
+
+describe('lookupVideosInIndex', () => {
+  const epoch = (name, files = {}) => ({ epoch: name, metadata: { downloadedFilePath: null, downloadedAudioFilePath: null, ...files } });
+  const video = (videoId, { platform, epochs = [], latestEpoch = null } = {}) => ({
+    videoDir: `/lib/${videoId}`, latestEpoch, metadata: { videoId, platform }, epochs,
+  });
+  const index = {
+    channels: [
+      { displayName: 'A', videos: [
+        video('noFiles', { epochs: [epoch('100')], latestEpoch: '100' }),
+        video('olderHasVideo', { platform: 'youtube', epochs: [epoch('100', { downloadedFilePath: '/lib/a.mp4' }), epoch('200')], latestEpoch: '200' }),
+        video('audioOnly', { epochs: [epoch('100', { downloadedAudioFilePath: '/lib/a.mp3' })], latestEpoch: '100' }),
+      ] },
+      { displayName: 'B', videos: [
+        video('otherSite', { platform: 'soundcloud', epochs: [epoch('100', { downloadedFilePath: '/lib/s.mp3' })], latestEpoch: '100' }),
+        video('noEpochs'),
+      ] },
+    ],
+  };
+
+  it('returns an entry per id that is in the index, with file flags from any epoch', () => {
+    expect(lookupVideosInIndex(index, ['noFiles', 'olderHasVideo', 'audioOnly', 'missing'])).toEqual({
+      noFiles: { videoDir: '/lib/noFiles', latestEpoch: '100', hasVideoFile: false, hasAudioFile: false },
+      olderHasVideo: { videoDir: '/lib/olderHasVideo', latestEpoch: '200', hasVideoFile: true, hasAudioFile: false },
+      audioOnly: { videoDir: '/lib/audioOnly', latestEpoch: '100', hasVideoFile: false, hasAudioFile: true },
+    });
+  });
+
+  it('only matches YouTube entries', () => {
+    expect(lookupVideosInIndex(index, ['otherSite'])).toEqual({});
+  });
+
+  it('copes with an entry that has no epochs, non-string ids and an empty index', () => {
+    expect(lookupVideosInIndex(index, ['noEpochs', 42, null])).toEqual({
+      noEpochs: { videoDir: '/lib/noEpochs', latestEpoch: null, hasVideoFile: false, hasAudioFile: false },
+    });
+    expect(lookupVideosInIndex({ channels: [] }, ['noFiles'])).toEqual({});
   });
 });
 

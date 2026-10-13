@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { forwardRef, useImperativeHandle } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import LibraryVideoPlayerWithTools from './LibraryVideoPlayerWithTools';
 import type { ClipMarkersControl } from './LibraryVideoPlayer';
@@ -243,6 +243,20 @@ describe('LibraryVideoPlayerWithTools resume playback position', () => {
     vi.useRealTimers();
   });
 
+  // The component only saves positions once its resume-tracking settings
+  // have *arrived* (shouldSavePosition flips true in the settings promise's
+  // .then), and nothing on screen shows when that happens. Waiting for the
+  // settings mocks to be *called* isn't enough -- a play/pause fired before
+  // the .then runs is silently not saved, which made the pause test fail
+  // intermittently. One macrotask boundary guarantees the already-resolved
+  // mocks' promise chain has run; act() flushes the resulting state update.
+  async function waitForResumeSettings() {
+    await waitFor(() => expect(window.electronAPI.getResumeTrackingMode).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    });
+  }
+
   it('periodically saves the current position while playing', async () => {
     render(
       <LibraryVideoPlayerWithTools
@@ -252,12 +266,9 @@ describe('LibraryVideoPlayerWithTools resume playback position', () => {
         convertFormatOptions={['mp4']}
       />,
     );
-    await waitFor(() => expect(window.electronAPI.getResumeTrackingMode).toHaveBeenCalled());
-    // waitFor above only confirms the settings mocks were *invoked* --
-    // let their already-resolved promises actually flow into state before
-    // switching to fake timers, or shouldSavePosition would still read its
-    // initial false value once "Simulate play" fires.
-    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    // Before switching to fake timers, which would stall the macrotask
+    // the helper waits on.
+    await waitForResumeSettings();
 
     vi.useFakeTimers();
     fakeCurrentTime = 30;
@@ -276,7 +287,7 @@ describe('LibraryVideoPlayerWithTools resume playback position', () => {
         convertFormatOptions={['mp4']}
       />,
     );
-    await waitFor(() => expect(window.electronAPI.getResumeTrackingMode).toHaveBeenCalled());
+    await waitForResumeSettings();
 
     fakeCurrentTime = 45;
     fireEvent.click(screen.getByRole('button', { name: 'Simulate play' }));

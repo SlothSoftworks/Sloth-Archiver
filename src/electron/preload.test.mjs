@@ -48,8 +48,12 @@ it('exposes exactly electronAPI and electronAPIPythonDownload on the main world'
 // [electronAPI key, args to call it with, expected ipcRenderer.invoke call]
 const invokeTable = [
   ['pickFolder', [{ title: 't' }], ['dialog:openFolder', { title: 't' }]],
-  ['saveVideoFile', ['name', 'fmt', { x: 1 }], ['dialog:saveVideoFile', 'name', 'fmt', { x: 1 }]],
+  ['exportLibrary', [], ['library:exportToFile']],
+  ['previewLibraryImport', [], ['library:previewImport']],
+  ['applyLibraryImport', ['tok'], ['library:applyImport', 'tok']],
+  ['saveVideoFile', ['name', 'fmt', { x: 1 }], ['dialog:saveVideoFile', 'name']],
   ['getVideoInfoPython', ['url', { o: 1 }], ['getVideoInfoPython', 'url', { o: 1 }]],
+  ['getVideoInfoResult', ['url', { ignored: 1 }], ['getVideoInfoResult', 'url']],
   ['openDirectory', ['/p'], ['system:openDirectory', '/p']],
   ['openFileInDirectory', ['/p/f'], ['system:openFileInDirectory', '/p/f']],
   ['openFileExternally', ['/p/f'], ['system:openFileExternally', '/p/f']],
@@ -87,6 +91,15 @@ const invokeTable = [
   ['overrideLibraryEntry', [{ id: 1 }, '/v', 'Music'], ['library:overrideEntry', { videoMetaData: { id: 1 }, existingVideoDir: '/v' }, 'Music']],
   ['addLibraryVersion', [{ id: 1 }, '/v'], ['library:addVersion', { videoMetaData: { id: 1 }, videoDir: '/v' }]],
   ['findLibraryVideo', ['vid', 'Music'], ['library:findVideo', 'vid', 'Music']],
+  ['lookupLibraryVideos', [['vid1', 'vid2'], 'Music'], ['library:lookupVideos', ['vid1', 'vid2'], 'Music']],
+  ['scanChannel', ['scan-1', 'https://www.youtube.com/@x'], ['channelArchive:scan', 'scan-1', 'https://www.youtube.com/@x']],
+  ['cancelChannelScan', ['scan-1'], ['channelArchive:cancelScan', 'scan-1']],
+  ['getBacklog', [], ['backlog:get']],
+  ['addBacklogJob', [{ job: { j: 1 }, mode: 'append' }], ['backlog:addJob', { job: { j: 1 }, mode: 'append' }]],
+  ['applyBacklogResults', ['job-1', [{ videoId: 'v', outcome: 'done' }]], ['backlog:applyResults', 'job-1', [{ videoId: 'v', outcome: 'done' }]]],
+  ['retryBacklogErrors', [], ['backlog:retryErrors']],
+  ['dismissBacklogErrors', [], ['backlog:dismissErrors']],
+  ['clearBacklog', [], ['backlog:clear']],
   ['openLocalVideoFile', [], ['dialog:openLocalVideoFile']],
   ['probeLocalFile', ['/p/file.mp4'], ['library:probeLocalFile', '/p/file.mp4']],
   ['addLocalFile', [{ sourceFilePath: '/p/file.mp4' }, 'Music'], ['library:addLocalFile', { sourceFilePath: '/p/file.mp4' }, 'Music']],
@@ -166,6 +179,26 @@ describe('electronAPI event subscriptions', () => {
     removeAllListeners.mockClear();
     electronAPI.removePreviewGenerationProgressListener();
     expect(removeAllListeners).toHaveBeenCalledWith('previewGenerationProgress');
+  });
+});
+
+describe('electronAPI channel scan progress', () => {
+  it('onChannelScanProgress returns its listener and removeChannelScanProgressListener removes just that one', () => {
+    on.mockClear();
+    const callback = vi.fn();
+    const listener = electronAPI.onChannelScanProgress(callback);
+    expect(on).toHaveBeenCalledWith('channelArchive:scanProgress', listener);
+    listener({}, { scanId: 'scan-1', stage: 'listing', found: 10, total: 450 });
+    expect(callback).toHaveBeenCalledWith({ scanId: 'scan-1', stage: 'listing', found: 10, total: 450 });
+
+    const otherListener = electronAPI.onChannelScanProgress(vi.fn());
+    expect(otherListener).not.toBe(listener);
+
+    removeListener.mockClear();
+    removeAllListeners.mockClear();
+    electronAPI.removeChannelScanProgressListener(listener);
+    expect(removeListener).toHaveBeenCalledWith('channelArchive:scanProgress', listener);
+    expect(removeAllListeners).not.toHaveBeenCalled();
   });
 });
 
