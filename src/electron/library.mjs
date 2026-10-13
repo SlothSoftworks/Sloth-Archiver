@@ -1555,6 +1555,18 @@ export function readLibraryVideoEntry(libraryDir, videoDir) {
     return readVideoEntry(resolvedVideoDir, path.basename(resolvedVideoDir));
 }
 
+// The spelling the filesystem itself uses for a path under scanRoot, when it
+// differs from the given one only by letter case; the given path otherwise
+// (missing folder, or a symlink that resolves somewhere else).
+function onDiskRelativePath(scanRoot, relative) {
+    try {
+        const real = path.relative(fs.realpathSync.native(scanRoot), fs.realpathSync.native(path.join(scanRoot, relative)));
+        return real.toLowerCase() === relative.toLowerCase() ? real : relative;
+    } catch {
+        return relative;
+    }
+}
+
 // PERF-002/008: brings an index up to date after writes to specific video
 // folders by re-reading only those folders (plus each affected channel's
 // own listing for its icon) instead of the whole sublibrary. Handles a
@@ -1574,9 +1586,16 @@ export function patchLibraryIndex(index, libraryDir, libraryTag, videoDirs) {
         const segments = relative.split(path.sep);
         const isNonYt = segments[0] === NONYT_DIR_NAME;
         if (segments.length !== (isNonYt ? 3 : 2) || segments[0] === PLAYLISTS_DIR_NAME) return null;
-        const channelKey = path.join(...segments.slice(0, -1));
+        const givenChannelKey = path.join(...segments.slice(0, -1));
+        // On a case-insensitive disk (macOS, Windows) a write addressed to
+        // ".../alpha/x" lands in an existing "Alpha" folder, and a scan lists
+        // that folder under its on-disk name. Keying by the caller's spelling
+        // would add a second, phantom channel.
+        const channelKey = index.channels.some((c) => c.channelFolderName === givenChannelKey)
+            ? givenChannelKey
+            : onDiskRelativePath(scanRoot, givenChannelKey);
         if (!byChannel.has(channelKey)) byChannel.set(channelKey, new Set());
-        byChannel.get(channelKey).add(path.join(scanRoot, relative));
+        byChannel.get(channelKey).add(path.join(scanRoot, channelKey, segments[segments.length - 1]));
     }
 
     const channels = [...index.channels];
