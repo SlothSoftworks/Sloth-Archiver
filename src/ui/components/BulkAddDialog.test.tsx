@@ -1,17 +1,19 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import BulkAddDialog from './BulkAddDialog';
-import { BulkAddProvider } from '../hooks/useBulkAddQueue';
+import { BulkAddProvider, useBulkAddQueue } from '../hooks/useBulkAddQueue';
 import { LibraryTagsProvider, useLibraryTags } from '../hooks/useLibraryTags';
+import { ChannelArchiveProvider } from '../hooks/useChannelArchive';
 
 beforeEach(() => {
   window.electronAPI = {
     ...window.electronAPI,
     fetchPlaylistEntries: vi.fn(),
-    getVideoInfoPython: vi.fn(() => new Promise(() => {})),
+    getVideoInfoResult: vi.fn(() => new Promise<never>(() => {})),
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
     listLibraryTags: vi.fn().mockResolvedValue({ tags: [] }),
     getActiveLibraryTag: vi.fn().mockResolvedValue({ activeLibraryTag: 'DefaultLibrary', activeLibraryTagDir: '' }),
@@ -28,7 +30,7 @@ beforeEach(() => {
 
 function renderDialog(onClose = vi.fn()) {
   const utils = render(
-    <LibraryTagsProvider><BulkAddProvider><BulkAddDialog open onClose={onClose} /></BulkAddProvider></LibraryTagsProvider>,
+    <MemoryRouter><LibraryTagsProvider><BulkAddProvider><BulkAddDialog open onClose={onClose} /></BulkAddProvider></LibraryTagsProvider></MemoryRouter>,
   );
   return { ...utils, onClose };
 }
@@ -65,7 +67,7 @@ function ToggleableDialogWithCreateHarness() {
 
 function renderDialogWithCreateHarness() {
   return render(
-    <LibraryTagsProvider><BulkAddProvider><ToggleableDialogWithCreateHarness /></BulkAddProvider></LibraryTagsProvider>,
+    <MemoryRouter><LibraryTagsProvider><BulkAddProvider><ToggleableDialogWithCreateHarness /></BulkAddProvider></LibraryTagsProvider></MemoryRouter>,
   );
 }
 
@@ -214,5 +216,110 @@ describe('BulkAddDialog', () => {
 
       await waitFor(() => expect(screen.getByLabelText('Add to')).toHaveTextContent('Second'));
     });
+  });
+});
+
+// As mounted in the real app: inside the channel-archive provider, with a
+// route for the channel view to land on. The queue hook is read alongside
+// so the tests can see what happened to the drawer and the queue.
+function renderDialogInApp(onClose = vi.fn()) {
+  let queue!: ReturnType<typeof useBulkAddQueue>;
+  function QueueProbe() {
+    queue = useBulkAddQueue();
+    return null;
+  }
+  window.electronAPI = {
+    ...window.electronAPI,
+    scanChannel: vi.fn(() => new Promise<never>(() => {})),
+    cancelChannelScan: vi.fn().mockResolvedValue({ cancelled: true }),
+    onChannelScanProgress: vi.fn(() => () => {}),
+    removeChannelScanProgressListener: vi.fn(),
+    getBacklog: vi.fn().mockResolvedValue({
+      success: true,
+      backlog: { version: 1, libraryDir: null, completedJobs: { totalCount: 0, doneCount: 0 }, jobs: [] },
+      counts: { jobs: 0, pending: 0, errors: 0, total: 0, done: 0 },
+      libraryDir: '',
+      libraryDirMatches: true,
+    }),
+  };
+  render(
+    <MemoryRouter>
+      <LibraryTagsProvider>
+        <BulkAddProvider>
+          <ChannelArchiveProvider>
+            <QueueProbe />
+            <BulkAddDialog open onClose={onClose} />
+            <Routes>
+              <Route path="/" element={<div>Home</div>} />
+              <Route path="/channel-archive" element={<div>Channel archive view</div>} />
+            </Routes>
+          </ChannelArchiveProvider>
+        </BulkAddProvider>
+      </LibraryTagsProvider>
+    </MemoryRouter>,
+  );
+  return { onClose, getQueue: () => queue };
+}
+
+describe('BulkAddDialog: channel links', () => {
+  it('a single channel link closes the dialog and the drawer, starts a scan, and opens the channel view', async () => {
+    const user = userEvent.setup();
+    const { onClose, getQueue } = renderDialogInApp();
+    act(() => getQueue().setPanelOpen(true));
+
+    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), '  https://www.youtube.com/@veritasium  ');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText('Channel archive view')).toBeInTheDocument();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(getQueue().panelOpen).toBe(false);
+    expect(window.electronAPI.scanChannel).toHaveBeenCalledWith(expect.any(String), 'https://www.youtube.com/@veritasium');
+    expect(window.electronAPI.fetchPlaylistEntries).not.toHaveBeenCalled();
+    expect(window.electronAPI.getVideoInfoResult).not.toHaveBeenCalled();
+    expect(getQueue().items).toHaveLength(0);
+  });
+
+  it('rejects a channel link mixed with other links and submits nothing', async () => {
+    const user = userEvent.setup();
+    const { onClose, getQueue } = renderDialogInApp();
+
+    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), 'https://youtu.be/aaa, https://www.youtube.com/channel/UCHnyfMqiRRG1u-2MsSQLbXA/videos, https://www.youtube.com/playlist?list=PL1');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText('Channel links need to be added on their own.')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(window.electronAPI.scanChannel).not.toHaveBeenCalled();
+    expect(window.electronAPI.fetchPlaylistEntries).not.toHaveBeenCalled();
+    expect(getQueue().items).toHaveLength(0);
+    expect(screen.getByText('Home')).toBeInTheDocument();
+  });
+
+  it('still queues plain links and expands a playlist with the provider present', async () => {
+    const user = userEvent.setup();
+    (window.electronAPI.fetchPlaylistEntries as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true, playlistId: 'PL1', entries: [{ id: 'v1', title: 'One', url: 'https://youtu.be/v1', thumbnailUrl: 't', uploadDate: null }],
+    });
+    const { onClose, getQueue } = renderDialogInApp();
+
+    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), 'https://www.youtube.com/playlist?list=PL1, https://youtu.be/bbb');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(window.electronAPI.fetchPlaylistEntries).toHaveBeenCalledWith('https://www.youtube.com/playlist?list=PL1');
+    expect(getQueue().items.map((it) => it.sourceUrl)).toEqual(['https://youtu.be/v1', 'https://youtu.be/bbb']);
+    expect(window.electronAPI.scanChannel).not.toHaveBeenCalled();
+    expect(screen.getByText('Home')).toBeInTheDocument();
+  });
+
+  it('says so instead of misfiling a channel link when there is no channel-archive provider', async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderDialog();
+    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), 'https://www.youtube.com/@veritasium');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText('Channel links can\'t be added from here.')).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(window.electronAPI.fetchPlaylistEntries).not.toHaveBeenCalled();
   });
 });

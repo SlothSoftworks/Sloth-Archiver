@@ -9,6 +9,7 @@ import {
   assertFetchableImageUrl,
   guardedLookup,
   downloadImageToFile,
+  pickChannelAvatarUrl,
 } from './thumbnails.mjs';
 
 let destDir;
@@ -184,5 +185,24 @@ describe('downloadImageToFile', () => {
   it('refuses loopback through the real request path, by IP literal and by hostname', async () => {
     await expect(downloadImageToFile('https://127.0.0.1:1/a.jpg', destDir, 'x')).rejects.toThrow(/not publicly routable/);
     await expect(downloadImageToFile('https://localhost:1/a.jpg', destDir, 'x')).rejects.toThrow(/non-public address/);
+  });
+});
+
+describe('pickChannelAvatarUrl', () => {
+  it('prefers the uncropped avatar and falls back to the plain one', () => {
+    expect(pickChannelAvatarUrl({ thumbnails: [
+      { id: 'banner', url: 'https://x/banner.jpg' },
+      { id: 'avatar', url: 'https://x/avatar.jpg' },
+      { id: 'avatar_uncropped', url: 'https://x/avatar-full.jpg' },
+    ] })).toBe('https://x/avatar-full.jpg');
+    expect(pickChannelAvatarUrl({ thumbnails: [{ id: '0', url: 'https://x/0.jpg' }, { id: 'avatar', url: 'https://x/avatar.jpg' }] })).toBe('https://x/avatar.jpg');
+  });
+
+  it('is null when there is no avatar or the data is not the expected shape', () => {
+    expect(pickChannelAvatarUrl({ thumbnails: [{ id: 'banner', url: 'https://x/banner.jpg' }] })).toBeNull();
+    expect(pickChannelAvatarUrl({ thumbnails: [{ id: 'avatar', url: 42 }, null] })).toBeNull();
+    expect(pickChannelAvatarUrl({ thumbnails: 'nope' })).toBeNull();
+    expect(pickChannelAvatarUrl({})).toBeNull();
+    expect(pickChannelAvatarUrl(null)).toBeNull();
   });
 });

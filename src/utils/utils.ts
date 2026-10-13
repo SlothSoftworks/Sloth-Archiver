@@ -8,7 +8,7 @@ import type { LibraryVideoMetadata } from '../types';
 // (OtherPlatformDownloadCard); a plain hostname check, not a "supported
 // platforms" allowlist, since yt-dlp itself decides what it can extract
 // from -- this only decides which UI to show.
-import { isYouTubeUrl } from '../electron/utils/youtube.mjs';
+import { isYouTubeUrl, parseYouTubeChannelUrl, isYouTubeChannelUrl } from '../electron/utils/youtube.mjs';
 
 function isValidUrl(string: string) {
     try {
@@ -57,6 +57,90 @@ function convertYYYYMMDDStringToDate(stringDate: string, format = 'YYYY / MMM / 
   dayjs.extend(customParseFormat);
 
   return dayjs(stringDate, 'YYYYMMDD').format(format);
+}
+
+function formatDurationSeconds(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '';
+  const total = Math.floor(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = String(total % 60).padStart(2, '0');
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${secs}` : `${minutes}:${secs}`;
+}
+
+const APPROX_DATE_DAY_PRECISION_DAYS = 45;
+const APPROX_DATE_MONTH_PRECISION_DAYS = 548;
+
+// For a date yt-dlp only knows approximately (a channel listing's "3 weeks
+// ago" / "2 years ago"): the older it is, the coarser the source was, so
+// the display drops to month and then year rather than show a day that was
+// never known. timestampSeconds is a Unix time in seconds.
+function formatApproxDate(timestampSeconds: number | null | undefined, nowMs = Date.now()): string {
+  if (timestampSeconds == null || !Number.isFinite(timestampSeconds)) return '';
+  const date = dayjs.unix(timestampSeconds);
+  const ageDays = (nowMs - timestampSeconds * 1000) / (24 * 60 * 60 * 1000);
+  if (ageDays <= APPROX_DATE_DAY_PRECISION_DAYS) return `~${date.format('YYYY / MMM / DD')}`;
+  if (ageDays <= APPROX_DATE_MONTH_PRECISION_DAYS) return `~${date.format('MMM YYYY')}`;
+  return `~${date.format('YYYY')}`;
+}
+
+// Typical average total bitrates (video + audio, kbps) of YouTube streams at
+// each quality tier. Rules of thumb for a rough size estimate, not
+// measurements: real streams vary several-fold with codec, frame rate and
+// how much moves on screen. MP3 is exact: it is the bitrate this app's own
+// extraction encodes at ('-b:a 192k' in main.mjs).
+const TYPICAL_DOWNLOAD_BITRATE_KBPS = {
+  '2160': 16000,
+  '1440': 8000,
+  '1080': 4000,
+  '720': 2000,
+  '480': 1000,
+  '360': 600,
+  '240': 350,
+  '144': 200,
+  MP3: 192,
+};
+
+type DownloadQualityTier = keyof typeof TYPICAL_DOWNLOAD_BITRATE_KBPS;
+
+type DownloadSizeEstimate = {
+  bytes: number;
+  // Videos left out of `bytes` because their length is not known.
+  unknownCount: number;
+};
+
+// Assumes every video is available at the chosen quality; one that tops out
+// lower will be smaller than its share here.
+function estimateDownloadBytes(durationsSeconds: Array<number | null | undefined>, quality: DownloadQualityTier): DownloadSizeEstimate {
+  const bytesPerSecond = (TYPICAL_DOWNLOAD_BITRATE_KBPS[quality] * 1000) / 8;
+  let bytes = 0;
+  let unknownCount = 0;
+  for (const seconds of durationsSeconds) {
+    if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) unknownCount++;
+    else bytes += seconds * bytesPerSecond;
+  }
+  return { bytes, unknownCount };
+}
+
+// Deliberately coarse (two significant figures at most): it is only ever
+// used for estimates, where more digits would claim precision that is not
+// there. 1024-based, like the file sizes shown elsewhere in the app.
+function formatBytesApprox(bytes: number): string {
+  const MB = 1024 * 1024;
+  if (!Number.isFinite(bytes) || bytes < MB) return 'less than 1 MB';
+  const units = ['MB', 'GB', 'TB'];
+  const roundCoarsely = (value: number) => {
+    if (value >= 100) return Math.round(value / 10) * 10;
+    return value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
+  };
+  let value = bytes / MB;
+  let unit = 0;
+  // On the rounded value, so 999 MB reads "1 GB" rather than "1000 MB".
+  while (roundCoarsely(value) >= 1000 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${roundCoarsely(value)} ${units[unit]}`;
 }
 
 // Epoch folder names/timestamps are Date.now() ms values, whether read
@@ -210,5 +294,5 @@ function cleanElectronErrorMessage(message: string): string {
   return message.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '');
 }
 
-export { isValidUrl, isYouTubeUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, getBestDownloadedEpoch, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage, isLongVideoForPostprocess, safeRemoteImageUrl, isValidYouTubeVideoId };
+export { isValidUrl, isYouTubeUrl, parseYouTubeChannelUrl, isYouTubeChannelUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatDurationSeconds, formatApproxDate, estimateDownloadBytes, formatBytesApprox, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, getBestDownloadedEpoch, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage, isLongVideoForPostprocess, safeRemoteImageUrl, isValidYouTubeVideoId };
 

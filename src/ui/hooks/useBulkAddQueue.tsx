@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import type { VideoInfoResult } from '../../types/electron-api';
 import useDownloadVideo from './useDownloadVideo.tsx';
 import type { DownloadFailure, DownloadProgressMessage } from '../../types';
 import { MAX_SIMULTANEOUS_DOWNLOADS_CEILING } from '../../utils/constants.ts';
@@ -32,6 +33,10 @@ export type BulkAddEntry = {
   // set by the URL/playlist-paste flow (BulkAddDialog), which relies on that
   // guess (or the later fetch) instead.
   thumbnailUrl?: string;
+  // Caller-chosen batch identity, carried onto the item unchanged: lets a
+  // caller that submits several batches (the channel-archive runner) follow
+  // and remove just its own items via subscribeTransitions/removeByTag.
+  tag?: string;
 };
 
 export type BulkAddItem = {
@@ -40,6 +45,19 @@ export type BulkAddItem = {
   title: string | null;
   status: BulkAddStatus;
   error?: string;
+  // The classified failure kind (downloadErrors.mjs's ERROR_KINDS) behind
+  // `error`, 'unknown' for a failure that never went through the classifier.
+  // Only set while status is 'failed'.
+  errorKind?: string;
+  // Stamped from start()'s options when the item is created, so a later
+  // start() with different options never changes how an item that is still
+  // waiting gets processed. targetLibraryTag stays undefined when the caller
+  // gave none: that means "whichever sublibrary is active when this item is
+  // processed", resolved server-side.
+  download: boolean;
+  targetResolution: string;
+  targetLibraryTag?: string;
+  tag?: string;
   videoId?: string;
   thumbnailUrl?: string;
   // Set once this item's library entry exists on disk -- lets processItem/
@@ -67,9 +85,49 @@ export type BulkAddItem = {
 
 // targetLibraryTag is optional -- omitted (single-sublibrary case, or
 // "just use whatever's active"), addLibraryEntry falls back to the active
-// tag server-side. One tag for the whole batch, no per-item override, same
-// as targetResolution above.
-type StartOptions = { download: boolean; targetResolution: string; targetLibraryTag?: string };
+// tag server-side. One set of options per start() call, stamped onto every
+// item that call creates.
+export type BulkAddStartOptions = { download: boolean; targetResolution: string; targetLibraryTag?: string };
+
+// One item changing status, or leaving the list ('removed'). errorKind/error
+// are the item's values after the change (before it, for 'removed').
+export type BulkAddTransition = {
+  id: string;
+  tag: string | undefined;
+  videoId: string | undefined;
+  sourceUrl: string;
+  previousStatus: BulkAddStatus;
+  status: BulkAddStatus | 'removed';
+  errorKind: string | undefined;
+  error: string | undefined;
+};
+export type BulkAddTransitionListener = (transition: BulkAddTransition) => void;
+
+function describeTransition(item: BulkAddItem, previousStatus: BulkAddStatus, status: BulkAddStatus | 'removed'): BulkAddTransition {
+  return { id: item.id, tag: item.tag, videoId: item.videoId, sourceUrl: item.sourceUrl, previousStatus, status, errorKind: item.errorKind, error: item.error };
+}
+
+// Every status change and removal between two versions of the item list.
+// Newly added items are not transitions. Progress ticks replace one item and
+// keep the rest by reference, so the common case is a run of identity checks.
+export function diffItemTransitions(previous: BulkAddItem[], next: BulkAddItem[]): BulkAddTransition[] {
+  const transitions: BulkAddTransition[] = [];
+  const sameShape = previous.length === next.length && previous.every((it, i) => it.id === next[i].id);
+  if (sameShape) {
+    previous.forEach((before, i) => {
+      const after = next[i];
+      if (before !== after && before.status !== after.status) transitions.push(describeTransition(after, before.status, after.status));
+    });
+    return transitions;
+  }
+  const nextById = new Map(next.map((it) => [it.id, it]));
+  for (const before of previous) {
+    const after = nextById.get(before.id);
+    if (!after) transitions.push(describeTransition(before, before.status, 'removed'));
+    else if (after.status !== before.status) transitions.push(describeTransition(after, before.status, after.status));
+  }
+  return transitions;
+}
 
 // Derived from the item's own stashed fields (not a separate flag, which
 // could drift) -- 'download' means the library entry already exists and
@@ -184,27 +242,54 @@ function useBulkAddQueueState() {
   // set of async functions, not a React effect, so it needs a way to read
   // the *current* list without a stale closure over `items` state.
   const itemsRef = useRef<BulkAddItem[]>([]);
-  const optionsRef = useRef<StartOptions & { maxSimultaneous: number }>({ download: false, targetResolution: 'dflt', maxSimultaneous: 1 });
+  const maxSimultaneousRef = useRef(1);
+  // items.length is not usable for ids: it shrinks on removal, so a later
+  // start() of the same URL could mint an id an existing item already has.
+  const nextItemNumberRef = useRef(0);
+  const transitionListenersRef = useRef(new Set<BulkAddTransitionListener>());
+  const queueEmptyNotificationSuppressedRef = useRef(false);
+  const unsuppressWhenIdleRef = useRef(false);
   const stopRequestedRef = useRef(false);
   // slotItemRef[i]: itemId occupying slot i (fetch and download phases both),
   // or null while free -- what fillFreeSlots checks. slotDownloadMetaRef[i]:
   // what handleSlotDone needs to record a completed download, since
   // isDone/finalFilePath alone don't carry which item or where to record it.
-  const slotItemRef = useRef<Array<string | null>>(new Array(MAX_DOWNLOAD_SLOTS).fill(null));
-  const slotDownloadMetaRef = useRef<Array<{ videoDir: string; epoch: string; resolution: string; kind: 'video' | 'audio' } | null>>(new Array(MAX_DOWNLOAD_SLOTS).fill(null));
+  const slotItemRef = useRef<Array<string | null>>(Array.from({ length: MAX_DOWNLOAD_SLOTS }, () => null));
+  const slotDownloadMetaRef = useRef<Array<{ videoDir: string; epoch: string; resolution: string; kind: 'video' | 'audio' } | null>>(Array.from({ length: MAX_DOWNLOAD_SLOTS }, () => null));
+
+  // The only place the item list changes. Listeners run here, in whatever
+  // event handler or async continuation asked for the change, after the ref
+  // the loop reads has been updated: never from a render or a state updater.
+  const commitItems = (next: BulkAddItem[]) => {
+    const previous = itemsRef.current;
+    itemsRef.current = next;
+    setItems(next);
+    if (transitionListenersRef.current.size === 0) return;
+    const transitions = diffItemTransitions(previous, next);
+    if (transitions.length === 0) return;
+    for (const listener of transitionListenersRef.current) {
+      for (const transition of transitions) listener(transition);
+    }
+  };
 
   const updateItem = (id: string, patch: Partial<BulkAddItem>) => {
-    itemsRef.current = itemsRef.current.map((it) => (it.id === id ? { ...it, ...patch } : it));
-    setItems(itemsRef.current);
+    commitItems(itemsRef.current.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   };
 
   const notifyQueueEmpty = () => {
+    if (queueEmptyNotificationSuppressedRef.current) return;
     try {
       new Notification('Bulk add finished', { body: 'The queue is empty -- every item was processed, skipped, or failed.' });
     } catch {
       // Notification permission/support varies by platform -- never let this
       // block the queue from finishing.
     }
+  };
+
+  const releaseDeferredUnsuppress = () => {
+    if (!unsuppressWhenIdleRef.current) return;
+    unsuppressWhenIdleRef.current = false;
+    queueEmptyNotificationSuppressedRef.current = false;
   };
 
   // Call after anything that might leave the queue with nothing left to do --
@@ -217,12 +302,14 @@ function useBulkAddQueueState() {
     if (stopRequestedRef.current) {
       setIsRunning(false);
       setStopRequested(false);
+      releaseDeferredUnsuppress();
       return;
     }
     const anyPending = itemsRef.current.some((it) => it.status === 'pending');
     if (!anyPending) {
       setIsRunning(false);
       notifyQueueEmpty();
+      releaseDeferredUnsuppress();
     }
   };
 
@@ -240,7 +327,7 @@ function useBulkAddQueueState() {
       maybeFinishRun();
       return;
     }
-    const max = Math.min(optionsRef.current.maxSimultaneous, MAX_DOWNLOAD_SLOTS);
+    const max = Math.min(maxSimultaneousRef.current, MAX_DOWNLOAD_SLOTS);
     for (let slot = 0; slot < max; slot++) {
       if (slotItemRef.current[slot]) continue;
       const next = itemsRef.current.find((it) => it.status === 'pending');
@@ -261,7 +348,7 @@ function useBulkAddQueueState() {
 
   const beginDownload = (item: BulkAddItem, slot: number, videoDir: string, epoch: string, resolution: string, kind: 'video' | 'audio') => {
     slotDownloadMetaRef.current[slot] = { videoDir, epoch, resolution, kind };
-    updateItem(item.id, { status: 'downloading', videoDir, epoch, resolution, kind, error: undefined, downloadProgress: 0, postprocessProgress: 0 });
+    updateItem(item.id, { status: 'downloading', videoDir, epoch, resolution, kind, error: undefined, errorKind: undefined, downloadProgress: 0, postprocessProgress: 0 });
     const outputPath = `${videoDir}/${epoch}/${kind === 'audio' ? 'audio' : 'video'}`;
     downloadSlots[slot].startDownload({ videoUrl: item.sourceUrl, outputPath, format: 'dflt', resolution });
     // Execution picks back up in handleSlotDone below once this specific
@@ -279,12 +366,19 @@ function useBulkAddQueueState() {
       return;
     }
 
-    updateItem(item.id, { status: 'fetching', error: undefined });
+    updateItem(item.id, { status: 'fetching', error: undefined, errorKind: undefined });
     try {
-      // getVideoInfoPython never resolves with { success: false } -- a
-      // failure always rejects the promise (main.mjs), caught below.
-      const info = await window.electronAPI.getVideoInfoPython(item.sourceUrl);
-      const videoInfo = info.data.response;
+      // getVideoInfoResult rather than getVideoInfoPython: a failure comes
+      // back as data with its classified kind, which a rejected IPC promise
+      // cannot carry.
+      const info: VideoInfoResult = await window.electronAPI.getVideoInfoResult(item.sourceUrl);
+      if (!info.success) {
+        updateItem(item.id, { status: 'failed', error: info.message, errorKind: info.kind });
+        await sleep(ITEM_DELAY_MS);
+        freeSlot(slot);
+        return;
+      }
+      const videoInfo = info.videoInfo;
       updateItem(item.id, {
         title: videoInfo.fullTitle || videoInfo.title || item.title,
         videoId: videoInfo.id,
@@ -309,7 +403,7 @@ function useBulkAddQueueState() {
         }
       }
 
-      const existing = await window.electronAPI.findLibraryVideo(videoInfo.id);
+      const existing = await window.electronAPI.findLibraryVideo(videoInfo.id, item.targetLibraryTag);
       if (existing.found) {
         updateItem(item.id, { status: 'skipped' });
         await sleep(ITEM_DELAY_MS);
@@ -317,16 +411,16 @@ function useBulkAddQueueState() {
         return;
       }
 
-      const added = await window.electronAPI.addLibraryEntry(videoInfo, optionsRef.current.targetLibraryTag);
+      const added = await window.electronAPI.addLibraryEntry(videoInfo, item.targetLibraryTag);
 
-      if (!optionsRef.current.download) {
+      if (!item.download) {
         updateItem(item.id, { status: 'done' });
         await sleep(ITEM_DELAY_MS);
         freeSlot(slot);
         return;
       }
 
-      const target = optionsRef.current.targetResolution;
+      const target = item.targetResolution;
       const isMp3 = target.toLowerCase() === 'mp3';
       const resolution = isMp3 ? 'mp3' : pickClosestResolution(videoInfo.resolutions || [], target);
       if (!resolution) {
@@ -340,7 +434,7 @@ function useBulkAddQueueState() {
 
       beginDownload(item, slot, added.videoDir, added.epoch, resolution, isMp3 ? 'audio' : 'video');
     } catch (err) {
-      updateItem(item.id, { status: 'failed', error: err instanceof Error ? cleanElectronErrorMessage(err.message) : String(err) });
+      updateItem(item.id, { status: 'failed', error: err instanceof Error ? cleanElectronErrorMessage(err.message) : String(err), errorKind: 'unknown' });
       await sleep(ITEM_DELAY_MS);
       freeSlot(slot);
     }
@@ -361,9 +455,9 @@ function useBulkAddQueueState() {
       // failed." fallback extractDownloadErrorMessage would produce here)
       // would misleadingly imply something went wrong.
       if (kind === 'cancelled') {
-        updateItem(itemId, { status: 'cancelled', error: undefined });
+        updateItem(itemId, { status: 'cancelled', error: undefined, errorKind: undefined });
       } else {
-        updateItem(itemId, { status: 'failed', error: extractDownloadErrorMessage(result.downloadError) });
+        updateItem(itemId, { status: 'failed', error: extractDownloadErrorMessage(result.downloadError), errorKind: kind || 'unknown' });
       }
     } else {
       // recordLibraryDownload can reject -- caught here so a failure still
@@ -379,7 +473,7 @@ function useBulkAddQueueState() {
         });
         updateItem(itemId, { status: 'done' });
       } catch (err) {
-        updateItem(itemId, { status: 'failed', error: err instanceof Error ? cleanElectronErrorMessage(err.message) : String(err) });
+        updateItem(itemId, { status: 'failed', error: err instanceof Error ? cleanElectronErrorMessage(err.message) : String(err), errorKind: 'unknown' });
       }
     }
     await sleep(ITEM_DELAY_MS);
@@ -428,15 +522,22 @@ function useBulkAddQueueState() {
   // maxSimultaneous keeps whatever value a previous run already resolved to;
   // the current setting is fetched in the background and applied once back,
   // re-running fillFreeSlots in case that unlocks more capacity.
-  const start = (entries: BulkAddEntry[], options: StartOptions) => {
-    optionsRef.current = { ...options, maxSimultaneous: optionsRef.current.maxSimultaneous };
+  //
+  // openPanel: false is for a caller that feeds the queue on its own schedule
+  // (the channel-archive runner), where each batch popping the drawer open
+  // again would fight the user closing it.
+  const start = (entries: BulkAddEntry[], options: BulkAddStartOptions, { openPanel = true }: { openPanel?: boolean } = {}) => {
     stopRequestedRef.current = false;
     setStopRequested(false);
-    const newItems: BulkAddItem[] = entries.map((entry, idx) => ({
-      id: `${entry.url}#${itemsRef.current.length + idx}`,
+    const newItems: BulkAddItem[] = entries.map((entry) => ({
+      id: `${entry.url}#${nextItemNumberRef.current++}`,
       sourceUrl: entry.url,
       title: entry.title,
       status: 'pending',
+      download: options.download,
+      targetResolution: options.targetResolution,
+      targetLibraryTag: options.targetLibraryTag,
+      tag: entry.tag,
       videoId: entry.videoId,
       videoDir: entry.videoDir,
       epoch: entry.epoch,
@@ -454,14 +555,13 @@ function useBulkAddQueueState() {
       // their info.
       thumbnailUrl: entry.thumbnailUrl ?? (entry.videoId ? `https://i.ytimg.com/vi/${entry.videoId}/mqdefault.jpg` : undefined),
     }));
-    itemsRef.current = [...itemsRef.current, ...newItems];
-    setItems(itemsRef.current);
-    setPanelOpen(true);
+    commitItems([...itemsRef.current, ...newItems]);
+    if (openPanel) setPanelOpen(true);
     setIsRunning(true);
     fillFreeSlots();
 
     window.electronAPI.getMaxSimultaneousDownloads().then(({ maxSimultaneousDownloads }) => {
-      optionsRef.current.maxSimultaneous = maxSimultaneousDownloads;
+      maxSimultaneousRef.current = maxSimultaneousDownloads;
       fillFreeSlots();
     });
   };
@@ -486,13 +586,12 @@ function useBulkAddQueueState() {
   // action, moving them to 'cancelled' so they read as a deliberate choice
   // (not a failure) and can be swept away by clearFinished below.
   const cancelAllPending = () => {
-    itemsRef.current = itemsRef.current.map((it) => (it.status === 'pending' ? { ...it, status: 'cancelled' } : it));
-    setItems(itemsRef.current);
+    commitItems(itemsRef.current.map((it) => (it.status === 'pending' ? { ...it, status: 'cancelled' } : it)));
     maybeFinishRun();
   };
 
   const retryItem = (id: string) => {
-    updateItem(id, { status: 'pending', error: undefined });
+    updateItem(id, { status: 'pending', error: undefined, errorKind: undefined });
     stopRequestedRef.current = false;
     setStopRequested(false);
     setIsRunning(true);
@@ -500,32 +599,123 @@ function useBulkAddQueueState() {
   };
 
   const removeItem = (id: string) => {
-    itemsRef.current = itemsRef.current.filter((it) => it.id !== id);
-    setItems(itemsRef.current);
+    commitItems(itemsRef.current.filter((it) => it.id !== id));
+  };
+
+  // Removes one caller's batch (see BulkAddEntry.tag) without disturbing
+  // anything in flight: an item that is fetching or downloading stays, and
+  // finishes normally. keepDone also leaves the batch's done and skipped
+  // items in the list, as the record of what was added.
+  const removeByTag = (tag: string, { keepDone = false }: { keepDone?: boolean } = {}) => {
+    commitItems(itemsRef.current.filter((it) => (
+      it.tag !== tag
+      || it.status === 'fetching'
+      || it.status === 'downloading'
+      || (keepDone && (it.status === 'done' || it.status === 'skipped'))
+    )));
+    maybeFinishRun();
+  };
+
+  const subscribeTransitions = (listener: BulkAddTransitionListener) => {
+    transitionListenersRef.current.add(listener);
+    return () => { transitionListenersRef.current.delete(listener); };
+  };
+
+  // For a caller that submits batch after batch and would otherwise get one
+  // "Bulk add finished" notification per batch. Everything else about a run
+  // finishing is unchanged.
+  //
+  // Turning it back off while a slot is still busy only takes effect once
+  // the queue next goes idle: a caller sees its last item finish a couple of
+  // seconds (ITEM_DELAY_MS) before the slot that ran it is freed, and that
+  // is the moment this run's own notification would otherwise still fire.
+  const setQueueEmptyNotificationSuppressed = (suppressed: boolean) => {
+    const anySlotBusy = slotItemRef.current.some((id) => id !== null);
+    if (suppressed || !anySlotBusy) {
+      queueEmptyNotificationSuppressedRef.current = suppressed;
+      unsuppressWhenIdleRef.current = false;
+    } else {
+      unsuppressWhenIdleRef.current = true;
+    }
   };
 
   // "Finished" covers every non-actionable end state: done, skipped (already
   // in the library), and cancelled. failed is excluded -- it still needs a
   // retry or explicit removal.
   const clearFinished = () => {
-    itemsRef.current = itemsRef.current.filter((it) => it.status !== 'done' && it.status !== 'skipped' && it.status !== 'cancelled');
-    setItems(itemsRef.current);
+    commitItems(itemsRef.current.filter((it) => it.status !== 'done' && it.status !== 'skipped' && it.status !== 'cancelled'));
   };
 
-  return { items, isRunning, stopRequested, panelOpen, setPanelOpen, start, stop, resume, cancelAllPending, cancelItem, retryItem, removeItem, clearFinished };
+  const getItems = () => itemsRef.current;
+  const isStopRequested = () => stopRequestedRef.current;
+
+  const queue = {
+    items, isRunning, stopRequested, panelOpen, setPanelOpen, start, stop, resume, cancelAllPending, cancelItem, retryItem, removeItem, clearFinished,
+    removeByTag, subscribeTransitions, setQueueEmptyNotificationSuppressed, getItems, isStopRequested,
+  };
+
+  // The functions above are rebuilt on every render (every progress tick);
+  // this object is built once and forwards to whichever are current, so a
+  // consumer of the actions context is never re-rendered by queue activity.
+  const latestRef = useRef(queue);
+  latestRef.current = queue;
+  const [actions] = useState<BulkAddActions>(() => ({
+    start: (entries, options, startOptions) => latestRef.current.start(entries, options, startOptions),
+    stop: () => latestRef.current.stop(),
+    resume: () => latestRef.current.resume(),
+    cancelItem: (id) => latestRef.current.cancelItem(id),
+    retryItem: (id) => latestRef.current.retryItem(id),
+    removeItem: (id) => latestRef.current.removeItem(id),
+    removeByTag: (tag, options) => latestRef.current.removeByTag(tag, options),
+    subscribeTransitions: (listener) => latestRef.current.subscribeTransitions(listener),
+    setQueueEmptyNotificationSuppressed: (suppressed) => latestRef.current.setQueueEmptyNotificationSuppressed(suppressed),
+    setPanelOpen: (open) => latestRef.current.setPanelOpen(open),
+    getItems: () => latestRef.current.getItems(),
+    isStopRequested: () => latestRef.current.isStopRequested(),
+  }));
+
+  return { queue, actions };
 }
 
-type BulkAddQueueContextValue = ReturnType<typeof useBulkAddQueueState>;
+export type BulkAddActions = {
+  start: (entries: BulkAddEntry[], options: BulkAddStartOptions, startOptions?: { openPanel?: boolean }) => void;
+  stop: () => void;
+  resume: () => void;
+  cancelItem: (id: string) => void;
+  retryItem: (id: string) => void;
+  removeItem: (id: string) => void;
+  removeByTag: (tag: string, options?: { keepDone?: boolean }) => void;
+  subscribeTransitions: (listener: BulkAddTransitionListener) => () => void;
+  setQueueEmptyNotificationSuppressed: (suppressed: boolean) => void;
+  setPanelOpen: (open: boolean) => void;
+  // The current item list, read at call time rather than at render time.
+  getItems: () => BulkAddItem[];
+  // True from the user's "Stop" until the queue is resumed or started again.
+  isStopRequested: () => boolean;
+};
+
+type BulkAddQueueContextValue = ReturnType<typeof useBulkAddQueueState>['queue'];
 
 const BulkAddQueueContext = createContext<BulkAddQueueContextValue | null>(null);
+const BulkAddActionsContext = createContext<BulkAddActions | null>(null);
 
 export function BulkAddProvider({ children }: { children: ReactNode }) {
-  const value = useBulkAddQueueState();
+  const { queue, actions } = useBulkAddQueueState();
   return (
-    <BulkAddQueueContext.Provider value={value}>
-      {children}
-    </BulkAddQueueContext.Provider>
+    <BulkAddActionsContext.Provider value={actions}>
+      <BulkAddQueueContext.Provider value={queue}>
+        {children}
+      </BulkAddQueueContext.Provider>
+    </BulkAddActionsContext.Provider>
   );
+}
+
+export function useBulkAddActions() {
+  const ctx = useContext(BulkAddActionsContext);
+  if (!ctx) {
+    throw new Error('useBulkAddActions must be used within a BulkAddProvider');
+  }
+  return ctx;
 }
 
 export function useBulkAddQueue() {

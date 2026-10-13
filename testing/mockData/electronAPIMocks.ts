@@ -1,5 +1,6 @@
 import { videoResponseMock } from './pythonResponseMocks.ts';
 import type { LibraryVideoMetadata } from '../../src/types.ts';
+import type { ArchiveBacklogState } from '../../src/types/electron-api';
 
 export const noop = () => {};
 
@@ -23,6 +24,13 @@ const emptyLibraryVideoMetadata: LibraryVideoMetadata = {
   lastPlaybackPositionSeconds: null,
 };
 
+const emptyBacklogState: ArchiveBacklogState = {
+  backlog: { version: 1, libraryDir: null, completedJobs: { totalCount: 0, doneCount: 0 }, jobs: [] },
+  counts: { jobs: 0, pending: 0, errors: 0, total: 0, done: 0 },
+  libraryDir: '',
+  libraryDirMatches: true,
+};
+
 // DownloaderScreen seeds its initial videoInfo state from this in dev-mock
 // mode (App.tsx's electronAPI fallback, see there) so previewing it in a
 // plain browser shows something instead of an empty form. window.mockingElectron
@@ -41,6 +49,7 @@ export const electronAPIMock = {
     pickFolder: async () => ({ filePaths: [], canceled: true }),
     saveVideoFile: async () => ({ filePath: '', canceled: true }),
     getVideoInfoPython: async () => ({}),
+    getVideoInfoResult: async () => ({ success: false as const, kind: 'unknown', message: 'Not available in the mock bridge.' }),
     openDirectory: async () => ({}),
     openFileInDirectory: async () => ({}),
     openFileExternally: async () => {},
@@ -100,6 +109,7 @@ export const electronAPIMock = {
     addLibraryVersion: async () => ({ success: true, videoDir: '', epoch: '', metadata: emptyLibraryVideoMetadata }),
     refreshLibraryEntry: async () => ({ success: true, metadata: emptyLibraryVideoMetadata }),
     findLibraryVideo: async () => ({ found: false }),
+    lookupLibraryVideos: async () => ({}),
     openLocalVideoFile: async () => ({ filePaths: [], canceled: true }),
     openImageFile: async () => ({ filePaths: [], canceled: true }),
     probeLocalFile: async () => ({ id: '', width: null, height: null, duration: null, tags: { title: null, artist: null, date: null, genre: null, comment: null } }),
@@ -143,6 +153,16 @@ export const electronAPIMock = {
     ensurePlayablePreview: async () => ({ success: true, previewPath: '/mock/preview.mp4', generated: false }),
     onPreviewGenerationProgress: noop,
     removePreviewGenerationProgressListener: noop,
+    scanChannel: async () => ({ success: false as const, kind: 'unknown', message: 'Not available in the mock bridge.', cancelled: false }),
+    cancelChannelScan: async () => ({ cancelled: false }),
+    onChannelScanProgress: () => noop,
+    removeChannelScanProgressListener: noop,
+    getBacklog: async () => ({ success: true as const, ...emptyBacklogState }),
+    addBacklogJob: async () => ({ success: false as const, reason: 'ioError' as const, message: 'Not available in the mock bridge.', ...emptyBacklogState }),
+    applyBacklogResults: async () => ({ success: true as const, applied: 0, ...emptyBacklogState }),
+    retryBacklogErrors: async () => ({ success: true as const, retried: 0, ...emptyBacklogState }),
+    dismissBacklogErrors: async () => ({ success: true as const, dismissed: 0, ...emptyBacklogState }),
+    clearBacklog: async () => ({ success: true as const, ...emptyBacklogState }),
     reportRendererError: async () => {},
     getErrorLogInfo: async () => ({ exists: false, path: '' }),
     openErrorLog: async () => {},

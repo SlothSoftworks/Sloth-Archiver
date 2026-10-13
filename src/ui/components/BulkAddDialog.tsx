@@ -16,14 +16,21 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { isValidUrl } from '../../utils/utils.ts';
+import { useNavigate } from 'react-router';
+import { isValidUrl, isYouTubeChannelUrl } from '../../utils/utils.ts';
 import { useBulkAddQueue, type BulkAddEntry } from '../hooks/useBulkAddQueue.tsx';
 import { useLibraryTags } from '../hooks/useLibraryTags.tsx';
+import { useBeginChannelScan } from '../hooks/useChannelArchive.tsx';
+import type { ArchiveBacklogQuality } from '../../types/electron-api';
 
 // Fixed set of common quality tiers -- not derived from any specific video's
 // own available resolutions, since those aren't known until each entry is
 // fetched. Per-video matching happens in useBulkAddQueue's pickClosestResolution.
-export const QUALITY_TIERS = ['2160', '1440', '1080', '720', '480', '360', '240', '144', 'MP3'];
+export const QUALITY_TIERS: ArchiveBacklogQuality[] = ['2160', '1440', '1080', '720', '480', '360', '240', '144', 'MP3'];
+
+export function qualityTierLabel(tier: string): string {
+  return tier === 'MP3' ? 'MP3' : `${tier}p`;
+}
 
 function isPlaylistUrl(url: string): boolean {
   try {
@@ -34,7 +41,9 @@ function isPlaylistUrl(url: string): boolean {
 }
 
 export default function BulkAddDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { start } = useBulkAddQueue();
+  const { start, setPanelOpen } = useBulkAddQueue();
+  const beginChannelScan = useBeginChannelScan();
+  const navigate = useNavigate();
   const [input, setInput] = useState('');
   const [download, setDownload] = useState(false);
   const [targetResolution, setTargetResolution] = useState('720');
@@ -73,6 +82,27 @@ export default function BulkAddDialog({ open, onClose }: { open: boolean; onClos
       return;
     }
 
+    // A channel is not a list of entries to queue: it opens its own view,
+    // where the videos to archive are chosen first. Handled before anything
+    // below so a channel link never reaches the playlist or video fetch.
+    if (lines.some((l) => isYouTubeChannelUrl(l))) {
+      if (lines.length > 1) {
+        setError('Channel links need to be added on their own.');
+        return;
+      }
+      if (!beginChannelScan) {
+        setError('Channel links can\'t be added from here.');
+        return;
+      }
+      setInput('');
+      onClose();
+      // The drawer is modal and would sit on top of the channel view.
+      setPanelOpen(false);
+      beginChannelScan(lines[0]);
+      navigate('/channel-archive');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const entryLists = await Promise.all(lines.map(async (line): Promise<BulkAddEntry[]> => {
@@ -105,7 +135,7 @@ export default function BulkAddDialog({ open, onClose }: { open: boolean; onClos
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            Paste a single YouTube playlist link, or a comma/newline-separated list of individual video links.
+            Paste a single YouTube playlist link, a comma/newline-separated list of individual video links, or one YouTube channel link on its own to choose which of its videos to archive.
           </Typography>
           <TextField
             multiline
@@ -144,7 +174,7 @@ export default function BulkAddDialog({ open, onClose }: { open: boolean; onClos
               disabled={submitting}
             >
               {QUALITY_TIERS.map((tier) => (
-                <MenuItem key={tier} value={tier}>{tier === 'MP3' ? 'MP3' : `${tier}p`}</MenuItem>
+                <MenuItem key={tier} value={tier}>{qualityTierLabel(tier)}</MenuItem>
               ))}
             </Select>}
           {error && <Alert severity="error">{error}</Alert>}

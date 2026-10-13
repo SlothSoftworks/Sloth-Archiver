@@ -2,10 +2,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import DownloaderScreen from './DownloaderScreen';
 import { LibraryNotificationProvider } from '../hooks/useLibraryNotifications';
 import { LibraryTagsProvider } from '../hooks/useLibraryTags';
+import { BulkAddProvider } from '../hooks/useBulkAddQueue';
+import { ChannelArchiveProvider } from '../hooks/useChannelArchive';
 
 // Real timers throughout -- useDebounce's default 500ms delay is real, and
 // combining fake timers with userEvent's click/type simulation proved
@@ -223,5 +225,69 @@ describe('DownloaderScreen', () => {
 
     expect(await screen.findByText("Couldn't add to library")).toBeInTheDocument();
     expect(screen.getByText('disk full')).toBeInTheDocument();
+  });
+});
+
+// The channel entry point needs what App.tsx gives the real screen: the
+// queue and channel-archive providers above it, and a route to land on.
+function renderScreenInApp() {
+  return render(
+    <MemoryRouter>
+      <LibraryTagsProvider>
+        <LibraryNotificationProvider>
+          <BulkAddProvider>
+            <ChannelArchiveProvider>
+              <Routes>
+                <Route path="/" element={<DownloaderScreen />} />
+                <Route path="/channel-archive" element={<div>Channel archive view</div>} />
+              </Routes>
+            </ChannelArchiveProvider>
+          </BulkAddProvider>
+        </LibraryNotificationProvider>
+      </LibraryTagsProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe('DownloaderScreen: channel links', () => {
+  beforeEach(() => {
+    window.electronAPI = {
+      ...window.electronAPI,
+      scanChannel: vi.fn(() => new Promise<never>(() => {})),
+      cancelChannelScan: vi.fn().mockResolvedValue({ cancelled: true }),
+      onChannelScanProgress: vi.fn(() => () => {}),
+      removeChannelScanProgressListener: vi.fn(),
+      getBacklog: vi.fn().mockResolvedValue({
+        success: true,
+        backlog: { version: 1, libraryDir: null, completedJobs: { totalCount: 0, doneCount: 0 }, jobs: [] },
+        counts: { jobs: 0, pending: 0, errors: 0, total: 0, done: 0 },
+        libraryDir: '',
+        libraryDirMatches: true,
+      }),
+    };
+  });
+
+  it('starts a channel scan and opens the channel view instead of fetching video info', async () => {
+    const user = userEvent.setup();
+    renderScreenInApp();
+    await user.type(screen.getByLabelText('URL'), 'https://www.youtube.com/@veritasium/shorts');
+
+    expect(await screen.findByText('Channel archive view', {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(window.electronAPI.scanChannel).toHaveBeenCalledTimes(1);
+    expect(window.electronAPI.scanChannel).toHaveBeenCalledWith(expect.any(String), 'https://www.youtube.com/@veritasium/shorts');
+    expect(window.electronAPI.getVideoInfoPython).not.toHaveBeenCalled();
+  });
+
+  it('still fetches video info for an ordinary video link with the providers present', async () => {
+    const user = userEvent.setup();
+    (window.electronAPI.getVideoInfoPython as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true, data: { response: videoResponse, fromCache: false },
+    });
+    renderScreenInApp();
+    await user.type(screen.getByLabelText('URL'), videoResponse.originalUrl);
+
+    await waitFor(() => expect(window.electronAPI.getVideoInfoPython).toHaveBeenCalledWith(videoResponse.originalUrl), { timeout: 2000 });
+    expect(window.electronAPI.scanChannel).not.toHaveBeenCalled();
+    expect(screen.queryByText('Channel archive view')).not.toBeInTheDocument();
   });
 });

@@ -1724,6 +1724,28 @@ export function createVideoLookup(index) {
     };
 }
 
+// What channel archiving needs to know about each of many YouTube video ids
+// at once: is it already in this sublibrary, and does any version of it
+// already have a downloaded file (library:findVideo only says where it is).
+// Ids that are not in the index are simply absent from the result.
+export function lookupVideosInIndex(index, videoIds) {
+    const lookupVideo = createVideoLookup(index);
+    const found = {};
+    for (const videoId of videoIds) {
+        if (typeof videoId !== 'string') continue;
+        const match = lookupVideo(videoId, 'youtube');
+        if (!match) continue;
+        const epochs = match.video.epochs || [];
+        found[videoId] = {
+            videoDir: match.video.videoDir,
+            latestEpoch: match.video.latestEpoch ?? null,
+            hasVideoFile: epochs.some((e) => !!e.metadata?.downloadedFilePath),
+            hasAudioFile: epochs.some((e) => !!e.metadata?.downloadedAudioFilePath),
+        };
+    }
+    return found;
+}
+
 // A title that's missing, or that's literally just the video's own id, means
 // "we don't actually know this video's title" -- yt-dlp's flat-playlist
 // listing sometimes has no title at all for an entry (most often an

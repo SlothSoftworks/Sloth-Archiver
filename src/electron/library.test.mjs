@@ -29,6 +29,7 @@ import {
   refreshLibraryIndex,
   findVideoInIndex,
   createVideoLookup,
+  lookupVideosInIndex,
   isLibraryIndexCachedFor,
   libraryTagForPath,
   createScanYielder,
@@ -1638,6 +1639,45 @@ describe('createVideoLookup (PERF-009)', () => {
 
   it('handles an empty index', () => {
     expect(createVideoLookup({ channels: [] })('x')).toBeNull();
+  });
+});
+
+describe('lookupVideosInIndex', () => {
+  const epoch = (name, files = {}) => ({ epoch: name, metadata: { downloadedFilePath: null, downloadedAudioFilePath: null, ...files } });
+  const video = (videoId, { platform, epochs = [], latestEpoch = null } = {}) => ({
+    videoDir: `/lib/${videoId}`, latestEpoch, metadata: { videoId, platform }, epochs,
+  });
+  const index = {
+    channels: [
+      { displayName: 'A', videos: [
+        video('noFiles', { epochs: [epoch('100')], latestEpoch: '100' }),
+        video('olderHasVideo', { platform: 'youtube', epochs: [epoch('100', { downloadedFilePath: '/lib/a.mp4' }), epoch('200')], latestEpoch: '200' }),
+        video('audioOnly', { epochs: [epoch('100', { downloadedAudioFilePath: '/lib/a.mp3' })], latestEpoch: '100' }),
+      ] },
+      { displayName: 'B', videos: [
+        video('otherSite', { platform: 'soundcloud', epochs: [epoch('100', { downloadedFilePath: '/lib/s.mp3' })], latestEpoch: '100' }),
+        video('noEpochs'),
+      ] },
+    ],
+  };
+
+  it('returns an entry per id that is in the index, with file flags from any epoch', () => {
+    expect(lookupVideosInIndex(index, ['noFiles', 'olderHasVideo', 'audioOnly', 'missing'])).toEqual({
+      noFiles: { videoDir: '/lib/noFiles', latestEpoch: '100', hasVideoFile: false, hasAudioFile: false },
+      olderHasVideo: { videoDir: '/lib/olderHasVideo', latestEpoch: '200', hasVideoFile: true, hasAudioFile: false },
+      audioOnly: { videoDir: '/lib/audioOnly', latestEpoch: '100', hasVideoFile: false, hasAudioFile: true },
+    });
+  });
+
+  it('only matches YouTube entries', () => {
+    expect(lookupVideosInIndex(index, ['otherSite'])).toEqual({});
+  });
+
+  it('copes with an entry that has no epochs, non-string ids and an empty index', () => {
+    expect(lookupVideosInIndex(index, ['noEpochs', 42, null])).toEqual({
+      noEpochs: { videoDir: '/lib/noEpochs', latestEpoch: null, hasVideoFile: false, hasAudioFile: false },
+    });
+    expect(lookupVideosInIndex({ channels: [] }, ['noFiles'])).toEqual({});
   });
 });
 

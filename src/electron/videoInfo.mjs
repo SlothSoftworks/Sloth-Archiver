@@ -148,9 +148,9 @@ export function isDeadVideoInfo(response) {
 // string and run it through the same classifier the download path uses
 // (src/electron/downloadErrors.mjs) -- only triggered on the already-unusual
 // "formats came back empty" path for a YouTube URL.
-function classifyEmptyFormatsFailure(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv }) {
+function classifyEmptyFormatsFailure(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, spawnProcess }) {
     return new Promise((resolve) => {
-        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), '--', url], { env: ytdlpSpawnEnv() });
+        const script = spawnProcess(ytdlpPath, ['-J', '--no-warnings', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), '--', url], { env: ytdlpSpawnEnv() });
         let stderrOutput = '';
         let settled = false;
         // Only runs on a path that already failed once, so a real dead-video
@@ -231,11 +231,30 @@ export function createVideoInfoCache(videoInfoCachePath) {
     return { readVideoInfoCache, writeVideoInfoCache };
 }
 
+// The cache file is rewritten whole on every fetch, so entries nothing will
+// ever serve again have to be dropped or the file only grows. Keeps exactly
+// the entries fetchVideoInfo's own freshness check would still accept.
+export function pruneExpiredVideoInfoCache(cache, cacheTtlMs, now = Date.now()) {
+    const pruned = {};
+    for (const [url, entry] of Object.entries(cache)) {
+        if (entry && now - entry.savedEpoch < cacheTtlMs) pruned[url] = entry;
+    }
+    return pruned;
+}
+
+// IPC callers that report failures as data (getVideoInfoResult) read .kind
+// off the rejection; the message is what every caller shows.
+function videoInfoError(message, kind = ERROR_KINDS.UNKNOWN) {
+    const err = new Error(message);
+    err.kind = kind;
+    return err;
+}
+
 // The full getVideoInfoPython pipeline: cache check -> spawn yt-dlp -> dead-
 // video classification -> reshape -> cache write. One function so main.mjs's
 // IPC handler stays a thin wrapper, same shape as updater.mjs's
 // performYtdlpUpdate.
-export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs, onLog = () => {} }) {
+export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs, onLog = () => {}, spawn: spawnProcess = spawn }) {
     const cache = readVideoInfoCache();
     const cached = cache[url];
     if (cached && Date.now() - cached.savedEpoch < cacheTtlMs) {
@@ -245,7 +264,7 @@ export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRunti
             return Promise.resolve({ success: true, data: { response: cached.response, fromCache: true } });
         }
         delete cache[url];
-        writeVideoInfoCache(cache);
+        writeVideoInfoCache(pruneExpiredVideoInfoCache(cache, cacheTtlMs));
     }
 
     return new Promise((resolve, reject) => {
@@ -262,13 +281,13 @@ export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRunti
         // the *playlist* here, not the video -- this call is only ever used
         // for single-video lookups (playlists have their own dedicated
         // --flat-playlist fetch in main.mjs's fetchPlaylistEntries).
-        const script = spawn(ytdlpPath, ['-J', '--no-warnings', '--ignore-no-formats-error', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), '--', url], { env: ytdlpSpawnEnv() });
+        const script = spawnProcess(ytdlpPath, ['-J', '--no-warnings', '--ignore-no-formats-error', '--no-playlist', '--ffmpeg-location', ffmpegDir, ...cookiesArgs(), ...jsRuntimeArgs(), '--', url], { env: ytdlpSpawnEnv() });
         let data = '';
         let error = '';
 
         script.on('error', (err) => {
             onLog(`[videoInfo] getVideoInfoPython failed to start yt-dlp for ${url}: ${err.message}`);
-            reject(new Error(`Failed to start yt-dlp: ${err.message}`));
+            reject(videoInfoError(`Failed to start yt-dlp: ${err.message}`, classifyDownloadError({ spawnError: err }).kind));
         });
 
         script.stdout.on('data', (output) => {
@@ -282,7 +301,7 @@ export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRunti
             if (code !== 0) {
                 const classified = classifyDownloadError({ stderr: error, exitCode: code });
                 onLog(`[videoInfo] getVideoInfoPython failed for ${url} -- kind=${classified.kind}: ${classified.message}`);
-                reject(new Error(classified.message));
+                reject(videoInfoError(classified.message, classified.kind));
             } else {
                 try {
                     const info = JSON.parse(data);
@@ -296,13 +315,13 @@ export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRunti
                     // genuine extraction failures.
                     if (!info.formats || info.formats.length === 0) {
                         if (isYouTubeUrl(url)) {
-                            const classified = await classifyEmptyFormatsFailure(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv });
+                            const classified = await classifyEmptyFormatsFailure(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, spawnProcess });
                             onLog(`[videoInfo] empty formats for ${url} -- kind=${classified.kind}: ${classified.message}`);
-                            reject(new Error(describeEmptyFormatsFailure(classified.kind)));
+                            reject(videoInfoError(describeEmptyFormatsFailure(classified.kind), classified.kind));
                             return;
                         }
                         onLog(`[videoInfo] empty formats for ${url} (non-YouTube, not re-classified)`);
-                        reject(new Error('yt-dlp could not retrieve any downloadable formats for this URL.'));
+                        reject(videoInfoError('yt-dlp could not retrieve any downloadable formats for this URL.'));
                         return;
                     }
                     const response = reshapeVideoInfo(info);
@@ -310,15 +329,15 @@ export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRunti
                     // that would create a library folder with nothing to
                     // archive.
                     if (isDeadVideoInfo(response)) {
-                        reject(new Error('No downloadable formats found for this video -- it may be unavailable, private, or region-locked.'));
+                        reject(videoInfoError('No downloadable formats found for this video -- it may be unavailable, private, or region-locked.'));
                         return;
                     }
-                    const freshCache = readVideoInfoCache();
+                    const freshCache = pruneExpiredVideoInfoCache(readVideoInfoCache(), cacheTtlMs);
                     freshCache[url] = { savedEpoch: Date.now(), response };
                     writeVideoInfoCache(freshCache);
                     resolve({ success: true, data: { response, fromCache: false } });
                 } catch {
-                    reject(new Error('Failed to parse video data'));
+                    reject(videoInfoError('Failed to parse video data'));
                 }
             }
         });

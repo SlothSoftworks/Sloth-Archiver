@@ -69,6 +69,7 @@ import {
   isAllowedRendererHost,
   buildFfmpegMetadataArgs,
   selectTagsToRefresh,
+  describeBacklogState,
   rememberAppPath,
   makeCookiesArgs,
   reapStaleCookieCopies,
@@ -575,6 +576,33 @@ describe('selectTagsToRefresh (sublibrary-scoped rescans)', () => {
 
   it('de-duplicates, drops empty tags, and refreshes the active one last so it ends up cached', () => {
     expect(selectTagsToRefresh(['DefaultLibrary', 'Music', null, 'Music'], 'DefaultLibrary', (tag) => tag === 'Music')).toEqual(['Music', 'DefaultLibrary']);
+  });
+});
+
+describe('describeBacklogState', () => {
+  const done = { completedJobs: { totalCount: 0, doneCount: 0 } };
+  const job = { id: 'j', totalCount: 3, doneCount: 1, items: [{ videoId: 'aaaaaaaaaaa', status: 'pending' }, { videoId: 'bbbbbbbbbbb', status: 'error' }] };
+
+  it('reports counts and a matching library folder', () => {
+    const backlog = { version: 1, libraryDir: '/library', ...done, jobs: [job] };
+    expect(describeBacklogState(backlog, '/library')).toEqual({
+      backlog,
+      counts: { jobs: 1, pending: 1, errors: 1, total: 3, done: 1 },
+      libraryDir: '/library',
+      libraryDirMatches: true,
+    });
+  });
+
+  it('flags a backlog that was queued for a different library folder', () => {
+    expect(describeBacklogState({ version: 1, libraryDir: '/library', ...done, jobs: [job] }, '/elsewhere').libraryDirMatches).toBe(false);
+    expect(describeBacklogState({ version: 1, libraryDir: '/library', ...done, jobs: [job] }, '').libraryDirMatches).toBe(false);
+  });
+
+  it('treats an empty backlog as matching whatever the current folder is', () => {
+    expect(describeBacklogState({ version: 1, libraryDir: null, ...done, jobs: [] }, '/library')).toMatchObject({
+      counts: { jobs: 0, pending: 0, errors: 0, total: 0, done: 0 },
+      libraryDirMatches: true,
+    });
   });
 });
 

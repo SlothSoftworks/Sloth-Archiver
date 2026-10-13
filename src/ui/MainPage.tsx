@@ -25,6 +25,7 @@ import './MainPage.css';
 import DownloaderScreen from './screens/DownloaderScreen';
 import OptionsScreen from './screens/OptionsScreen';
 import LibraryScreen from './screens/LibraryScreen';
+import ChannelArchiveScreen from './screens/ChannelArchiveScreen';
 import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
 import BulkAddSidePanel, { BulkAddToggleButton } from './components/BulkAddSidePanel';
 import MiniPlayerBar from './components/MiniPlayerBar';
@@ -37,6 +38,9 @@ const REPO_URL = 'https://github.com/SlothSoftworks/Sloth-Archiver';
 
 const LIBRARY_TAB_INDEX = 1;
 const OPTIONS_TAB_INDEX = 2;
+// Not a tab: the channel-archive view is reached by pasting a channel link,
+// and shows as a fourth panel with no tab highlighted.
+const CHANNEL_ARCHIVE_PANEL_INDEX = 3;
 const TAB_PATHS = ['/', '/library', '/options'];
 
 // The active tab is derived from the current location rather than its own
@@ -47,6 +51,7 @@ const TAB_PATHS = ['/', '/library', '/options'];
 function pathToTabIndex(pathname: string): number {
   if (pathname.startsWith('/library')) return LIBRARY_TAB_INDEX;
   if (pathname === '/options') return OPTIONS_TAB_INDEX;
+  if (pathname === '/channel-archive') return CHANNEL_ARCHIVE_PANEL_INDEX;
   return 0;
 }
 
@@ -73,6 +78,8 @@ interface TabPanelProps {
   // width -- the screen itself is responsible for padding whichever inner
   // region needs it.
   fill?: boolean;
+  'aria-labelledby'?: string;
+  'aria-label'?: string;
 }
 
 function CustomTabPanel(props: TabPanelProps) {
@@ -190,7 +197,7 @@ export function BasicTabs() {
   return (
     <Box className="mainTabs" sx={{ width: '100%' }}>
       <Box sx={{ borderBottom: 1, borderColor: 'divider', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Tabs value={value} onChange={handleChange} aria-label="basic tabs example">
+        <Tabs value={value === CHANNEL_ARCHIVE_PANEL_INDEX ? false : value} onChange={handleChange} aria-label="basic tabs example">
           <Tab label="Downloader" {...a11yProps(0)} />
           <Tab
             label={
@@ -250,6 +257,9 @@ export function BasicTabs() {
       </CustomTabPanel>
       <CustomTabPanel value={value} index={2}>
         <OptionsScreen/>
+      </CustomTabPanel>
+      <CustomTabPanel value={value} index={CHANNEL_ARCHIVE_PANEL_INDEX} fill aria-labelledby={undefined} aria-label="Channel archive">
+        <ChannelArchiveScreen/>
       </CustomTabPanel>
 
       <BulkAddSidePanel />

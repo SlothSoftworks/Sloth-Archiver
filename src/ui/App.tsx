@@ -10,6 +10,7 @@ import { getTheme } from './theme';
 import { YtdlpUpdaterProvider } from './hooks/useYtdlpUpdater';
 import { LibraryNotificationProvider } from './hooks/useLibraryNotifications';
 import { BulkAddProvider } from './hooks/useBulkAddQueue.tsx';
+import { ChannelArchiveProvider } from './hooks/useChannelArchive.tsx';
 import { ThemeModeProvider, useThemeMode } from './hooks/useThemeMode.tsx';
 import { LibraryTagsProvider } from './hooks/useLibraryTags.tsx';
 import { CookiesChangeProvider } from './hooks/useCookiesChange.tsx';
@@ -58,16 +59,18 @@ function AppContent() {
             <CookiesChangeProvider>
               <BackgroundPlayerProvider>
                 <BulkAddProvider>
-                  <Routes>
-                    {/* "/*" (not "/") so MainPage -- and everything that lives
-                        alongside its tabs, like BulkAddSidePanel and the
-                        yt-dlp-update dialog -- stays mounted for every nested path
-                        this app's internal navigation uses (e.g.
-                        /library/video/:videoId). Those aren't separate <Route>s
-                        with their own element; they're just locations MainPage's
-                        own tab logic reads reactively (see MainPage.tsx). */}
-                    <Route path="/*" element={<MainPage />}></Route>
-                  </Routes>
+                  <ChannelArchiveProvider>
+                    <Routes>
+                      {/* "/*" (not "/") so MainPage -- and everything that lives
+                          alongside its tabs, like BulkAddSidePanel and the
+                          yt-dlp-update dialog -- stays mounted for every nested path
+                          this app's internal navigation uses (e.g.
+                          /library/video/:videoId). Those aren't separate <Route>s
+                          with their own element; they're just locations MainPage's
+                          own tab logic reads reactively (see MainPage.tsx). */}
+                      <Route path="/*" element={<MainPage />}></Route>
+                    </Routes>
+                  </ChannelArchiveProvider>
                 </BulkAddProvider>
               </BackgroundPlayerProvider>
             </CookiesChangeProvider>

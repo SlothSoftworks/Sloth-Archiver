@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pickFolder: (options) => ipcRenderer.invoke('dialog:openFolder', options),
     saveVideoFile: (defaultName) => ipcRenderer.invoke('dialog:saveVideoFile', defaultName),
     getVideoInfoPython: (url, options) => ipcRenderer.invoke('getVideoInfoPython', url, options),
+    getVideoInfoResult: (url) => ipcRenderer.invoke('getVideoInfoResult', url),
     openDirectory: (path) => ipcRenderer.invoke('system:openDirectory', path),
     openFileInDirectory: (filePath) => ipcRenderer.invoke('system:openFileInDirectory', filePath),
     openFileExternally: (filePath) => ipcRenderer.invoke('system:openFileExternally', filePath),
@@ -73,6 +74,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     refreshLibraryEntry: (videoDir, epoch, videoMetaData) => ipcRenderer.invoke('library:refreshEntry', { videoDir, epoch, videoMetaData }),
     checkAndRepairEpochFiles: (videoDir, epoch) => ipcRenderer.invoke('library:checkAndRepairEpochFiles', { videoDir, epoch }),
     findLibraryVideo: (videoId, libraryTag) => ipcRenderer.invoke('library:findVideo', videoId, libraryTag),
+    lookupLibraryVideos: (videoIds, libraryTag) => ipcRenderer.invoke('library:lookupVideos', videoIds, libraryTag),
     openLocalVideoFile: () => ipcRenderer.invoke('dialog:openLocalVideoFile'),
     openImageFile: () => ipcRenderer.invoke('dialog:openImageFile'),
     probeLocalFile: (filePath) => ipcRenderer.invoke('library:probeLocalFile', filePath),
@@ -112,6 +114,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     embedFileMetadata: (payload) => ipcRenderer.invoke('library:embedMetadata', payload),
     onFfmpegUtilityProgress: (callback) => ipcRenderer.on('ffmpegUtilityProgress', (_event, data) => callback(data)),
     removeFfmpegUtilityProgressListener: () => ipcRenderer.removeAllListeners('ffmpegUtilityProgress'),
+    scanChannel: (scanId, url) => ipcRenderer.invoke('channelArchive:scan', scanId, url),
+    cancelChannelScan: (scanId) => ipcRenderer.invoke('channelArchive:cancelScan', scanId),
+    // Returns the attached listener for removeChannelScanProgressListener,
+    // same reasoning as onProgressUpdate below: the always-mounted provider
+    // and the screen can both be subscribed to this one channel.
+    onChannelScanProgress: (callback) => {
+        const listener = (_event, data) => callback(data);
+        ipcRenderer.on('channelArchive:scanProgress', listener);
+        return listener;
+    },
+    removeChannelScanProgressListener: (listener) => ipcRenderer.removeListener('channelArchive:scanProgress', listener),
+    getBacklog: () => ipcRenderer.invoke('backlog:get'),
+    addBacklogJob: (payload) => ipcRenderer.invoke('backlog:addJob', payload),
+    applyBacklogResults: (jobId, results) => ipcRenderer.invoke('backlog:applyResults', jobId, results),
+    retryBacklogErrors: () => ipcRenderer.invoke('backlog:retryErrors'),
+    dismissBacklogErrors: () => ipcRenderer.invoke('backlog:dismissErrors'),
+    clearBacklog: () => ipcRenderer.invoke('backlog:clear'),
     reportRendererError: (payload) => ipcRenderer.invoke('errorLog:report', payload),
     getErrorLogInfo: () => ipcRenderer.invoke('errorLog:getInfo'),
     openErrorLog: () => ipcRenderer.invoke('errorLog:open'),

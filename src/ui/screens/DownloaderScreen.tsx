@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link as RouterLink } from 'react-router';
+import { Link as RouterLink, useNavigate } from 'react-router';
 import {
   Alert,
   Box,
@@ -27,7 +27,7 @@ import './screens.css'
 import TextField from '@mui/material/TextField';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import { isValidUrl, isYouTubeUrl, cleanElectronErrorMessage } from '../../utils/utils.ts';
+import { isValidUrl, isYouTubeUrl, isYouTubeChannelUrl, cleanElectronErrorMessage } from '../../utils/utils.ts';
 import VideoDetailCard from './VideoDetailCard';
 import OtherPlatformDownloadCard from './OtherPlatformDownloadCard';
 
@@ -37,6 +37,7 @@ import { getInitialDownloaderVideoInfo } from '../../../testing/mockData/electro
 import VideoDetailCardSkeleton from './VideoDetailCardSkeleton.tsx';
 import { useLibraryNotification } from '../hooks/useLibraryNotifications';
 import { useLibraryTags } from '../hooks/useLibraryTags.tsx';
+import { useBeginChannelScan } from '../hooks/useChannelArchive.tsx';
 
 export default function DownloaderScreen() {
 
@@ -45,6 +46,8 @@ export default function DownloaderScreen() {
   const [loadingVideoData, setLoadingVideoData] = useState(false);
   const [isUrlError, setIsUrlError] = useState(false);
   const debouncedVideoUrl = useDebounce(videoUrl);
+  const beginChannelScan = useBeginChannelScan();
+  const navigate = useNavigate();
   const [videoInfo, setVideoInfo] = useState(getInitialDownloaderVideoInfo());
   const [videoInfoError, setVideoInfoError] = useState<string | null>(null);
   const [videoInfoFromCache, setVideoInfoFromCache] = useState(false);
@@ -91,11 +94,21 @@ export default function DownloaderScreen() {
     }
     if (isValidUrl(debouncedVideoUrl)) {
       setIsUrlError(false)
+      // A channel link opens the channel-archive view instead of being
+      // looked up as a single video (which is what it used to fail as).
+      if (beginChannelScan && isYouTubeChannelUrl(debouncedVideoUrl)) {
+        beginChannelScan(debouncedVideoUrl);
+        navigate('/channel-archive');
+        return;
+      }
       handleGetVideoInfo(debouncedVideoUrl);
     } else {
       setIsUrlError(true);
     }
 
+    // Keyed on the URL alone: this must only run when the pasted link
+    // changes, and react-router's navigate changes identity on navigation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedVideoUrl])
 
 

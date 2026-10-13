@@ -68,6 +68,111 @@ type LibraryIndex = {
     }[];
 };
 
+// Channel archiving (channelScan.mjs, archiveBacklog.mjs). `kind` values are
+// downloadErrors.mjs's ERROR_KINDS, typed as string like every other error
+// kind that crosses IPC.
+export type ChannelScanEntry = {
+    videoId: string;
+    title: string | null;
+    durationSeconds: number | null;
+    // Seconds since the epoch, and only approximate: day precision for
+    // recent uploads, month within a year, year beyond that.
+    approxTimestamp: number | null;
+    membersOnly: boolean;
+};
+// avatarUrl is a remote image URL straight from YouTube's metadata: pass it
+// through safeRemoteImageUrl before rendering.
+export type ChannelScanChannel = { id: string | null; title: string | null; url: string; avatarUrl: string | null };
+export type ChannelScanProgress = {
+    scanId: string;
+    stage: 'resolving' | 'counting' | 'listing';
+    found: number;
+    // The channel's public video count; excludes members-only videos, so
+    // `found` can end up above it.
+    total: number | null;
+};
+export type ChannelScanResult =
+    | { success: true; channel: ChannelScanChannel; total: number | null; entries: ChannelScanEntry[]; truncated: boolean }
+    | { success: false; kind: string; message: string; cancelled: boolean };
+
+export type ArchiveBacklogQuality = '2160' | '1440' | '1080' | '720' | '480' | '360' | '240' | '144' | 'MP3';
+export type ArchiveBacklogJobOptions = {
+    download: boolean;
+    targetResolution: ArchiveBacklogQuality;
+    targetLibraryTag: string;
+    batchSize: number;
+};
+export type ArchiveBacklogItem = {
+    videoId: string;
+    title: string;
+    approxTimestamp: number | null;
+    status: 'pending' | 'error';
+    attempts: number;
+    errorKind?: string;
+    errorMessage?: string;
+};
+export type ArchiveBacklogJob = {
+    id: string;
+    channelId: string | null;
+    channelTitle: string;
+    channelUrl: string | null;
+    createdAt: number;
+    options: ArchiveBacklogJobOptions;
+    // totalCount is always doneCount plus the items still listed.
+    totalCount: number;
+    doneCount: number;
+    items: ArchiveBacklogItem[];
+};
+// completedJobs carries the counts of jobs that finished and left `jobs`
+// while others were still going.
+export type ArchiveBacklog = { version: 1; libraryDir: string | null; completedJobs: { totalCount: number; doneCount: number }; jobs: ArchiveBacklogJob[] };
+// total/done cover the whole backlog since it was last empty.
+export type ArchiveBacklogCounts = { jobs: number; pending: number; errors: number; total: number; done: number };
+// What every backlog call resolves with. libraryDirMatches is false when the
+// backlog was queued for a different library folder than the current one.
+export type ArchiveBacklogState = {
+    backlog: ArchiveBacklog;
+    counts: ArchiveBacklogCounts;
+    libraryDir: string;
+    libraryDirMatches: boolean;
+};
+export type ArchiveBacklogNewJob = {
+    channelId: string | null;
+    channelTitle: string | null;
+    channelUrl: string;
+    options: ArchiveBacklogJobOptions;
+    items: { videoId: string; title: string | null; approxTimestamp: number | null }[];
+};
+export type ArchiveBacklogAddJobReason = 'invalidMode' | 'noLibraryDir' | 'invalidJob' | 'invalidOptions' | 'invalidTag' | 'tooManyItems' | 'noValidItems' | 'libraryDirMismatch' | 'ioError';
+export type ArchiveBacklogAddJobResult = ArchiveBacklogState & (
+    | { success: true; jobId: string | null; added: number; duplicatesSkipped: number; invalidSkipped: number }
+    | { success: false; reason: ArchiveBacklogAddJobReason; message?: string }
+);
+// `success: false` only ever means the backlog file could not be written.
+export type ArchiveBacklogMutationResult<Extra> = ArchiveBacklogState & (
+    | ({ success: true } & Extra)
+    | { success: false; reason: 'ioError'; message: string }
+);
+export type BacklogBatchResult = {
+    videoId: string;
+    outcome: 'done' | 'pending' | 'error';
+    errorKind?: string;
+    errorMessage?: string;
+};
+
+// Opaque handle: the wrapper function preload.cjs registered on ipcRenderer.
+export type ChannelScanProgressListener = (...args: unknown[]) => void;
+
+export type LibraryVideoLookupEntry = { videoDir: string; latestEpoch: string | null; hasVideoFile: boolean; hasAudioFile: boolean };
+// Keyed by video id; an id that is not in the sublibrary has no key. Check
+// for an own key (Object.keys, or hasOwnProperty.call) rather than reading
+// lookup[id] directly: "constructor" is a syntactically valid video id.
+export type LibraryVideoLookup = Record<string, LibraryVideoLookupEntry>;
+
+export type VideoInfoResult =
+    | { success: true; videoInfo: T; fromCache: boolean }
+    | { success: false; kind: string; message: string };
+
 declare global {
     interface Window {
         // Set by App.tsx only in the dev-mock fallback path (no real preload
@@ -79,6 +184,7 @@ declare global {
             pickFolder: (options: T) => Promise <OpenFolderResult>;
             saveVideoFile: (defaultName?: string) => Promise <FolderPickerResult>;
             getVideoInfoPython: (url: string, options?: T) => Promise <T>
+            getVideoInfoResult: (url: string) => Promise<VideoInfoResult>
             openDirectory: (path: string) => Promise<T>
             openFileInDirectory: (filePath: string) => Promise<T>
             openFileExternally: (filePath: string) => Promise<void>
@@ -142,6 +248,7 @@ declare global {
             refreshLibraryEntry: (videoDir: string, epoch: string, videoMetaData: T) => Promise<{ success: boolean; metadata: LibraryVideoMetadata }>
             checkAndRepairEpochFiles: (videoDir: string, epoch: string) => Promise<{ success: boolean; metadata?: LibraryVideoMetadata; videoRepaired?: boolean; audioRepaired?: boolean; videoMissing?: boolean; audioMissing?: boolean; message?: string }>
             findLibraryVideo: (videoId: string, libraryTag?: string) => Promise<{ found: boolean; channelDisplayName?: string; videoDir?: string }>
+            lookupLibraryVideos: (videoIds: string[], libraryTag?: string) => Promise<LibraryVideoLookup>
             openLocalVideoFile: () => Promise<OpenFolderResult>
             openImageFile: () => Promise<OpenFolderResult>
             probeLocalFile: (filePath: string) => Promise<{ id: string; width: number | null; height: number | null; duration: number | null; tags: { title: string | null; artist: string | null; date: string | null; genre: string | null; comment: string | null } }>
@@ -181,6 +288,18 @@ declare global {
             embedFileMetadata: (payload: { inputPath: string; metadataTags: Record<string, string | null | undefined>; thumbnailPath?: string | null; kind: 'video' | 'audio' }) => Promise<{ success: boolean; message?: string }>
             onFfmpegUtilityProgress: (callback: (data: { type: string; percent?: number }) => void) => void
             removeFfmpegUtilityProgressListener: () => void
+            scanChannel: (scanId: string, url: string) => Promise<ChannelScanResult>
+            cancelChannelScan: (scanId: string) => Promise<{ cancelled: boolean }>
+            // Returns the listener it attached -- pass it back into
+            // removeChannelScanProgressListener to remove just this one.
+            onChannelScanProgress: (callback: (data: ChannelScanProgress) => void) => ChannelScanProgressListener
+            removeChannelScanProgressListener: (listener: ChannelScanProgressListener) => void
+            getBacklog: () => Promise<ArchiveBacklogMutationResult<unknown>>
+            addBacklogJob: (payload: { job: ArchiveBacklogNewJob; mode: 'append' | 'replace' }) => Promise<ArchiveBacklogAddJobResult>
+            applyBacklogResults: (jobId: string, results: BacklogBatchResult[]) => Promise<ArchiveBacklogMutationResult<{ applied: number }>>
+            retryBacklogErrors: () => Promise<ArchiveBacklogMutationResult<{ retried: number }>>
+            dismissBacklogErrors: () => Promise<ArchiveBacklogMutationResult<{ dismissed: number }>>
+            clearBacklog: () => Promise<ArchiveBacklogMutationResult<unknown>>
             reportRendererError: (payload: { message: string; stack?: string }) => Promise<void>
             getErrorLogInfo: () => Promise<{ exists: boolean; path: string }>
             openErrorLog: () => Promise<void>

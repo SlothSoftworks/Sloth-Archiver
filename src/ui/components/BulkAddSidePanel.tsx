@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
 import {
   Badge,
@@ -27,8 +27,10 @@ import StopIcon from '@mui/icons-material/Stop';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import CancelIcon from '@mui/icons-material/Cancel';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import { getRetryStage, useBulkAddQueue, type BulkAddItem, type BulkAddStatus } from '../hooks/useBulkAddQueue.tsx';
+import { getRetryStage, useBulkAddActions, useBulkAddQueue, type BulkAddItem, type BulkAddStatus } from '../hooks/useBulkAddQueue.tsx';
 import BulkAddDialog from './BulkAddDialog';
+import ArchiveBacklogStatus from './ArchiveBacklogStatus';
+import { useChannelArchiveStatus } from '../hooks/useChannelArchive.tsx';
 
 const STATUS_COLOR: Record<BulkAddStatus, 'default' | 'info' | 'success' | 'warning' | 'error'> = {
   pending: 'default',
@@ -54,11 +56,24 @@ const STATUS_LABEL: Record<BulkAddStatus, string> = {
 export function BulkAddToggleButton() {
   const { items, panelOpen, setPanelOpen } = useBulkAddQueue();
   const activeCount = items.filter((it) => it.status === 'pending' || it.status === 'fetching' || it.status === 'downloading').length;
+  const { counts } = useChannelArchiveStatus();
+  const hasBacklog = counts.pending + counts.errors > 0;
   return (
-    <Tooltip title="Bulk add">
+    <Tooltip title={hasBacklog ? 'Bulk add (channel backlog waiting)' : 'Bulk add'}>
       <IconButton size="small" onClick={() => setPanelOpen(!panelOpen)} aria-label="Bulk add">
-        <Badge badgeContent={activeCount} color="info" max={99}>
-          <PlaylistAddIcon />
+        {/* Bottom-left so it never sits under the count badge (top-right):
+            the dot says a channel backlog is waiting even when nothing is
+            in the queue itself, e.g. right after a restart. */}
+        <Badge
+          variant="dot"
+          color="warning"
+          invisible={!hasBacklog}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+          slotProps={{ badge: hasBacklog ? { role: 'status', 'aria-label': 'Backlog pending' } : {} }}
+        >
+          <Badge badgeContent={activeCount} color="info" max={99}>
+            <PlaylistAddIcon />
+          </Badge>
         </Badge>
       </IconButton>
     </Tooltip>
@@ -84,7 +99,18 @@ function BulkAddProgressBar({ downloadProgress, postprocessProgress }: { downloa
   );
 }
 
-function BulkAddListItem({ item, stopping, onRetry, onRemove, onCancel }: { item: BulkAddItem; stopping: boolean; onRetry: () => void; onRemove: () => void; onCancel: () => void }) {
+// A long channel-archive run leaves its finished items in the list, which
+// is not virtualised: past this many, only the most recent are rendered.
+const MAX_FINISHED_ITEMS_SHOWN = 200;
+
+function isFinishedStatus(status: BulkAddStatus) {
+  return status === 'done' || status === 'skipped' || status === 'cancelled';
+}
+
+// Memoised, with id-taking callbacks that keep one identity (the queue's
+// actions context), so a progress tick on one item re-renders that row only
+// rather than every row in a list that can run to hundreds.
+const BulkAddListItem = memo(function BulkAddListItem({ item, stopping, onRetry, onRemove, onCancel }: { item: BulkAddItem; stopping: boolean; onRetry: (id: string) => void; onRemove: (id: string) => void; onCancel: (id: string) => void }) {
   const isActive = item.status === 'fetching' || item.status === 'downloading';
   const showDelete = item.status !== 'done' && item.status !== 'cancelled';
   const retryLabel = getRetryStage(item) === 'download' ? 'Retry download' : 'Retry';
@@ -107,20 +133,20 @@ function BulkAddListItem({ item, stopping, onRetry, onRemove, onCancel }: { item
             </Tooltip>}
           {item.status === 'failed' &&
             <Tooltip title={retryLabel}>
-              <IconButton size="small" onClick={onRetry} aria-label={retryLabel}>
+              <IconButton size="small" onClick={() => onRetry(item.id)} aria-label={retryLabel}>
                 <ReplayIcon fontSize="small" />
               </IconButton>
             </Tooltip>}
           {item.status === 'downloading' &&
             <Tooltip title="Cancel this download">
-              <IconButton size="small" onClick={onCancel} aria-label="Cancel this download">
+              <IconButton size="small" onClick={() => onCancel(item.id)} aria-label="Cancel this download">
                 <CancelIcon fontSize="small" />
               </IconButton>
             </Tooltip>}
           {showDelete &&
             <Tooltip title="Remove from queue">
               <span>
-                <IconButton size="small" onClick={onRemove} disabled={isActive} aria-label="Remove from queue">
+                <IconButton size="small" onClick={() => onRemove(item.id)} disabled={isActive} aria-label="Remove from queue">
                   <DeleteOutlineIcon fontSize="small" />
                 </IconButton>
               </span>
@@ -174,11 +200,22 @@ function BulkAddListItem({ item, stopping, onRetry, onRemove, onCancel }: { item
       />
     </ListItem>
   );
-}
+});
 
 export default function BulkAddSidePanel() {
-  const { items, isRunning, stopRequested, panelOpen, setPanelOpen, stop, resume, cancelAllPending, cancelItem, retryItem, removeItem, clearFinished } = useBulkAddQueue();
+  const { items, isRunning, stopRequested, panelOpen, setPanelOpen, stop, resume, cancelAllPending, clearFinished } = useBulkAddQueue();
+  const { cancelItem, retryItem, removeItem } = useBulkAddActions();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const { shownItems, hiddenFinishedCount } = useMemo(() => {
+    const finishedCount = items.reduce((count, it) => count + (isFinishedStatus(it.status) ? 1 : 0), 0);
+    let toHide = Math.max(0, finishedCount - MAX_FINISHED_ITEMS_SHOWN);
+    if (toHide === 0) return { shownItems: items, hiddenFinishedCount: 0 };
+    const hidden = toHide;
+    // The oldest finished items are the ones dropped; everything still to
+    // do, in progress or failed is always shown.
+    const shown = items.filter((it) => !(isFinishedStatus(it.status) && toHide-- > 0));
+    return { shownItems: shown, hiddenFinishedCount: hidden };
+  }, [items]);
   const hasFinished = items.some((it) => it.status === 'done' || it.status === 'skipped' || it.status === 'cancelled');
   // Only meaningful once stopped -- while running, 'pending' just means "not picked up yet."
   const hasStoppedPending = !isRunning && items.some((it) => it.status === 'pending');
@@ -205,6 +242,7 @@ export default function BulkAddSidePanel() {
           </Stack>
         </Stack>
         <Divider sx={{ mb: 1 }} />
+        <ArchiveBacklogStatus />
         <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap' }}>
           {isRunning &&
             <Button
@@ -235,15 +273,19 @@ export default function BulkAddSidePanel() {
           </Typography>
         ) : (
           <Box sx={{ overflowY: 'auto' }}>
+            {hiddenFinishedCount > 0 &&
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ px: 2, py: 0.5 }}>
+                {hiddenFinishedCount} earlier finished {hiddenFinishedCount === 1 ? 'item' : 'items'} hidden
+              </Typography>}
             <List dense disablePadding>
-              {items.map((item) => (
+              {shownItems.map((item) => (
                 <BulkAddListItem
                   key={item.id}
                   item={item}
                   stopping={stopRequested && (item.status === 'fetching' || item.status === 'downloading')}
-                  onRetry={() => retryItem(item.id)}
-                  onRemove={() => removeItem(item.id)}
-                  onCancel={() => cancelItem(item.id)}
+                  onRetry={retryItem}
+                  onRemove={removeItem}
+                  onCancel={cancelItem}
                 />
               ))}
             </List>

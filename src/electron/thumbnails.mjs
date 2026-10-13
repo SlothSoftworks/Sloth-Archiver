@@ -232,6 +232,16 @@ export function downloadImageToFile(url, destDir, baseName, {
     });
 }
 
+// The avatar out of yt-dlp's info dict for a channel page (or one of its
+// tabs). 'avatar_uncropped' is yt-dlp's full-resolution synthetic entry;
+// falls back to the raw 'avatar' id if that's missing. Shared with
+// channelScan.mjs, which reads the same JSON for the channel-archive view.
+export function pickChannelAvatarUrl(info) {
+    const thumbnails = Array.isArray(info?.thumbnails) ? info.thumbnails : [];
+    const avatar = thumbnails.find((t) => t?.id === 'avatar_uncropped') || thumbnails.find((t) => t?.id === 'avatar');
+    return typeof avatar?.url === 'string' && avatar.url ? avatar.url : null;
+}
+
 // A channel's avatar isn't in a single video's own info dict -- it only
 // shows up when yt-dlp extracts the *channel page* itself, a separate call
 // per channel, not something piggybacked on the per-video fetch. --flat-
@@ -256,11 +266,7 @@ function fetchChannelAvatarUrl(channelId, { ytdlpPath, ffmpegDir, cookiesArgs, j
                 return;
             }
             try {
-                const thumbnails = JSON.parse(data).thumbnails || [];
-                // 'avatar_uncropped' is yt-dlp's full-resolution synthetic
-                // entry; falls back to the raw 'avatar' id if that's missing.
-                const avatar = thumbnails.find((t) => t.id === 'avatar_uncropped') || thumbnails.find((t) => t.id === 'avatar');
-                resolve(avatar ? avatar.url : null);
+                resolve(pickChannelAvatarUrl(JSON.parse(data)));
             } catch {
                 resolve(null);
             }

@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -19,6 +19,9 @@ import { createRotatingLogWriter, redactHomeDir } from './logFile.mjs';
 import { buildLibraryExport, parseLibraryExport, importLibraryExport, summarizeExport, IMPORT_MAX_BYTES } from './libraryExport.mjs';
 import { ensurePlayablePreview } from './previewCache.mjs';
 import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
+import { createChannelScanner, createChannelScanSession } from './channelScan.mjs';
+import { createArchiveBacklogStore, summarizeBacklog, BACKLOG_MAX_ITEMS } from './archiveBacklog.mjs';
+import { parseYouTubeChannelUrl } from './utils/youtube.mjs';
 import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
 
 // Re-exported so main.test.mjs (and anything else importing these from
@@ -213,6 +216,13 @@ const { readVideoInfoCache, writeVideoInfoCache } = createVideoInfoCache(videoIn
 const { ensureChannelIcon, ensureVideoThumbnail, ensurePlaylistThumbnail } = createThumbnailFetchers({
     ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, onLog: log,
 });
+const channelScans = createChannelScanSession({
+    scanner: createChannelScanner({ ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, onLog: log }),
+    sendProgress: (progress) => BrowserWindow.getAllWindows()[0]?.webContents.send('channelArchive:scanProgress', progress),
+    onLog: log,
+});
+app.on('before-quit', () => channelScans.killAll());
+const backlogStore = createArchiveBacklogStore(path.join(app.getPath('userData'), 'backlog.json'));
 const ffmpegRunner = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog: log, isDev });
 const { getMediaDurationSeconds, getFfmpegVersion, runFfmpegWithProgress, convertWithFallback, clipAndConvert } = ffmpegRunner;
 
@@ -1137,6 +1147,23 @@ ipcMain.handle('library:findVideo', async (e, videoId, libraryTag) => {
     return { found: true, channelDisplayName: match.channel.displayName, videoDir: match.video.videoDir };
 });
 
+// The many-ids counterpart to library:findVideo, for channel archiving: one
+// call answers "which of these are already here, and already downloaded".
+// A sublibrary other than the cached one is scanned directly rather than
+// through getLibraryIndex, whose single-slot cache would otherwise drop the
+// active sublibrary's index (the same reason libraryExport.mjs does it).
+ipcMain.handle('library:lookupVideos', async (e, videoIds, tag) => {
+    const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    if (!libraryDir || !Array.isArray(videoIds)) return {};
+    const libraryTag = tag || activeLibraryTag;
+    // Also what keeps a renderer-supplied tag from being joined into a path
+    // unless it names a real sublibrary folder.
+    if (!listLibraryTags(libraryDir).some((t) => t.folderName === libraryTag)) return {};
+    const useCache = libraryTag === activeLibraryTag || isLibraryIndexCachedFor(libraryDir, libraryTag);
+    const index = await (useCache ? getLibraryIndex(libraryDir, libraryTag) : scanLibrary(libraryDir, libraryTag));
+    return lookupVideosInIndex(index, videoIds.slice(0, BACKLOG_MAX_ITEMS));
+});
+
 ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, resolution, format, kind }) => {
     const metadata = recordLibraryDownload({ videoDir, epoch, filePath, resolution, format, kind });
     const { libraryDir } = readSettings();
@@ -1613,12 +1640,91 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName) => {
     return result;
 })
 
-ipcMain.handle('getVideoInfoPython', async (event, url) => {
+function fetchVideoInfoForUrl(url) {
     assertValidHttpUrl(url, 'video URL');
     return fetchVideoInfo(url, {
         ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS, onLog: log,
     });
+}
+
+ipcMain.handle('getVideoInfoPython', async (event, url) => fetchVideoInfoForUrl(url));
+
+// Same fetch as getVideoInfoPython, but a failure comes back as data: an
+// Error's own properties (here .kind) do not survive an IPC rejection, and
+// the channel-archive runner decides what to do with a video by its kind.
+ipcMain.handle('getVideoInfoResult', async (event, url) => {
+    try {
+        const { data } = await fetchVideoInfoForUrl(url);
+        return { success: true, videoInfo: data.response, fromCache: data.fromCache };
+    } catch (err) {
+        return {
+            success: false,
+            kind: err?.kind || ERROR_KINDS.UNKNOWN,
+            message: redactHomeDir(err instanceof Error ? err.message : String(err)),
+        };
+    }
 });
+
+ipcMain.handle('channelArchive:scan', async (event, scanId, url) => {
+    let videosUrl = null;
+    try {
+        assertValidHttpUrl(url, 'channel URL');
+        // Re-derived here rather than trusting a renderer-normalised URL:
+        // this is the string that reaches yt-dlp's argv.
+        videosUrl = parseYouTubeChannelUrl(url);
+    } catch (err) {
+        return { success: false, kind: ERROR_KINDS.UNKNOWN, message: err.message, cancelled: false };
+    }
+    if (!videosUrl) {
+        return { success: false, kind: ERROR_KINDS.UNKNOWN, message: 'This is not a YouTube channel link.', cancelled: false };
+    }
+    const result = await channelScans.scan(scanId, videosUrl);
+    return result.success ? result : { ...result, message: redactHomeDir(result.message) };
+});
+
+ipcMain.handle('channelArchive:cancelScan', (event, scanId) => channelScans.cancel(scanId));
+
+// Every backlog call answers with the whole current state, so the renderer
+// never has to follow a write with a read. libraryDirMatches is false when
+// the stored videos were queued for a different library folder than the one
+// configured now, which is when resuming must be refused.
+export function describeBacklogState(backlog, libraryDir) {
+    return {
+        backlog,
+        counts: summarizeBacklog(backlog),
+        libraryDir,
+        libraryDirMatches: backlog.jobs.length === 0 || backlog.libraryDir === libraryDir,
+    };
+}
+
+function backlogResponse(run) {
+    const { libraryDir = '' } = readSettings();
+    try {
+        const result = run(libraryDir);
+        return { ...result, ...describeBacklogState(result.backlog, libraryDir) };
+    } catch (err) {
+        const message = redactHomeDir(err instanceof Error ? err.message : String(err));
+        log('[backlog] failed:', message);
+        return { success: false, reason: 'ioError', message, ...describeBacklogState(backlogStore.read(), libraryDir) };
+    }
+}
+
+ipcMain.handle('backlog:get', async () => backlogResponse(() => ({ success: true, backlog: backlogStore.read() })));
+
+ipcMain.handle('backlog:addJob', async (e, { job, mode } = {}) => backlogResponse((libraryDir) => backlogStore.addJob({
+    job,
+    mode,
+    currentLibraryDir: libraryDir,
+    // The default sublibrary's folder is only created by its first write, so
+    // on a library with nothing in it yet it is a valid target that
+    // listLibraryTags cannot see.
+    validTags: [...new Set([DEFAULT_LIBRARY_DIR_NAME, ...listLibraryTags(libraryDir).map((t) => t.folderName)])],
+})));
+
+ipcMain.handle('backlog:applyResults', async (e, jobId, results) => backlogResponse(() => backlogStore.applyResults(jobId, results)));
+ipcMain.handle('backlog:retryErrors', async () => backlogResponse(() => backlogStore.retryErrors()));
+ipcMain.handle('backlog:dismissErrors', async () => backlogResponse(() => backlogStore.dismissErrors()));
+ipcMain.handle('backlog:clear', async () => backlogResponse(() => backlogStore.clear()));
 
 export function needsDirectFfmpegPass({ format, resolution }) {
     if (resolution && resolution.toLowerCase() === 'mp3') return true;
@@ -2731,7 +2837,7 @@ ipcMain.handle('ytdlp:startUpdate', async () => {
             userDataDir: app.getPath('userData'),
             liveYtdlpBinDir: userDataYtdlpBinDir,
             ytdlpBinaryName,
-            isDownloadActive: () => activeDownloadCount > 0,
+            isDownloadActive: () => activeDownloadCount > 0 || channelScans.hasActiveScans(),
             onProgress: send,
             onLog: log,
         });

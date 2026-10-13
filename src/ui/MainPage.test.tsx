@@ -15,6 +15,7 @@ import { BackgroundPlayerProvider } from './hooks/useBackgroundPlayer';
 vi.mock('./screens/DownloaderScreen', () => ({ default: () => <div>Downloader Mock</div> }));
 vi.mock('./screens/LibraryScreen', () => ({ default: () => <div>Library Mock</div> }));
 vi.mock('./screens/OptionsScreen', () => ({ default: () => <div>Options Mock</div> }));
+vi.mock('./screens/ChannelArchiveScreen', () => ({ default: () => <div>Channel Archive Mock</div> }));
 vi.mock('./components/YtdlpUpdateDialog', () => ({ default: () => <div>YtdlpUpdateDialog Mock</div> }));
 vi.mock('./components/BulkAddSidePanel', () => ({
   default: () => <div>BulkAddSidePanel Mock</div>,
@@ -44,9 +45,9 @@ function IncrementButton() {
   return <button onClick={increment}>increment (test)</button>;
 }
 
-function renderMainPage() {
+function renderMainPage(initialPath = '/') {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialPath]}>
       <YtdlpUpdaterProvider>
         <LibraryNotificationProvider>
           <CookiesChangeProvider>
@@ -67,6 +68,35 @@ describe('MainPage', () => {
     expect(screen.getByText('Downloader Mock')).toBeInTheDocument();
     expect(screen.queryByText('Library Mock')).not.toBeInTheDocument();
     expect(screen.queryByText('Options Mock')).not.toBeInTheDocument();
+  });
+
+  it('shows the channel-archive view as a fourth panel with no tab highlighted', async () => {
+    const user = userEvent.setup();
+    renderMainPage('/channel-archive');
+
+    expect(screen.getByText('Channel Archive Mock')).toBeInTheDocument();
+    expect(screen.getByRole('tabpanel', { name: 'Channel archive' })).toBeInTheDocument();
+    expect(screen.queryByText('Downloader Mock')).not.toBeInTheDocument();
+    expect(screen.queryByText('Library Mock')).not.toBeInTheDocument();
+    expect(screen.queryByText('Options Mock')).not.toBeInTheDocument();
+    for (const tab of screen.getAllByRole('tab')) {
+      expect(tab).toHaveAttribute('aria-selected', 'false');
+    }
+    // The header and the side panel stay.
+    expect(screen.getByRole('button', { name: 'Bulk add' })).toBeInTheDocument();
+    expect(screen.getByText('BulkAddSidePanel Mock')).toBeInTheDocument();
+
+    // Any tab leads back out of it.
+    await user.click(screen.getByRole('tab', { name: 'Downloader' }));
+    expect(screen.getByText('Downloader Mock')).toBeInTheDocument();
+    expect(screen.queryByText('Channel Archive Mock')).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Downloader' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('does not render the channel-archive view on the ordinary tabs', () => {
+    renderMainPage();
+    expect(screen.queryByText('Channel Archive Mock')).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Downloader' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('switches tabs, mounting only the selected screen', async () => {

@@ -686,8 +686,8 @@ describe('PlaylistsSection refresh fetches full data for entries missing a libra
       success: true, added: 1, removed: 0, updated: 0,
       missingFromLibraryEntries: [{ videoId: 'vidNew', title: 'New Video', url: 'https://youtube.com/watch?v=vidNew', thumbnailUrl: null, uploadDate: null }],
     });
-    window.electronAPI.getVideoInfoPython = vi.fn().mockResolvedValue({
-      data: { response: { id: 'vidNew', fullTitle: 'New Video', title: 'New Video', thumbnail: null, resolutions: [] } },
+    window.electronAPI.getVideoInfoResult = vi.fn().mockResolvedValue({
+      success: true, videoInfo: { id: 'vidNew', fullTitle: 'New Video', title: 'New Video', thumbnail: null, resolutions: [] }, fromCache: false,
     });
     window.electronAPI.findLibraryVideo = vi.fn().mockResolvedValue({ found: false });
     window.electronAPI.addLibraryEntry = vi.fn().mockResolvedValue({ success: true, videoDir: '/lib/Channel B/vidNew' });
@@ -702,7 +702,7 @@ describe('PlaylistsSection refresh fetches full data for entries missing a libra
 
     // Metadata-only: the new entry's real info gets fetched and written into
     // the library, but nothing is downloaded (no download-progress call).
-    await waitFor(() => expect(window.electronAPI.getVideoInfoPython).toHaveBeenCalledWith('https://youtube.com/watch?v=vidNew'));
+    await waitFor(() => expect(window.electronAPI.getVideoInfoResult).toHaveBeenCalledWith('https://youtube.com/watch?v=vidNew'));
     await waitFor(() => expect(window.electronAPI.addLibraryEntry).toHaveBeenCalled());
   });
 
@@ -715,8 +715,8 @@ describe('PlaylistsSection refresh fetches full data for entries missing a libra
       success: true, added: 0, removed: 0, updated: 0,
       missingFromLibraryEntries: [{ videoId: 'vidA', title: 'Alpha Video', url: 'https://youtube.com/watch?v=vidA', thumbnailUrl: null, uploadDate: '20260101' }],
     });
-    window.electronAPI.getVideoInfoPython = vi.fn().mockResolvedValue({
-      data: { response: { id: 'vidA', fullTitle: 'Alpha Video', title: 'Alpha Video', thumbnail: null, resolutions: [] } },
+    window.electronAPI.getVideoInfoResult = vi.fn().mockResolvedValue({
+      success: true, videoInfo: { id: 'vidA', fullTitle: 'Alpha Video', title: 'Alpha Video', thumbnail: null, resolutions: [] }, fromCache: false,
     });
     window.electronAPI.findLibraryVideo = vi.fn().mockResolvedValue({ found: false });
     window.electronAPI.addLibraryEntry = vi.fn().mockResolvedValue({ success: true, videoDir: '/lib/Channel A/vidA' });
@@ -729,7 +729,7 @@ describe('PlaylistsSection refresh fetches full data for entries missing a libra
 
     await user.click(screen.getByRole('button', { name: 'Refresh' }));
 
-    await waitFor(() => expect(window.electronAPI.getVideoInfoPython).toHaveBeenCalledWith('https://youtube.com/watch?v=vidA'));
+    await waitFor(() => expect(window.electronAPI.getVideoInfoResult).toHaveBeenCalledWith('https://youtube.com/watch?v=vidA'));
     await waitFor(() => expect(window.electronAPI.addLibraryEntry).toHaveBeenCalled());
   });
 });
