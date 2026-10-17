@@ -106,7 +106,9 @@ export function reshapeVideoInfo(info) {
         categories: info.categories,
         tags: info.tags,
         releaseTimestamp: info.release_timestamp,
-        uploader: info.uploader,
+        // Instagram (and possibly other extractors) leaves `uploader` empty
+        // and puts the account name in `channel`.
+        uploader: info.uploader || info.channel || null,
         uploaderId: info.uploader_id,
         uploaderUrl: info.uploader_url,
         uploadDate: info.upload_date,
@@ -126,7 +128,8 @@ export function reshapeVideoInfo(info) {
 // A video is effectively dead (unavailable/private/deleted/region-locked)
 // even when yt-dlp exits 0 with a parseable info dict --
 // --ignore-no-formats-error (below) lets that non-fatal case through rather
-// than hard-failing. The remaining signal: no channel/uploader at all, since
+// than hard-failing. The remaining signal: no channel id, uploader name or
+// uploader id at all, since
 // yt-dlp can't resolve who uploaded a video it can't actually load the page
 // for.
 //
@@ -136,8 +139,7 @@ export function reshapeVideoInfo(info) {
 // `info.formats.length === 0` check in fetchVideoInfo below), before this
 // function even runs.
 export function isDeadVideoInfo(response) {
-    if (!response.channelId && !response.uploader) return true;
-    return false;
+    return !response.channelId && !response.uploader && !response.uploaderId;
 }
 
 // getVideoInfoPython's main fetch always passes --ignore-no-formats-error,
