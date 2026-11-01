@@ -1,0 +1,51 @@
+{
+  "id": "DZJYkVgiqnp",
+  "title": "Video by myhoegoin",
+  "uploader": "",
+  "uploader_id": "45449456904",
+  "channel": "myhoegoin",
+  "channel_id": null,
+  "extractor_key": "Instagram",
+  "webpage_url": "https://www.instagram.com/reel/DZJYkVgiqnp/",
+  "original_url": "https://www.instagram.com/reel/DZJYkVgiqnp/",
+  "upload_date": "20260604",
+  "duration": null,
+  "ext": "mp4",
+  "formats": [
+    {
+      "format_id": "dash-1431364232092157a",
+      "vcodec": "none",
+      "acodec": "mp4a.40.5",
+      "ext": "m4a",
+      "abr": 44.908
+    },
+    {
+      "format_id": "1",
+      "ext": "mp4"
+    },
+    {
+      "format_id": "2",
+      "ext": "mp4"
+    },
+    {
+      "format_id": "3",
+      "ext": "mp4"
+    },
+    {
+      "format_id": "dash-1287753973515024v",
+      "height": 980,
+      "vcodec": "vp09.00.30.08.00.05.06.06.00",
+      "acodec": "none",
+      "ext": "mp4",
+      "abr": 0
+    },
+    {
+      "format_id": "dash-1316751409893406v",
+      "height": 980,
+      "vcodec": "vp09.00.30.08.00.05.06.06.00",
+      "acodec": "none",
+      "ext": "mp4",
+      "abr": 0
+    }
+  ]
+}
