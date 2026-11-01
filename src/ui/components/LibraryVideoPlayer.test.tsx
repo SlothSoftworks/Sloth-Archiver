@@ -680,4 +680,48 @@ describe('LibraryVideoPlayer', () => {
       await waitFor(() => expect(video.currentTime).toBe(42));
     });
   });
+
+  describe('Copy frame to clipboard', () => {
+    it('copies from the original file, not the generated preview, and confirms it', async () => {
+      const user = userEvent.setup();
+      window.electronAPI.copyFrameToClipboard = vi.fn().mockResolvedValue({ success: true });
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mkv' })} />,
+      );
+      await findSourceEl(container);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await user.click(await screen.findByRole('menuitem', { name: 'Copy frame to clipboard' }));
+
+      expect(window.electronAPI.copyFrameToClipboard).toHaveBeenCalledWith({ filePath: '/lib/c/v1/1/video.mkv', timestampSeconds: 0 });
+      expect(await screen.findByText('Frame copied to clipboard')).toBeInTheDocument();
+    });
+
+    it('shows the backend\'s message when copying fails', async () => {
+      const user = userEvent.setup();
+      window.electronAPI.copyFrameToClipboard = vi.fn().mockResolvedValue({ success: false, message: 'No frame could be read at this position.' });
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} />,
+      );
+      await findSourceEl(container);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await user.click(await screen.findByRole('menuitem', { name: 'Copy frame to clipboard' }));
+
+      expect(await screen.findByText("Couldn't copy frame: No frame could be read at this position.")).toBeInTheDocument();
+    });
+
+    it('is hidden for an audio-only source', async () => {
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/track.mp4' })} />,
+      );
+      await findSourceEl(container);
+      // jsdom's videoWidth/videoHeight default to 0, i.e. no video track.
+      fireReadinessCascade(container.querySelector('video') as HTMLVideoElement);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await screen.findByRole('menuitem', { name: 'Loop' });
+      expect(screen.queryByRole('menuitem', { name: 'Copy frame to clipboard' })).not.toBeInTheDocument();
+    });
+  });
 });

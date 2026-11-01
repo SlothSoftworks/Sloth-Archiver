@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, clipboard, nativeImage } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'url';
 import path from 'path'
 import { spawn } from 'child_process';
@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, extractFrameToFile, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -1620,6 +1620,41 @@ ipcMain.handle('library:changeThumbnail', async (e, { videoDir, mode, timestampS
         const thumbnailPath = await replaceLibraryThumbnail({ videoDir: resolvedVideoDir, ffmpegRunner, source });
         if (await updateIndexAfterVideoWrites(libraryDir, [resolvedVideoDir])) notifyLibraryBackgroundUpdate();
         return { success: true, thumbnailPath };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// Player context menu's "Copy frame" action. Grabs the frame with ffmpeg from
+// the original file rather than drawing the <video> element to a canvas,
+// since for formats Chromium can't play the element is showing a lossy
+// .preview/ re-encode (previewCache.mjs), not the original.
+export async function copyFrameToClipboard({ ffmpegRunner, inputPath, timestampSeconds }) {
+    const pngPath = path.join(os.tmpdir(), `sloth-frame-${crypto.randomUUID()}.png`);
+    try {
+        await extractFrameToFile({ ffmpegRunner, inputPath, outputPath: pngPath, timestampSeconds });
+        // ffmpeg exits cleanly with no output when the timestamp is past the
+        // last frame, so an empty image is the only failure signal there.
+        const image = nativeImage.createFromPath(pngPath);
+        if (image.isEmpty()) throw new Error('No frame could be read at this position.');
+        clipboard.writeImage(image);
+    } finally {
+        fs.rmSync(pngPath, { force: true });
+    }
+}
+
+ipcMain.handle('library:copyFrameToClipboard', async (e, { filePath, timestampSeconds }) => {
+    const { libraryDir } = readSettings();
+    const resolvedFilePath = resolveInsideLibrary(libraryDir, filePath);
+    if (!resolvedFilePath) {
+        return { success: false, message: 'Refusing to read outside the configured library folder.' };
+    }
+    if (typeof timestampSeconds !== 'number' || !Number.isFinite(timestampSeconds) || timestampSeconds < 0) {
+        return { success: false, message: 'Invalid timestamp.' };
+    }
+    try {
+        await copyFrameToClipboard({ ffmpegRunner, inputPath: resolvedFilePath, timestampSeconds });
+        return { success: true };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }

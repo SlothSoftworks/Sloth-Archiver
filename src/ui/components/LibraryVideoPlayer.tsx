@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Box, CardMedia, IconButton, Tooltip, Typography } from '@mui/material';
+import { Alert, Box, CardMedia, IconButton, Snackbar, Tooltip, Typography } from '@mui/material';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
 import { MediaPlayer, MediaProvider, type MediaPlayerInstance } from '@vidstack/react';
@@ -135,6 +135,9 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // thumbnail" is clicked -- by then the video may have kept playing past
   // the position the user actually right-clicked at.
   const [contextMenuCurrentTime, setContextMenuCurrentTime] = useState<number | null>(null);
+  // Kept after the toast closes so its text doesn't change mid fade-out.
+  const [copyFrameResult, setCopyFrameResult] = useState<{ success: boolean; message?: string } | null>(null);
+  const [copyFrameToastOpen, setCopyFrameToastOpen] = useState(false);
   const playerRef = useRef<MediaPlayerInstance>(null);
   const backgroundPlayer = useBackgroundPlayer();
   // Guards initialSeekSeconds from being re-applied on a later 'can-play'
@@ -261,6 +264,15 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
       mimeType: state.mimeType,
     });
     if (wasEmpty) safePause();
+  };
+
+  // filePath, not state.sourcePath: the latter may be a lossy .preview/
+  // re-encode, and the frame should come from the original file.
+  const handleCopyFrame = async (currentTime: number | null) => {
+    if (!filePath) return;
+    const result = await window.electronAPI.copyFrameToClipboard({ filePath, timestampSeconds: currentTime ?? 0 });
+    setCopyFrameResult(result);
+    setCopyFrameToastOpen(true);
   };
 
   const handleCanPlay = () => {
@@ -435,9 +447,20 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             // gives that case its own title/thumbnail/clipId instead of the
             // normal videoId/metadata-derived payload above.
             onAddToQueue={handleAddToQueue}
+            onCopyFrame={isAudioOnly ? undefined : handleCopyFrame}
             onChangeThumbnail={onChangeThumbnail}
             currentTime={contextMenuCurrentTime}
           />
+          <Snackbar
+            open={copyFrameToastOpen}
+            autoHideDuration={copyFrameResult?.success ? 3000 : 6000}
+            onClose={() => setCopyFrameToastOpen(false)}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          >
+            <Alert onClose={() => setCopyFrameToastOpen(false)} severity={copyFrameResult?.success ? 'success' : 'error'} variant="filled">
+              {copyFrameResult?.success ? 'Frame copied to clipboard' : `Couldn't copy frame: ${copyFrameResult?.message ?? 'unknown error'}`}
+            </Alert>
+          </Snackbar>
           {!hasStartedPlayback &&
             <IconButton
               onClick={safePlay}

@@ -38,6 +38,8 @@ const electronMocks = vi.hoisted(() => {
     shell: { openPath: () => {}, showItemInFolder: () => {} },
     protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {} },
     net: { fetch: () => {} },
+    clipboard: { writeImage: () => {} },
+    nativeImage: { createFromPath: () => ({ isEmpty: () => true }) },
   };
 });
 
@@ -76,6 +78,7 @@ import {
   getCookiesPersistAcrossSessions,
   jsRuntimeArgs,
   ytdlpSpawnEnv,
+  copyFrameToClipboard,
 } from './main.mjs';
 
 fs.mkdirSync(electronMocks.mockUserDataDir, { recursive: true });
@@ -760,5 +763,62 @@ describe('reapStaleCookieCopies', () => {
 
   it('does not throw when the temp directory is missing', () => {
     expect(() => reapStaleCookieCopies(1000, '/no/such/directory')).not.toThrow();
+  });
+});
+
+describe('copyFrameToClipboard', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  // Stands in for ffmpeg: records the call and writes a placeholder file where
+  // the PNG would go, so the temp-file cleanup can be checked.
+  function fakeFfmpegRunner({ fail = false } = {}) {
+    const calls = [];
+    return {
+      calls,
+      runFfmpegWithProgress: async (opts) => {
+        calls.push(opts);
+        fs.writeFileSync(opts.outputPath, 'png');
+        if (fail) throw new Error('ffmpeg failed');
+      },
+    };
+  }
+
+  it('extracts one frame at the timestamp to a temp PNG and puts it on the clipboard', async () => {
+    const image = { isEmpty: () => false };
+    const createFromPath = vi.spyOn(electronMocks.nativeImage, 'createFromPath').mockReturnValue(image);
+    const writeImage = vi.spyOn(electronMocks.clipboard, 'writeImage');
+    const ffmpegRunner = fakeFfmpegRunner();
+
+    await copyFrameToClipboard({ ffmpegRunner, inputPath: '/lib/video.mkv', timestampSeconds: 12.5 });
+
+    const [call] = ffmpegRunner.calls;
+    expect(call.inputPath).toBe('/lib/video.mkv');
+    expect(call.outputPath.endsWith('.png')).toBe(true);
+    expect(call.preInputArgs).toEqual(['-ss', '12.5']);
+    expect(call.codecArgs).toEqual(['-frames:v', '1']);
+    expect(createFromPath).toHaveBeenCalledWith(call.outputPath);
+    expect(writeImage).toHaveBeenCalledWith(image);
+    expect(fs.existsSync(call.outputPath)).toBe(false);
+  });
+
+  it('rejects without touching the clipboard when no frame was produced, and still removes the temp file', async () => {
+    vi.spyOn(electronMocks.nativeImage, 'createFromPath').mockReturnValue({ isEmpty: () => true });
+    const writeImage = vi.spyOn(electronMocks.clipboard, 'writeImage');
+    const ffmpegRunner = fakeFfmpegRunner();
+
+    await expect(copyFrameToClipboard({ ffmpegRunner, inputPath: '/lib/video.mp4', timestampSeconds: 9999 }))
+      .rejects.toThrow('No frame could be read');
+    expect(writeImage).not.toHaveBeenCalled();
+    expect(fs.existsSync(ffmpegRunner.calls[0].outputPath)).toBe(false);
+  });
+
+  it('removes the temp file when ffmpeg fails', async () => {
+    const writeImage = vi.spyOn(electronMocks.clipboard, 'writeImage');
+    const ffmpegRunner = fakeFfmpegRunner({ fail: true });
+
+    await expect(copyFrameToClipboard({ ffmpegRunner, inputPath: '/lib/video.mp4', timestampSeconds: 0 }))
+      .rejects.toThrow('ffmpeg failed');
+    expect(writeImage).not.toHaveBeenCalled();
+    expect(fs.existsSync(ffmpegRunner.calls[0].outputPath)).toBe(false);
   });
 });

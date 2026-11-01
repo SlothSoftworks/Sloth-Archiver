@@ -254,6 +254,7 @@ declare global {
             probeLocalFile: (filePath: string) => Promise<{ id: string; width: number | null; height: number | null; duration: number | null; tags: { title: string | null; artist: string | null; date: string | null; genre: string | null; comment: string | null } }>
             addLocalFile: (payload: { sourceFilePath: string; formFields: T; mode?: 'add' | 'override' | 'addVersion'; videoDir?: string }, targetTag?: string) => Promise<{ success: boolean; videoDir: string; epoch: string }>
             changeThumbnail: (payload: { videoDir: string; mode: 'timestamp' | 'file'; timestampSeconds?: number; imageFilePath?: string; downloadedFilePath?: string }) => Promise<{ success: boolean; thumbnailPath?: string; message?: string }>
+            copyFrameToClipboard: (payload: { filePath: string; timestampSeconds: number }) => Promise<{ success: boolean; message?: string }>
             fetchPlaylistEntries: (playlistUrl: string) => Promise<{ success: boolean; entries?: { id: string; title: string | null; url: string; thumbnailUrl: string; uploadDate: string | null }[]; playlistId?: string; message?: string }>
             enrichPlaylistEntry: (payload: { playlistId: string; videoId: string; title?: string | null; uploadDate?: string | null; thumbnailUrl?: string | null }) => Promise<{ success: boolean; message?: string }>
             listPlaylists: () => Promise<{ playlists: PlaylistSummary[] }>

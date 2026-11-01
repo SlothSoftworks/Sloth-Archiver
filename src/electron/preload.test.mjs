@@ -103,6 +103,7 @@ const invokeTable = [
   ['openLocalVideoFile', [], ['dialog:openLocalVideoFile']],
   ['probeLocalFile', ['/p/file.mp4'], ['library:probeLocalFile', '/p/file.mp4']],
   ['addLocalFile', [{ sourceFilePath: '/p/file.mp4' }, 'Music'], ['library:addLocalFile', { sourceFilePath: '/p/file.mp4' }, 'Music']],
+  ['copyFrameToClipboard', [{ filePath: '/p/v.mp4', timestampSeconds: 3 }], ['library:copyFrameToClipboard', { filePath: '/p/v.mp4', timestampSeconds: 3 }]],
   ['fetchPlaylistEntries', ['url'], ['library:fetchPlaylistEntries', 'url']],
   ['enrichPlaylistEntry', [{ e: 1 }], ['library:enrichPlaylistEntry', { e: 1 }]],
   ['recordLibraryDownload', [{ r: 1 }], ['library:recordDownload', { r: 1 }]],

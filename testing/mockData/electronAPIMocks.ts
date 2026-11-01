@@ -115,6 +115,7 @@ export const electronAPIMock = {
     probeLocalFile: async () => ({ id: '', width: null, height: null, duration: null, tags: { title: null, artist: null, date: null, genre: null, comment: null } }),
     addLocalFile: async () => ({ success: true, videoDir: '', epoch: '' }),
     changeThumbnail: async () => ({ success: true, thumbnailPath: '' }),
+    copyFrameToClipboard: async () => ({ success: true }),
     fetchPlaylistEntries: async () => ({ success: true, entries: [] }),
     enrichPlaylistEntry: async () => ({ success: true }),
     listPlaylists: async () => ({ playlists: [] }),
