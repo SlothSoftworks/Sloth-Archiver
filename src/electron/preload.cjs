@@ -81,6 +81,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     addLocalFile: (payload, targetTag) => ipcRenderer.invoke('library:addLocalFile', payload, targetTag),
     changeThumbnail: (payload) => ipcRenderer.invoke('library:changeThumbnail', payload),
     copyFrameToClipboard: (payload) => ipcRenderer.invoke('library:copyFrameToClipboard', payload),
+    setVideoNotes: (payload) => ipcRenderer.invoke('library:setVideoNotes', payload),
+    setClipNotes: (payload) => ipcRenderer.invoke('library:setClipNotes', payload),
     fetchPlaylistEntries: (playlistUrl) => ipcRenderer.invoke('library:fetchPlaylistEntries', playlistUrl),
     enrichPlaylistEntry: (payload) => ipcRenderer.invoke('library:enrichPlaylistEntry', payload),
     listPlaylists: () => ipcRenderer.invoke('library:listPlaylists'),

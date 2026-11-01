@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, extractFrameToFile, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, setVideoNotes, setClipNotes, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, extractFrameToFile, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -2622,6 +2622,28 @@ ipcMain.handle('library:deleteClip', async (e, { videoDir, clipId }) => {
         const result = deleteClip({ libraryDir, videoDir, clipId });
         await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
         return result;
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+ipcMain.handle('library:setVideoNotes', async (e, { videoDir, notes }) => {
+    const { libraryDir } = readSettings();
+    try {
+        const savedNotes = setVideoNotes({ libraryDir, videoDir, notes });
+        await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
+        return { success: true, notes: savedNotes };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// No index update: clip notes aren't in the index, and ClipCollectionView
+// replaces the clip in its own list from the returned record.
+ipcMain.handle('library:setClipNotes', async (e, { videoDir, clipId, notes }) => {
+    const { libraryDir } = readSettings();
+    try {
+        return { success: true, clip: setClipNotes({ libraryDir, videoDir, clipId, notes }) };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }

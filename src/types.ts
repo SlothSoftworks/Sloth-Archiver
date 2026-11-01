@@ -68,6 +68,9 @@ export type LibraryVideo = {
     epochs: LibraryVideoEpoch[];
     thumbnailPath: string | null;
     clipCount: number;
+    // <videoDir>/video-data.json (library.mjs). Only on a full entry
+    // (library:getVideo) -- summarizeLibraryIndex leaves it out.
+    videoData?: { notes?: string };
 }
 
 export type LibraryChannel = {
@@ -97,6 +100,7 @@ export type LibraryClip = {
     // produce this clip -- absent on clips created before this field
     // existed.
     clipTimestamps?: { start: string; end: string };
+    notes?: string;
 }
 
 export type PlaylistEntry = {

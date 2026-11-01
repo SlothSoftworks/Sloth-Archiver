@@ -36,6 +36,7 @@ import VideoQualityDownload from './VideoQualityDownload';
 import FfmpegUtilitiesPanel, { OTHER_FORMAT_VALUE } from './FfmpegUtilitiesPanel';
 import ExtraDataTable from './ExtraDataTable';
 import ClipCollectionView from '../components/ClipCollectionView';
+import NotesCard from '../components/NotesCard';
 import LibraryVideoPlayerWithTools from '../components/LibraryVideoPlayerWithTools';
 import type { LibraryClip, LibraryVideo } from '../../types';
 
@@ -909,6 +910,15 @@ export default function LibraryVideoDetail({
               {formatComment(metadata.description || '')}
             </Typography>
           </Card>
+
+          <NotesCard
+            notes={video.videoData?.notes ?? ''}
+            onSave={async (notes) => {
+              const result = await window.electronAPI.setVideoNotes({ videoDir: video.videoDir, notes });
+              if (result.success) onVersionsChanged();
+              return result;
+            }}
+          />
         </Stack>
 
         {/* "Instrument panel" -- version selector, download status, and every

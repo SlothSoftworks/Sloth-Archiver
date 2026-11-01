@@ -1016,4 +1016,35 @@ describe('LibraryVideoDetail', () => {
       expect(pauseSpy).not.toHaveBeenCalled();
     });
   });
+
+  it('shows the video\'s notes and saves edits through setVideoNotes, then resyncs the entry', async () => {
+    window.electronAPI.setVideoNotes = vi.fn().mockResolvedValue({ success: true, notes: 'Updated note' });
+    const video = makeVideo({}, { videoData: { notes: 'First note' } });
+    const { onVersionsChanged } = renderDetail(video);
+    const user = userEvent.setup();
+    expect(screen.getByText('First note')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Edit notes' }));
+    const field = screen.getByRole('textbox', { name: 'Notes' });
+    await user.clear(field);
+    await user.type(field, 'Updated note');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(window.electronAPI.setVideoNotes).toHaveBeenCalledWith({ videoDir: '/lib/Channel A/vidA', notes: 'Updated note' });
+    expect(onVersionsChanged).toHaveBeenCalled();
+    expect(screen.getByText('Updated note')).toBeInTheDocument();
+  });
+
+  it('does not resync the entry when saving notes fails', async () => {
+    window.electronAPI.setVideoNotes = vi.fn().mockResolvedValue({ success: false, message: 'Notes can be at most 500 characters.' });
+    const { onVersionsChanged } = renderDetail(makeVideo());
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Edit notes' }));
+    await user.type(screen.getByRole('textbox', { name: 'Notes' }), 'x');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Notes can be at most 500 characters.')).toBeInTheDocument();
+    expect(onVersionsChanged).not.toHaveBeenCalled();
+  });
 });

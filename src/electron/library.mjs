@@ -520,6 +520,78 @@ export function deleteClip({ libraryDir, videoDir, clipId }) {
     return { success: true };
 }
 
+// <videoDir>/video-data.json -- user-authored, video-level fields (notes
+// today, more later), as opposed to the per-epoch metadata.json that refresh
+// and add-version rebuild from yt-dlp data. A file, not a folder, so every
+// walk that treats a video's subfolders as epochs never sees it.
+export const VIDEO_DATA_FILE_NAME = 'video-data.json';
+export const NOTES_MAX_LENGTH = 500;
+
+export function readVideoData(videoDir) {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(videoDir, VIDEO_DATA_FILE_NAME), 'utf-8'));
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+// Temp-then-rename: unlike metadata.json, nothing here can be re-fetched, so
+// a write interrupted partway must never leave a truncated file. An empty
+// object removes the file rather than leaving `{}` behind.
+export function writeVideoData(videoDir, data) {
+    const filePath = path.join(videoDir, VIDEO_DATA_FILE_NAME);
+    if (Object.keys(data).length === 0) {
+        fs.rmSync(filePath, { force: true });
+        return;
+    }
+    const tempPath = `${filePath}.new`;
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tempPath, filePath);
+}
+
+// Returns the notes to store, or null for "clear" (empty/whitespace-only).
+function normalizeNotes(notes) {
+    if (typeof notes !== 'string') {
+        throw new Error('Notes must be text.');
+    }
+    if (notes.length > NOTES_MAX_LENGTH) {
+        throw new Error(`Notes can be at most ${NOTES_MAX_LENGTH} characters.`);
+    }
+    return notes.trim() ? notes : null;
+}
+
+// Read-merge-write so any other video-data.json field survives a notes edit.
+export function setVideoNotes({ libraryDir, videoDir, notes }) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir || !fs.existsSync(resolvedVideoDir)) {
+        throw new Error('Refusing to write outside the configured library folder.');
+    }
+    const normalized = normalizeNotes(notes);
+    const data = readVideoData(resolvedVideoDir);
+    if (normalized === null) delete data.notes;
+    else data.notes = normalized;
+    writeVideoData(resolvedVideoDir, data);
+    return normalized ?? '';
+}
+
+export function setClipNotes({ libraryDir, videoDir, clipId, notes }) {
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    if (!resolvedVideoDir) {
+        throw new Error('Refusing to update a clip outside the configured library folder.');
+    }
+    const normalized = normalizeNotes(notes);
+    const manifest = readClipsManifest(resolvedVideoDir);
+    const clip = manifest.find((c) => c.id === clipId);
+    if (!clip) {
+        throw new Error('Clip not found.');
+    }
+    const updated = { ...clip, notes: normalized };
+    if (normalized === null) delete updated.notes;
+    writeClipsManifest(resolvedVideoDir, manifest.map((c) => (c.id === clipId ? updated : c)));
+    return updated;
+}
+
 // Fields every entry shares regardless of platform -- factored out so
 // buildYoutubeEpochMetadata/buildGenericEpochMetadata below build on the same
 // base instead of two independently drifting copies. uploaderId/timestamp/
@@ -1148,11 +1220,17 @@ export function moveLibraryEntry({ libraryDir, videoDir, targetTag }) {
 // if the title or channel display name drifted, writeLibraryEntry could land
 // on a different path than the one being replaced, missing the real old
 // folder.
+// video-data.json is carried over (user-written, can't be re-fetched) to
+// wherever writeLibraryEntry lands, which may not be existingVideoDir.
 export function overrideLibraryEntry({ libraryDir, libraryTag = DEFAULT_LIBRARY_DIR_NAME, videoMetaData, existingVideoDir }) {
+    let videoData = {};
     if (existingVideoDir && fs.existsSync(existingVideoDir)) {
+        videoData = readVideoData(existingVideoDir);
         fs.rmSync(existingVideoDir, { recursive: true, force: true });
     }
-    return writeLibraryEntry({ libraryDir, libraryTag, videoMetaData });
+    const result = writeLibraryEntry({ libraryDir, libraryTag, videoMetaData });
+    writeVideoData(result.videoDir, videoData);
+    return result;
 }
 
 // downloadedFilePath/downloadedAudioFilePath are absolute paths, captured
@@ -1339,6 +1417,8 @@ function readVideoEntry(videoPath, videoFolderName) {
     // than the listing check.
     const hasClipsDir = epochEntries.some((e) => e.isDirectory() && e.name === CLIPS_DIR_NAME);
     const clipCount = hasClipsDir ? readClipsManifest(videoPath).length : 0;
+    // Same listing check as clips/ above -- most videos have no notes.
+    const hasVideoData = epochEntries.some((e) => e.isFile() && e.name === VIDEO_DATA_FILE_NAME);
 
     return {
         videoFolderName,
@@ -1348,6 +1428,7 @@ function readVideoEntry(videoPath, videoFolderName) {
         epochs,
         thumbnailPath: findVideoThumbnailPath(videoPath, epochEntries),
         clipCount,
+        videoData: hasVideoData ? readVideoData(videoPath) : {},
     };
 }
 
@@ -1523,13 +1604,19 @@ function summarizeChannel(channel) {
         if (!summaries.has(metadata)) summaries.set(metadata, summarizeMetadata(metadata));
         return summaries.get(metadata);
     };
+    // videoData (user notes) is detail-only too: nothing in the Library
+    // list screens reads it.
     const summary = {
         ...channel,
-        videos: channel.videos.map((video) => ({
-            ...video,
-            metadata: summaryOf(video.metadata),
-            epochs: video.epochs.map((e) => ({ ...e, metadata: summaryOf(e.metadata) })),
-        })),
+        videos: channel.videos.map((video) => {
+            const videoSummary = {
+                ...video,
+                metadata: summaryOf(video.metadata),
+                epochs: video.epochs.map((e) => ({ ...e, metadata: summaryOf(e.metadata) })),
+            };
+            delete videoSummary.videoData;
+            return videoSummary;
+        }),
     };
     channelSummaries.set(channel, summary);
     return summary;

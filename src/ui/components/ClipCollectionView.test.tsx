@@ -354,4 +354,33 @@ describe('ClipCollectionView', () => {
       expect(container.querySelector('video source')).toHaveAttribute('src', expect.stringContaining('Clip%20One.mp4'));
     });
   });
+
+  it('shows the active clip\'s notes and saves edits to clips.json through setClipNotes', async () => {
+    const user = userEvent.setup();
+    const updated = makeClip({ notes: 'the good part' });
+    window.electronAPI.setClipNotes = vi.fn().mockResolvedValue({ success: true, clip: updated });
+    const clips = [makeClip(), makeClip({ id: 'clip2', fileName: 'Clip Two.mp4', title: 'Clip Two' })];
+    const { onClipsChanged } = renderView({ clips });
+    expect(screen.getByText('No notes yet.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Edit notes' }));
+    await user.type(screen.getByRole('textbox', { name: 'Notes' }), 'the good part');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(window.electronAPI.setClipNotes).toHaveBeenCalledWith({ videoDir: '/lib/c/v1', clipId: 'clip1', notes: 'the good part' });
+    expect(onClipsChanged).toHaveBeenCalledWith([updated, clips[1]]);
+  });
+
+  it('switching clips mid-edit drops the draft and shows the new clip\'s notes', async () => {
+    const user = userEvent.setup();
+    const clips = [makeClip(), makeClip({ id: 'clip2', fileName: 'Clip Two.mp4', title: 'Clip Two', notes: 'second clip note' })];
+    renderView({ clips });
+
+    await user.click(screen.getByRole('button', { name: 'Edit notes' }));
+    await user.type(screen.getByRole('textbox', { name: 'Notes' }), 'unsaved');
+    await user.click(screen.getByText('Clip Two'));
+
+    expect(screen.queryByRole('textbox', { name: 'Notes' })).not.toBeInTheDocument();
+    expect(screen.getByText('second clip note')).toBeInTheDocument();
+  });
 });

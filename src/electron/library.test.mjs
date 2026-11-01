@@ -65,6 +65,11 @@ import {
   deleteClip,
   updateClipFile,
   resolveInsideLibrary,
+  setVideoNotes,
+  setClipNotes,
+  readVideoData,
+  VIDEO_DATA_FILE_NAME,
+  NOTES_MAX_LENGTH,
 } from './library.mjs';
 
 let libraryDir;
@@ -1526,7 +1531,8 @@ describe('summarizeLibraryIndex / readLibraryVideoEntry (PERF-004)', () => {
       expect(metadata).toHaveProperty('downloadedFilePath');
     }
     expect(video.epochs).toHaveLength(2);
-    expect(Object.keys(video).sort()).toEqual(Object.keys(index.channels[0].videos[0]).sort());
+    const fullKeysWithoutVideoData = Object.keys(index.channels[0].videos[0]).filter((k) => k !== 'videoData');
+    expect(Object.keys(video).sort()).toEqual(fullKeysWithoutVideoData.sort());
   });
 
   it('keeps the latest version\'s metadata shared with the video\'s own, so it is sent once', async () => {
@@ -2081,5 +2087,123 @@ describe('moveLibraryEntry', () => {
     // folder, and its icon, both still exist.
     expect(fs.existsSync(channelDir)).toBe(true);
     expect(fs.existsSync(path.join(channelDir, 'channel-icon.jpg'))).toBe(true);
+  });
+});
+
+describe('notes (setVideoNotes / setClipNotes)', () => {
+  const videoDataPath = (videoDir) => path.join(videoDir, VIDEO_DATA_FILE_NAME);
+
+  it('writes video notes to video-data.json beside the epoch folders, and reads them into the full entry', () => {
+    const { videoDir, epochDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+
+    expect(setVideoNotes({ libraryDir, videoDir, notes: 'Great intro at 0:30' })).toBe('Great intro at 0:30');
+
+    expect(path.dirname(videoDataPath(videoDir))).toBe(path.dirname(epochDir));
+    expect(readVideoData(videoDir)).toEqual({ notes: 'Great intro at 0:30' });
+    expect(readLibraryVideoEntry(libraryDir, videoDir).videoData).toEqual({ notes: 'Great intro at 0:30' });
+    expect(fs.existsSync(`${videoDataPath(videoDir)}.new`)).toBe(false);
+  });
+
+  it('gives an entry with no video-data.json an empty videoData, and never treats the file as an epoch', async () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    expect(readLibraryVideoEntry(libraryDir, videoDir).videoData).toEqual({});
+
+    setVideoNotes({ libraryDir, videoDir, notes: 'n' });
+    const index = await scanLibrary(libraryDir);
+    expect(index.channels[0].videos[0].epochs).toHaveLength(1);
+  });
+
+  it('clearing notes removes the key, and removes the file once nothing else is in it', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    setVideoNotes({ libraryDir, videoDir, notes: 'temp' });
+
+    expect(setVideoNotes({ libraryDir, videoDir, notes: '   ' })).toBe('');
+
+    expect(fs.existsSync(videoDataPath(videoDir))).toBe(false);
+  });
+
+  it('keeps other video-data.json fields when notes change or are cleared', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    fs.writeFileSync(videoDataPath(videoDir), JSON.stringify({ futureField: 42 }));
+
+    setVideoNotes({ libraryDir, videoDir, notes: 'hello' });
+    expect(readVideoData(videoDir)).toEqual({ futureField: 42, notes: 'hello' });
+
+    setVideoNotes({ libraryDir, videoDir, notes: '' });
+    expect(readVideoData(videoDir)).toEqual({ futureField: 42 });
+  });
+
+  it('rejects notes over the length cap or of the wrong type, and writes outside the library', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    expect(() => setVideoNotes({ libraryDir, videoDir, notes: 'x'.repeat(NOTES_MAX_LENGTH + 1) })).toThrow(/at most/);
+    expect(() => setVideoNotes({ libraryDir, videoDir, notes: 5 })).toThrow(/must be text/);
+    expect(() => setVideoNotes({ libraryDir, videoDir: '/etc', notes: 'n' })).toThrow(/outside the configured library folder/);
+    expect(setVideoNotes({ libraryDir, videoDir, notes: 'x'.repeat(NOTES_MAX_LENGTH) })).toHaveLength(NOTES_MAX_LENGTH);
+  });
+
+  it('treats a corrupt video-data.json as empty', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    fs.writeFileSync(videoDataPath(videoDir), '{not json');
+    expect(readVideoData(videoDir)).toEqual({});
+    expect(readLibraryVideoEntry(libraryDir, videoDir).videoData).toEqual({});
+  });
+
+  it('leaves videoData out of the summary index', async () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    setVideoNotes({ libraryDir, videoDir, notes: 'secret-ish' });
+
+    const summary = summarizeLibraryIndex(await scanLibrary(libraryDir));
+
+    expect(summary.channels[0].videos[0]).not.toHaveProperty('videoData');
+  });
+
+  it('survives a metadata refresh, a new version, and a move to another sublibrary', () => {
+    const { videoDir, epochDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    setVideoNotes({ libraryDir, videoDir, notes: 'keep me' });
+
+    refreshLibraryEntryMetadata({ libraryDir, videoDir, epoch: path.basename(epochDir), videoMetaData: baseVideoMetaData({ title: 'Refreshed' }) });
+    addLibraryVersion({ libraryDir, videoDir, videoMetaData: baseVideoMetaData({ title: 'v2' }) });
+    expect(readVideoData(videoDir)).toEqual({ notes: 'keep me' });
+
+    const moved = moveLibraryEntry({ libraryDir, videoDir, targetTag: 'Music' });
+    expect(readVideoData(moved.videoDir)).toEqual({ notes: 'keep me' });
+  });
+
+  it('carries notes across an override, including when the new entry lands in a different folder', () => {
+    const original = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    setVideoNotes({ libraryDir, videoDir: original.videoDir, notes: 'still here' });
+
+    const result = overrideLibraryEntry({
+      libraryDir,
+      videoMetaData: baseVideoMetaData({ uploader: 'Renamed Channel' }),
+      existingVideoDir: original.videoDir,
+    });
+
+    expect(result.videoDir).not.toBe(original.videoDir);
+    expect(fs.existsSync(original.videoDir)).toBe(false);
+    expect(readVideoData(result.videoDir)).toEqual({ notes: 'still here' });
+  });
+
+  it('sets and clears a clip\'s notes in clips.json without touching its other fields', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clip = recordClip({ libraryDir, videoDir, fileName: 'a.mp4', title: 'a', durationSeconds: 3 });
+    const other = recordClip({ libraryDir, videoDir, fileName: 'b.mp4', title: 'b', durationSeconds: 4 });
+    fs.writeFileSync(path.join(videoDir, CLIPS_DIR_NAME, 'a.mp4'), 'x');
+    fs.writeFileSync(path.join(videoDir, CLIPS_DIR_NAME, 'b.mp4'), 'x');
+
+    const updated = setClipNotes({ libraryDir, videoDir, clipId: clip.id, notes: 'best part' });
+    expect(updated).toEqual({ ...clip, notes: 'best part' });
+    expect(listClips({ libraryDir, videoDir })).toEqual([updated, other]);
+
+    const cleared = setClipNotes({ libraryDir, videoDir, clipId: clip.id, notes: '' });
+    expect(cleared).toEqual(clip);
+  });
+
+  it('rejects clip notes for an unknown clip, over the cap, or outside the library', () => {
+    const { videoDir } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData() });
+    const clip = recordClip({ libraryDir, videoDir, fileName: 'a.mp4', title: 'a', durationSeconds: 3 });
+    expect(() => setClipNotes({ libraryDir, videoDir, clipId: 'nope', notes: 'n' })).toThrow('Clip not found.');
+    expect(() => setClipNotes({ libraryDir, videoDir, clipId: clip.id, notes: 'x'.repeat(NOTES_MAX_LENGTH + 1) })).toThrow(/at most/);
+    expect(() => setClipNotes({ libraryDir, videoDir: '/etc', clipId: clip.id, notes: 'n' })).toThrow(/outside the configured library folder/);
   });
 });

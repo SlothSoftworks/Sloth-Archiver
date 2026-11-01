@@ -13,6 +13,7 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import LibraryVideoPlayerWithTools from './LibraryVideoPlayerWithTools';
 import BulkDeleteConfirmDialog from './BulkDeleteConfirmDialog';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
+import NotesCard from './NotesCard';
 import { formatSecondsAsClipTimestamp, OTHER_FORMAT_VALUE, TRANSCODE_ON_CONVERT_TOOLTIP } from '../screens/FfmpegUtilitiesPanel';
 import type { LibraryClip, LibraryVideoMetadata } from '../../types';
 
@@ -270,6 +271,22 @@ export default function ClipCollectionView({
               </Stack>
             </Stack>
           </Card>}
+
+        {activeClip &&
+          // Keyed per clip so switching clips mid-edit drops the draft
+          // instead of carrying it over to the next clip.
+          <NotesCard
+            key={activeClip.id}
+            notes={activeClip.notes ?? ''}
+            onSave={async (notes) => {
+              const result = await window.electronAPI.setClipNotes({ videoDir, clipId: activeClip.id, notes });
+              if (result.success && result.clip) {
+                const updatedClip = result.clip;
+                onClipsChanged(clips.map((c) => (c.id === updatedClip.id ? updatedClip : c)));
+              }
+              return { success: result.success, notes: result.clip?.notes ?? '', message: result.message };
+            }}
+          />}
       </Stack>
       <Box sx={{ width: { xs: '100%', md: '30%' }, maxHeight: 480, overflowY: 'auto' }}>
         <List dense>

@@ -12,6 +12,9 @@ import {
     ensureImportedLibraryTag,
     findPlaylistEpochDir,
     createScanYielder,
+    readVideoData,
+    writeVideoData,
+    NOTES_MAX_LENGTH,
     NONYT_DIR_NAME,
     PLAYLISTS_DIR_NAME,
 } from './library.mjs';
@@ -91,6 +94,7 @@ export async function buildLibraryExport(libraryDir, appVersion) {
         const videos = index.channels.flatMap((channel) => channel.videos).map((video) => ({
             path: path.relative(tagDir, video.videoDir).split(path.sep),
             epochs: video.epochs.map((e) => ({ epoch: e.epoch, metadata: toPortableEpochMetadata(e.metadata) })),
+            ...(Object.keys(video.videoData).length > 0 ? { videoData: video.videoData } : {}),
         }));
         sublibraries.push({
             folderName: tag.folderName,
@@ -171,7 +175,15 @@ function emptySummary() {
         playlistsAdded: 0,
         playlistsAlreadyPresent: 0,
         labelsApplied: 0,
+        notesAdded: 0,
     };
+}
+
+// null unless the file carries usable notes -- same limit setVideoNotes
+// enforces, since this is untrusted input.
+function importableNotes(videoData) {
+    const notes = isPlainObject(videoData) ? videoData.notes : null;
+    return typeof notes === 'string' && notes.trim() && notes.length <= NOTES_MAX_LENGTH ? notes : null;
 }
 
 // Plans -- and unless dryRun, applies -- an import of `data` (already
@@ -239,8 +251,19 @@ export async function importLibraryExport(libraryDir, data, { dryRun = false } =
             const presentEpochs = new Set(existing ? existing.video.epochs.map((e) => e.epoch) : []);
             const newEpochs = epochs.filter((e) => !presentEpochs.has(e.epoch) && !fs.existsSync(path.join(videoDir, e.epoch)));
             presentVideoIds.add(videoId);
+            // Add-only, like everything else here: never replaces notes the
+            // video already has. Checked before the already-present exit
+            // below so a video with nothing new still picks up its notes.
+            const notes = importableNotes(video.videoData);
+            const addsNotes = notes !== null && !readVideoData(videoDir).notes;
+            if (addsNotes) summary.notesAdded++;
+            const writeNotes = () => {
+                writeVideoData(videoDir, { ...readVideoData(videoDir), notes });
+                touchedTags.add(folderName);
+            };
             if (existing && newEpochs.length === 0) {
                 summary.videosAlreadyPresent++;
+                if (addsNotes && !dryRun) writeNotes();
                 continue;
             }
             if (!existing) summary.videosAdded++;
@@ -252,6 +275,7 @@ export async function importLibraryExport(libraryDir, data, { dryRun = false } =
                 fs.mkdirSync(epochDir, { recursive: true });
                 fs.writeFileSync(path.join(epochDir, 'metadata.json'), JSON.stringify(toPortableEpochMetadata(metadata), null, 2), 'utf-8');
             }
+            if (addsNotes) writeNotes();
             touchedTags.add(folderName);
             if (!existing) {
                 const latest = newEpochs.reduce((a, b) => (Number(b.epoch) > Number(a.epoch) ? b : a)).metadata;

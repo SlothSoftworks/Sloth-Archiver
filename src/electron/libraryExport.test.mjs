@@ -14,6 +14,10 @@ import {
   listVideoTags,
   listPlaylistSnapshots,
   getPlaylistSnapshot,
+  setVideoNotes,
+  readVideoData,
+  VIDEO_DATA_FILE_NAME,
+  NOTES_MAX_LENGTH,
   DEFAULT_LIBRARY_DIR_NAME,
 } from './library.mjs';
 import {
@@ -240,6 +244,79 @@ describe('importLibraryExport', () => {
     expect(summary.videosAdded).toBe(2); // ['..','..','evil'] sanitizes to a plain 2-segment path, plus 'ok'
     expect(summary.invalidSkipped).toBe(4);
     expect(summary.playlistsAdded).toBe(1);
+  });
+});
+
+describe('video notes in export/import', () => {
+  function videoDirOf(videos, videoId) {
+    return videos.find((v) => v.metadata.videoId === videoId).videoDir;
+  }
+
+  it('exports videoData only for videos that have some, and restores notes on import', async () => {
+    const source = path.join(root, 'source');
+    const target = path.join(root, 'target');
+    const a = writeLibraryEntry({ libraryDir: source, videoMetaData: meta('aaaaaaaaaaa') });
+    writeLibraryEntry({ libraryDir: source, videoMetaData: meta('bbbbbbbbbbb') });
+    setVideoNotes({ libraryDir: source, videoDir: a.videoDir, notes: 'Watch the ending' });
+
+    const data = await exportRoundTrip(source);
+    const exported = data.sublibraries[0].videos;
+    expect(exported.find((v) => v.epochs[0].metadata.videoId === 'aaaaaaaaaaa').videoData).toEqual({ notes: 'Watch the ending' });
+    expect(exported.find((v) => v.epochs[0].metadata.videoId === 'bbbbbbbbbbb')).not.toHaveProperty('videoData');
+
+    const { summary } = await importLibraryExport(target, data);
+    expect(summary.notesAdded).toBe(1);
+    const targetVideos = await allVideos(target);
+    expect(readVideoData(videoDirOf(targetVideos, 'aaaaaaaaaaa'))).toEqual({ notes: 'Watch the ending' });
+    expect(fs.existsSync(path.join(videoDirOf(targetVideos, 'bbbbbbbbbbb'), VIDEO_DATA_FILE_NAME))).toBe(false);
+  });
+
+  it('adds notes to a video already present with no new versions, without counting it as changed otherwise', async () => {
+    const source = path.join(root, 'source');
+    const target = path.join(root, 'target');
+    const a = writeLibraryEntry({ libraryDir: source, videoMetaData: meta('aaaaaaaaaaa') });
+    await importLibraryExport(target, await exportRoundTrip(source));
+    setVideoNotes({ libraryDir: source, videoDir: a.videoDir, notes: 'added later' });
+
+    const { summary, touchedTags } = await importLibraryExport(target, await exportRoundTrip(source));
+
+    expect(summary).toMatchObject({ videosAdded: 0, versionsAdded: 0, videosAlreadyPresent: 1, notesAdded: 1 });
+    expect(touchedTags).toEqual([DEFAULT_LIBRARY_DIR_NAME]);
+    expect(readVideoData((await allVideos(target))[0].videoDir).notes).toBe('added later');
+  });
+
+  it('never overwrites notes the target video already has', async () => {
+    const source = path.join(root, 'source');
+    const target = path.join(root, 'target');
+    const a = writeLibraryEntry({ libraryDir: source, videoMetaData: meta('aaaaaaaaaaa') });
+    setVideoNotes({ libraryDir: source, videoDir: a.videoDir, notes: 'from the backup' });
+    const t = writeLibraryEntry({ libraryDir: target, videoMetaData: meta('aaaaaaaaaaa') });
+    setVideoNotes({ libraryDir: target, videoDir: t.videoDir, notes: 'mine' });
+
+    const { summary } = await importLibraryExport(target, await exportRoundTrip(source));
+
+    expect(summary.notesAdded).toBe(0);
+    expect(readVideoData(t.videoDir).notes).toBe('mine');
+  });
+
+  it('counts notes in a dry run without writing them, and ignores unusable notes', async () => {
+    const source = path.join(root, 'source');
+    const target = path.join(root, 'target');
+    const a = writeLibraryEntry({ libraryDir: source, videoMetaData: meta('aaaaaaaaaaa') });
+    writeLibraryEntry({ libraryDir: source, videoMetaData: meta('bbbbbbbbbbb') });
+    await importLibraryExport(target, await exportRoundTrip(source));
+    setVideoNotes({ libraryDir: source, videoDir: a.videoDir, notes: 'n' });
+    const data = await exportRoundTrip(source);
+    const b = data.sublibraries[0].videos.find((v) => v.epochs[0].metadata.videoId === 'bbbbbbbbbbb');
+    b.videoData = { notes: 'x'.repeat(NOTES_MAX_LENGTH + 1) };
+
+    const preview = await importLibraryExport(target, data, { dryRun: true });
+    expect(preview.summary.notesAdded).toBe(1);
+    for (const video of await allVideos(target)) expect(readVideoData(video.videoDir)).toEqual({});
+
+    const real = await importLibraryExport(target, data);
+    expect(real.summary).toEqual(preview.summary);
+    expect(readVideoData(videoDirOf(await allVideos(target), 'bbbbbbbbbbb'))).toEqual({});
   });
 });
 
