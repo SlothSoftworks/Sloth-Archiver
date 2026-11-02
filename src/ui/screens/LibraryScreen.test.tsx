@@ -1405,6 +1405,18 @@ describe('LibraryScreen', () => {
       expect(screen.getByText('Add local file to library', { selector: 'h2' })).toBeInTheDocument();
     });
 
+    it('opens prefilled when VidTools hands a file over as router state', async () => {
+      rtlRender(
+        <MemoryRouter initialEntries={[{ pathname: '/library', state: { addLocalFilePath: '/elsewhere/movie.mkv' } }]}>
+          <LibraryTagsProvider><BulkAddProvider><BackgroundPlayerProvider><LibraryScreen /></BackgroundPlayerProvider></BulkAddProvider></LibraryTagsProvider>
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByText('Add local file to library', { selector: 'h2' })).toBeInTheDocument();
+      await waitFor(() => expect(window.electronAPI.probeLocalFile).toHaveBeenCalledWith('/elsewhere/movie.mkv'));
+      expect(window.electronAPI.openLocalVideoFile).not.toHaveBeenCalled();
+    });
+
     it('is not offered on the Playlists section', async () => {
       const user = userEvent.setup();
       render(<LibraryScreen />);

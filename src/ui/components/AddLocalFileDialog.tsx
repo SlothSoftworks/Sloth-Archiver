@@ -85,9 +85,11 @@ function parseCommaList(value: string): string[] {
 // CreateSubLibraryDialog's sublibrary Select (backed by the shared
 // useLibraryTags() hook, not its own fetch).
 export default function AddLocalFileDialog({
-  open, onClose, submitting, error, onSubmit,
+  open, onClose, submitting, error, onSubmit, initialFilePath,
 }: {
   open: boolean;
+  // Preselects this file when the dialog opens (VidTools' "Add to library").
+  initialFilePath?: string | null;
   onClose: () => void;
   submitting: boolean;
   error: string | null;
@@ -114,8 +116,10 @@ export default function AddLocalFileDialog({
       setTagsInput('');
       setMetadataOpen(false);
       setTargetTag(activeLibraryTag);
+      if (initialFilePath) loadFile(initialFilePath);
     }
-  }, [open, activeLibraryTag]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadFile only reads setters.
+  }, [open, activeLibraryTag, initialFilePath]);
 
   const handleClose = () => {
     if (submitting) return;
@@ -125,7 +129,10 @@ export default function AddLocalFileDialog({
   const handlePickFile = async () => {
     const result = await window.electronAPI.openLocalVideoFile();
     const filePath = result.filePaths?.[0];
-    if (!filePath) return;
+    if (filePath) await loadFile(filePath);
+  };
+
+  async function loadFile(filePath: string) {
     setSourceFilePath(filePath);
 
     const baseName = filePath.split(/[/\\]/).pop() || filePath;
@@ -153,7 +160,7 @@ export default function AddLocalFileDialog({
     } finally {
       setProbing(false);
     }
-  };
+  }
 
   const handleSubmit = () => {
     if (!sourceFilePath || !fields.title.trim()) return;

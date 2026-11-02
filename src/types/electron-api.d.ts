@@ -40,6 +40,21 @@ type LibrarySortDirection = 'asc' | 'desc';
 // equal to folderName, since sublibrary names aren't renamable separately
 // from their folder). Exported so useLibraryTags.tsx and its consumers share
 // this one declaration instead of each keeping their own local copy.
+export type VidToolsFile = {
+    filePath: string;
+    name: string;
+    dir: string;
+    sizeBytes: number;
+    duration: number | null;
+    width: number | null;
+    height: number | null;
+    videoCodec: string | null;
+    audioCodec: string | null;
+    needsPreview: boolean;
+    previewKind: 'remux' | 'reencode';
+};
+export type VidToolsOpenResult = ({ success: true } & VidToolsFile) | { success: false; message: string };
+
 export type LibraryTag = {
     tagName: string;
     folderName: string;
@@ -253,6 +268,8 @@ declare global {
             openLocalVideoFile: () => Promise<OpenFolderResult>
             openImageFile: () => Promise<OpenFolderResult>
             probeLocalFile: (filePath: string) => Promise<{ id: string; width: number | null; height: number | null; duration: number | null; tags: { title: string | null; artist: string | null; date: string | null; genre: string | null; comment: string | null } }>
+            openVidToolsFile: (filePath: string) => Promise<VidToolsOpenResult>
+            getPathForFile: (file: File) => string
             addLocalFile: (payload: { sourceFilePath: string; formFields: T; mode?: 'add' | 'override' | 'addVersion'; videoDir?: string }, targetTag?: string) => Promise<{ success: boolean; videoDir: string; epoch: string }>
             changeThumbnail: (payload: { videoDir: string; mode: 'timestamp' | 'file'; timestampSeconds?: number; imageFilePath?: string; downloadedFilePath?: string }) => Promise<{ success: boolean; thumbnailPath?: string; message?: string }>
             copyFrameToClipboard: (payload: { filePath: string; timestampSeconds: number }) => Promise<{ success: boolean; message?: string }>

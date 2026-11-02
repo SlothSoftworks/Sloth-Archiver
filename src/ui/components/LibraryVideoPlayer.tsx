@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Alert, Box, CardMedia, IconButton, Snackbar, Tooltip, Typography } from '@mui/material';
+import { Alert, Box, Button, CardMedia, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, IconButton, Snackbar, Tooltip, Typography } from '@mui/material';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
 import { MediaPlayer, MediaProvider, type MediaPlayerInstance } from '@vidstack/react';
@@ -42,7 +42,8 @@ export type ClipMarkersControl = {
 // containers (e.g. MKV) are a parsing limitation no delivery mechanism can
 // work around. This component quietly falls back to the static thumbnail
 // rather than attempting a player known to fail; "open in default player"
-// exists in LibraryVideoDetail for exactly this case.
+// exists in LibraryVideoDetail for exactly this case. Mirrored in
+// localFileAccess.mjs (main), which tells VidTools whether to ask first.
 const PLAYABLE_VIDEO_EXTENSIONS = new Set(['mp4', 'webm']);
 
 function getExtension(filePath: string): string {
@@ -60,7 +61,9 @@ function mimeTypeForExtension(ext: string): 'video/webm' | 'video/mp4' {
 
 // A native-playable extension goes straight to 'ready'. A non-native
 // extension (e.g. MKV) starts in 'preparingPreview' while a playable
-// derivative is generated, landing on 'ready' or 'previewFailed'.
+// derivative is generated, landing on 'ready' or 'previewFailed'. With
+// confirmPreview set it waits in 'awaitingPreviewConsent' instead, until the
+// user agrees to the copy being made.
 // 'runtimeFailed' is reachable from either path -- a file that *should* play
 // can still fail at actual decode time. computeInitialState below always
 // resolves synchronously to preparingPreview/ready on the very first render,
@@ -70,16 +73,19 @@ type PlaybackState =
   | { kind: 'preparingPreview'; percent: number }
   | { kind: 'previewFailed'; message?: string }
   | { kind: 'ready'; sourcePath: string; mimeType: 'video/mp4' | 'video/webm' }
-  | { kind: 'runtimeFailed' };
+  | { kind: 'runtimeFailed' }
+  | { kind: 'awaitingPreviewConsent' };
 
-function computeInitialState(filePath: string | null): PlaybackState {
+export type PreviewKind = 'remux' | 'reencode';
+
+function computeInitialState(filePath: string | null, confirmPreview: boolean): PlaybackState {
   if (filePath) {
     const ext = getExtension(filePath);
     if (PLAYABLE_VIDEO_EXTENSIONS.has(ext)) {
       return { kind: 'ready', sourcePath: filePath, mimeType: mimeTypeForExtension(ext) };
     }
   }
-  return { kind: 'preparingPreview', percent: 0 };
+  return confirmPreview ? { kind: 'awaitingPreviewConsent' } : { kind: 'preparingPreview', percent: 0 };
 }
 
 const containerSx = { borderRadius: 2 };
@@ -115,10 +121,20 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // having no context menu item) never happens in practice; the caller
   // (LibraryVideoPlayerWithTools) always has a videoDir to write into.
   onChangeThumbnail?: (currentTime: number | null) => void;
-}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange, initialSeekSeconds, backgroundPlayOverride, onChangeThumbnail }, ref) {
+  // VidTools: ask before making a playable copy of a file Chromium can't
+  // play, instead of starting the conversion straight away. kind only
+  // changes the dialog's wording (a quick repackage vs a slow re-encode).
+  confirmPreview?: { kind: PreviewKind };
+  // VidTools files aren't library videos, which every queue entry links to.
+  hideAddToQueue?: boolean;
+}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange, initialSeekSeconds, backgroundPlayOverride, onChangeThumbnail, confirmPreview, hideAddToQueue = false }, ref) {
   const { thumbnail, videoId } = metadata;
   const filePath = overrideFilePath ?? metadata.downloadedFilePath;
-  const [state, setState] = useState<PlaybackState>(() => computeInitialState(filePath));
+  const [state, setState] = useState<PlaybackState>(() => computeInitialState(filePath, !!confirmPreview));
+  // The file the user agreed to make a playable copy of. Also how a natively
+  // playable file that failed at decode time (runtimeFailed) gets a copy.
+  const [consentedPath, setConsentedPath] = useState<string | null>(null);
+  const [consentDialogOpen, setConsentDialogOpen] = useState(false);
   // One-time "you can start playback here" affordance -- gone for good once
   // playback has ever started (native controls take over from there).
   const [hasStartedPlayback, setHasStartedPlayback] = useState(false);
@@ -158,8 +174,14 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     setIsAudioOnly(false);
     if (!filePath) return;
 
-    if (isNativePlayable) {
+    const consented = consentedPath === filePath;
+    if (isNativePlayable && !consented) {
       setState({ kind: 'ready', sourcePath: filePath, mimeType: mimeTypeForExtension(ext) });
+      return;
+    }
+    if (confirmPreview && !consented) {
+      setState({ kind: 'awaitingPreviewConsent' });
+      setConsentDialogOpen(true);
       return;
     }
 
@@ -184,8 +206,13 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
       cancelled = true;
       window.electronAPI.removePreviewGenerationProgressListener();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- ext/isNativePlayable are pure derivations of filePath, not independent inputs.
-  }, [filePath, cacheBustKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ext/isNativePlayable are pure derivations of filePath, not independent inputs; confirmPreview is a new object each render.
+  }, [filePath, cacheBustKey, consentedPath]);
+
+  const handleCreatePlayableCopy = () => {
+    setConsentDialogOpen(false);
+    if (filePath) setConsentedPath(filePath);
+  };
 
   // Unlike a native <video>'s play()/pause(), Vidstack's own throw/reject if
   // called before it considers the media genuinely ready -- a real
@@ -415,7 +442,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             />
             {/* Same action as the context menu's "Add to queue" item -- a
                 more discoverable, always-visible-on-hover entry point. */}
-            <Tooltip title="Add to queue">
+            {!hideAddToQueue && <Tooltip title="Add to queue">
               <IconButton
                 className="play-in-background-btn"
                 size="small"
@@ -430,7 +457,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
               >
                 <FormatListBulletedAddIcon fontSize="small" />
               </IconButton>
-            </Tooltip>
+            </Tooltip>}
             <LibraryVideoPlayerControls clipMarkers={clipMarkers} />
           </MediaPlayer>
           <PlayerContextMenu
@@ -446,7 +473,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             // set) -- backgroundPlayOverride (passed in by ClipCollectionView)
             // gives that case its own title/thumbnail/clipId instead of the
             // normal videoId/metadata-derived payload above.
-            onAddToQueue={handleAddToQueue}
+            onAddToQueue={hideAddToQueue ? undefined : handleAddToQueue}
             onCopyFrame={isAudioOnly ? undefined : handleCopyFrame}
             onChangeThumbnail={onChangeThumbnail}
             currentTime={contextMenuCurrentTime}
@@ -494,7 +521,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             <Typography variant="caption" sx={{ color: 'common.white' }}>Preparing preview...</Typography>
             <LinearProgressWithLabel value={state.percent} valueBuffer={state.percent} />
           </Box>}
-        {state.kind !== 'preparingPreview' &&
+        {state.kind !== 'preparingPreview' && !confirmPreview &&
           <Typography
             variant="caption"
             sx={{
@@ -506,7 +533,41 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             {state.kind === 'runtimeFailed' && `This .${ext} file couldn't be played here -- use the "Open externally" option.`}
             {state.kind === 'previewFailed' && `Couldn't prepare a playable preview for this .${ext} file -- use the "Open externally" option.`}
           </Typography>}
+        {state.kind !== 'preparingPreview' && confirmPreview &&
+          <Box
+            sx={{
+              position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', gap: 1, p: 2, textAlign: 'center',
+            }}
+          >
+            <Typography variant="body2" sx={{ color: 'common.white' }}>
+              {state.kind === 'awaitingPreviewConsent' && `This .${ext} file can't be played directly.`}
+              {state.kind === 'runtimeFailed' && `This .${ext} file couldn't be played here.`}
+              {state.kind === 'previewFailed' && `Couldn't create a playable copy${state.message ? `: ${state.message}` : '.'}`}
+            </Typography>
+            {state.kind !== 'previewFailed' && consentedPath !== filePath &&
+              <Button variant="contained" size="small" onClick={handleCreatePlayableCopy}>Create playable copy</Button>}
+          </Box>}
       </Box>
+      {confirmPreview &&
+        <Dialog open={consentDialogOpen} onClose={() => setConsentDialogOpen(false)}>
+          <DialogTitle>Create a playable copy?</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              This .{ext} file can't be played directly. SlothArchiver can make a temporary playable
+              copy; your original file isn't changed.
+            </DialogContentText>
+            <DialogContentText sx={{ mt: 1 }}>
+              {confirmPreview.kind === 'remux'
+                ? 'This should be quick: the video is only repackaged, not re-encoded.'
+                : 'This needs a full re-encode, which can take a while for long videos.'}
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setConsentDialogOpen(false)}>Not now</Button>
+            <Button variant="contained" onClick={handleCreatePlayableCopy}>Create copy</Button>
+          </DialogActions>
+        </Dialog>}
     </ResizableMediaContainer>
   );
 });

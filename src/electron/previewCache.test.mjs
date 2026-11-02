@@ -49,6 +49,20 @@ describe('ensurePlayablePreview', () => {
     expect(runner.runFfmpegWithProgress).toHaveBeenCalledWith(expect.objectContaining({ codecArgs: ['-c', 'copy', '-movflags', '+faststart'] }));
   });
 
+  it('writes to an explicit previewPath instead of a .preview sibling when given one', async () => {
+    const sourcePath = path.join(workDir, 'src', 'video.mkv');
+    fs.mkdirSync(path.dirname(sourcePath));
+    fs.writeFileSync(sourcePath, 'fake mkv bytes');
+    const previewPath = path.join(workDir, 'temp-previews', 'abc.mp4');
+
+    const result = await ensurePlayablePreview({ filePath: sourcePath, previewPath, ffmpegRunner: fakeRunner() });
+
+    expect(result).toEqual({ success: true, previewPath, generated: true });
+    expect(fs.existsSync(previewPath)).toBe(true);
+    expect(fs.existsSync(previewCachePathFor(sourcePath))).toBe(false);
+    expect(fs.readdirSync(path.dirname(sourcePath))).toEqual(['video.mkv']);
+  });
+
   it('falls back to a real re-encode when a stream codec is not Chromium-compatible', async () => {
     const sourcePath = path.join(workDir, 'video.mkv');
     fs.writeFileSync(sourcePath, 'fake mkv bytes');

@@ -4,7 +4,7 @@
 // require()/module.exports, not import/export syntax. A '.mjs' preload
 // throws "Cannot use import statement outside a module" the moment the
 // window opens under a sandboxed BrowserWindow.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     pickFolder: (options) => ipcRenderer.invoke('dialog:openFolder', options),
@@ -78,6 +78,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openLocalVideoFile: () => ipcRenderer.invoke('dialog:openLocalVideoFile'),
     openImageFile: () => ipcRenderer.invoke('dialog:openImageFile'),
     probeLocalFile: (filePath) => ipcRenderer.invoke('library:probeLocalFile', filePath),
+    openVidToolsFile: (filePath) => ipcRenderer.invoke('vidtools:openFile', filePath),
+    // Electron 43 has no File.path; a dropped File only maps to a path here.
+    getPathForFile: (file) => webUtils.getPathForFile(file),
     addLocalFile: (payload, targetTag) => ipcRenderer.invoke('library:addLocalFile', payload, targetTag),
     changeThumbnail: (payload) => ipcRenderer.invoke('library:changeThumbnail', payload),
     copyFrameToClipboard: (payload) => ipcRenderer.invoke('library:copyFrameToClipboard', payload),

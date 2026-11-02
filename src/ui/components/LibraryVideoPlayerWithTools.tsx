@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Link, Snackbar } from '@mui/material';
-import LibraryVideoPlayer, { type LibraryVideoPlayerHandle } from './LibraryVideoPlayer';
+import LibraryVideoPlayer, { type LibraryVideoPlayerHandle, type PreviewKind } from './LibraryVideoPlayer';
 import SaveClipDialog from './SaveClipDialog';
 import ChangeThumbnailDialog from './ChangeThumbnailDialog';
 import { formatSecondsAsClipTimestamp } from '../screens/FfmpegUtilitiesPanel';
@@ -56,6 +56,9 @@ export type LibraryVideoPlayerWithToolsProps = {
   // Passed straight through to LibraryVideoPlayer -- see its own prop of the
   // same name.
   backgroundPlayOverride?: { videoId: string; title: string; thumbnailPath: string | null; clipId: string };
+  // Passed straight through to LibraryVideoPlayer.
+  confirmPreview?: { kind: PreviewKind };
+  hideAddToQueue?: boolean;
 };
 
 // "source" means keep the input file's own extension, mirroring the same
@@ -69,7 +72,7 @@ function extensionForFormat(format: string, inputPath: string): string {
 export default function LibraryVideoPlayerWithTools({
   metadata, thumbnailPath, cacheBustKey, overrideFilePath, videoDir, epoch, existingClipTitles, convertFormatOptions, onClipCreated,
   standaloneClipping = false, onClipSavedToFile, initialSeekSeconds, backgroundPlayOverride,
-  initialClipStartSeconds, initialClipEndSeconds, onThumbnailChanged,
+  initialClipStartSeconds, initialClipEndSeconds, onThumbnailChanged, confirmPreview, hideAddToQueue,
 }: LibraryVideoPlayerWithToolsProps) {
   const playerRef = useRef<LibraryVideoPlayerHandle>(null);
   const [clipStartSeconds, setClipStartSeconds] = useState<number | null>(initialClipStartSeconds ?? null);
@@ -248,6 +251,8 @@ export default function LibraryVideoPlayerWithTools({
         initialSeekSeconds={initialSeekSeconds}
         backgroundPlayOverride={backgroundPlayOverride}
         onChangeThumbnail={videoDir ? handleChangeThumbnail : undefined}
+        confirmPreview={confirmPreview}
+        hideAddToQueue={hideAddToQueue}
         clipMarkers={{
           startSeconds: clipStartSeconds,
           endSeconds: clipEndSeconds,

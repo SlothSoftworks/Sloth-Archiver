@@ -26,6 +26,7 @@ import DownloaderScreen from './screens/DownloaderScreen';
 import OptionsScreen from './screens/OptionsScreen';
 import LibraryScreen from './screens/LibraryScreen';
 import ChannelArchiveScreen from './screens/ChannelArchiveScreen';
+import VidToolsScreen from './screens/VidToolsScreen';
 import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
 import BulkAddSidePanel, { BulkAddToggleButton } from './components/BulkAddSidePanel';
 import MiniPlayerBar from './components/MiniPlayerBar';
@@ -33,15 +34,17 @@ import { useLibraryNotification } from './hooks/useLibraryNotifications';
 import { useCookiesChange } from './hooks/useCookiesChange';
 import { useYtdlpUpdater } from './hooks/useYtdlpUpdater';
 import buttonIcon from '../../assets/button_icon.png';
+import type { VidToolsFile } from '../types/electron-api';
 
 const REPO_URL = 'https://github.com/SlothSoftworks/Sloth-Archiver';
 
 const LIBRARY_TAB_INDEX = 1;
-const OPTIONS_TAB_INDEX = 2;
+const VIDTOOLS_TAB_INDEX = 2;
+const OPTIONS_TAB_INDEX = 3;
 // Not a tab: the channel-archive view is reached by pasting a channel link,
-// and shows as a fourth panel with no tab highlighted.
-const CHANNEL_ARCHIVE_PANEL_INDEX = 3;
-const TAB_PATHS = ['/', '/library', '/options'];
+// and shows as an extra panel with no tab highlighted.
+const CHANNEL_ARCHIVE_PANEL_INDEX = 4;
+const TAB_PATHS = ['/', '/library', '/vidtools', '/options'];
 
 // The active tab is derived from the current location rather than its own
 // local state -- lets an internal "hyperlink" (the add-success toast, a
@@ -50,6 +53,7 @@ const TAB_PATHS = ['/', '/library', '/options'];
 // the Library tab being active.
 function pathToTabIndex(pathname: string): number {
   if (pathname.startsWith('/library')) return LIBRARY_TAB_INDEX;
+  if (pathname === '/vidtools') return VIDTOOLS_TAB_INDEX;
   if (pathname === '/options') return OPTIONS_TAB_INDEX;
   if (pathname === '/channel-archive') return CHANNEL_ARCHIVE_PANEL_INDEX;
   return 0;
@@ -174,6 +178,9 @@ export function BasicTabs() {
   // untouched -- this key bump makes clicking Library while on it behave
   // like any other tab: back to its own start.
   const [libraryResetKey, setLibraryResetKey] = useState(0);
+  // Held here, not in VidToolsScreen, so the opened file survives switching
+  // to another tab and back.
+  const [vidToolsFile, setVidToolsFile] = useState<VidToolsFile | null>(null);
 
   const handleChange = (_event: React.SyntheticEvent, newValue: number) => {
     navigate(TAB_PATHS[newValue]);
@@ -208,7 +215,8 @@ export function BasicTabs() {
             onClick={handleLibraryTabClick}
             {...a11yProps(LIBRARY_TAB_INDEX)}
           />
-          <Tab label="Options" {...a11yProps(2)} />
+          <Tab label="VidTools" {...a11yProps(VIDTOOLS_TAB_INDEX)} />
+          <Tab label="Options" {...a11yProps(OPTIONS_TAB_INDEX)} />
         </Tabs>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mr: 1 }}>
           {appVersion &&
@@ -255,7 +263,10 @@ export function BasicTabs() {
       <CustomTabPanel value={value} index={1} fill>
         <LibraryScreen key={libraryResetKey}/>
       </CustomTabPanel>
-      <CustomTabPanel value={value} index={2}>
+      <CustomTabPanel value={value} index={VIDTOOLS_TAB_INDEX}>
+        <VidToolsScreen file={vidToolsFile} onFileChange={setVidToolsFile}/>
+      </CustomTabPanel>
+      <CustomTabPanel value={value} index={OPTIONS_TAB_INDEX}>
         <OptionsScreen/>
       </CustomTabPanel>
       <CustomTabPanel value={value} index={CHANNEL_ARCHIVE_PANEL_INDEX} fill aria-labelledby={undefined} aria-label="Channel archive">

@@ -27,7 +27,7 @@ export function previewCachePathFor(filePath) {
 const CHROMIUM_VIDEO_CODECS = new Set(['h264', 'vp8', 'vp9', 'av1']);
 const CHROMIUM_AUDIO_CODECS = new Set(['aac', 'opus', 'vorbis', 'mp3']);
 
-function isChromiumCompatible(streams) {
+export function isChromiumCompatible(streams) {
     const video = streams.find((s) => s.codecType === 'video');
     const audio = streams.find((s) => s.codecType === 'audio');
     return (!video || CHROMIUM_VIDEO_CODECS.has(video.codecName))
@@ -43,9 +43,9 @@ function isChromiumCompatible(streams) {
 // file -- correctly handles a re-download (swapLibraryDownload) replacing
 // the source out from under an already-generated preview, since the fresh
 // source file's mtime is always newer than the stale preview's.
-export async function ensurePlayablePreview({ filePath, ffmpegRunner, onProgress = () => {} }) {
-    const previewPath = previewCachePathFor(filePath);
-
+// previewPath overrides the .preview/ sibling, for a source outside the
+// library whose folder this app shouldn't write into (VidTools).
+export async function ensurePlayablePreview({ filePath, previewPath = previewCachePathFor(filePath), ffmpegRunner, onProgress = () => {} }) {
     let sourceStat;
     try {
         sourceStat = fs.statSync(filePath);

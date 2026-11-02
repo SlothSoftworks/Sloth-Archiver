@@ -16,6 +16,14 @@ vi.mock('./screens/DownloaderScreen', () => ({ default: () => <div>Downloader Mo
 vi.mock('./screens/LibraryScreen', () => ({ default: () => <div>Library Mock</div> }));
 vi.mock('./screens/OptionsScreen', () => ({ default: () => <div>Options Mock</div> }));
 vi.mock('./screens/ChannelArchiveScreen', () => ({ default: () => <div>Channel Archive Mock</div> }));
+vi.mock('./screens/VidToolsScreen', () => ({
+  default: ({ file, onFileChange }: { file: { name: string } | null; onFileChange: (file: { name: string }) => void }) => (
+    <div>
+      VidTools Mock: {file ? file.name : 'no file'}
+      <button onClick={() => onFileChange({ name: 'movie.mkv' })}>open (test)</button>
+    </div>
+  ),
+}));
 vi.mock('./components/YtdlpUpdateDialog', () => ({ default: () => <div>YtdlpUpdateDialog Mock</div> }));
 vi.mock('./components/BulkAddSidePanel', () => ({
   default: () => <div>BulkAddSidePanel Mock</div>,
@@ -110,6 +118,20 @@ describe('MainPage', () => {
     await user.click(screen.getByRole('tab', { name: 'Options' }));
     expect(screen.getByText('Options Mock')).toBeInTheDocument();
     expect(screen.queryByText('Library Mock')).not.toBeInTheDocument();
+  });
+
+  it('opens VidTools at /vidtools and keeps its file across a tab switch', async () => {
+    const user = userEvent.setup();
+    renderMainPage('/vidtools');
+    expect(screen.getByRole('tab', { name: 'VidTools' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('VidTools Mock: no file')).toBeInTheDocument();
+
+    await user.click(screen.getByText('open (test)'));
+    await user.click(screen.getByRole('tab', { name: 'Options' }));
+    expect(screen.queryByText(/VidTools Mock/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'VidTools' }));
+    expect(screen.getByText('VidTools Mock: movie.mkv')).toBeInTheDocument();
   });
 
   it('resets the library notification badge when the Library tab is selected', async () => {

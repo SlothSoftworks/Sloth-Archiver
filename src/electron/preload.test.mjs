@@ -12,6 +12,7 @@ const on = vi.fn();
 const removeAllListeners = vi.fn();
 const removeListener = vi.fn();
 const exposeInMainWorld = vi.fn();
+const getPathForFile = vi.fn();
 
 // vi.mock('electron', ...) -- the approach every other test file in this
 // project uses -- doesn't reach this file's require('electron') call: that
@@ -30,6 +31,7 @@ require.cache[require.resolve('electron')] = {
   exports: {
     contextBridge: { exposeInMainWorld },
     ipcRenderer: { invoke, on, removeAllListeners, removeListener },
+    webUtils: { getPathForFile },
   },
 };
 
@@ -102,6 +104,7 @@ const invokeTable = [
   ['clearBacklog', [], ['backlog:clear']],
   ['openLocalVideoFile', [], ['dialog:openLocalVideoFile']],
   ['probeLocalFile', ['/p/file.mp4'], ['library:probeLocalFile', '/p/file.mp4']],
+  ['openVidToolsFile', ['/p/file.mkv'], ['vidtools:openFile', '/p/file.mkv']],
   ['addLocalFile', [{ sourceFilePath: '/p/file.mp4' }, 'Music'], ['library:addLocalFile', { sourceFilePath: '/p/file.mp4' }, 'Music']],
   ['copyFrameToClipboard', [{ filePath: '/p/v.mp4', timestampSeconds: 3 }], ['library:copyFrameToClipboard', { filePath: '/p/v.mp4', timestampSeconds: 3 }]],
   ['setVideoNotes', [{ videoDir: '/v', notes: 'n' }], ['library:setVideoNotes', { videoDir: '/v', notes: 'n' }]],
@@ -129,6 +132,13 @@ describe.each(invokeTable)('electronAPI.%s', (key, args, expectedInvokeArgs) => 
     electronAPI[key](...args);
     expect(invoke).toHaveBeenCalledWith(...expectedInvokeArgs);
   });
+});
+
+it('getPathForFile maps a dropped File through webUtils', () => {
+  getPathForFile.mockReturnValue('/dropped/video.mkv');
+  const file = { name: 'video.mkv' };
+  expect(electronAPI.getPathForFile(file)).toBe('/dropped/video.mkv');
+  expect(getPathForFile).toHaveBeenCalledWith(file);
 });
 
 describe('electronAPI event subscriptions', () => {

@@ -724,4 +724,84 @@ describe('LibraryVideoPlayer', () => {
       expect(screen.queryByRole('menuitem', { name: 'Copy frame to clipboard' })).not.toBeInTheDocument();
     });
   });
+
+  describe('confirmPreview (VidTools)', () => {
+    const mkv = '/elsewhere/movie.mkv';
+
+    it('asks before making a copy, and makes it once the user agrees', async () => {
+      const user = userEvent.setup();
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux' }} />,
+      );
+
+      expect(await screen.findByRole('dialog', { name: 'Create a playable copy?' })).toBeInTheDocument();
+      expect(screen.getByText(/only repackaged, not re-encoded/)).toBeInTheDocument();
+      expect(window.electronAPI.ensurePlayablePreview).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole('button', { name: 'Create copy' }));
+
+      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: mkv });
+      const source = await findSourceEl(container);
+      expect(source).toHaveAttribute('src', 'app-video://local/%2Fmock%2Fpreview.mp4?v=0');
+    });
+
+    it('warns that a re-encode is slow', async () => {
+      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'reencode' }} />);
+      expect(await screen.findByText(/full re-encode, which can take a while/)).toBeInTheDocument();
+    });
+
+    it('declining leaves a button that makes the copy later', async () => {
+      const user = userEvent.setup();
+      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux' }} />);
+
+      await user.click(await screen.findByRole('button', { name: 'Not now' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(screen.getByText("This .mkv file can't be played directly.")).toBeInTheDocument();
+      expect(window.electronAPI.ensurePlayablePreview).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole('button', { name: 'Create playable copy' }));
+      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: mkv });
+    });
+
+    it('plays a native file straight away, and offers a copy if it fails to decode', async () => {
+      const user = userEvent.setup();
+      const mp4 = '/elsewhere/hevc.mp4';
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mp4} confirmPreview={{ kind: 'reencode' }} />,
+      );
+      const source = await findSourceEl(container);
+      expect(source).toHaveAttribute('src', 'app-video://local/%2Felsewhere%2Fhevc.mp4?v=0');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      fireDecodeError(container.querySelector('video') as HTMLVideoElement);
+      await user.click(await screen.findByRole('button', { name: 'Create playable copy' }));
+
+      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: mp4 });
+    });
+
+    it('shows the failure message instead of the library caption', async () => {
+      const user = userEvent.setup();
+      window.electronAPI.ensurePlayablePreview = vi.fn().mockResolvedValue({ success: false, message: 'ffmpeg exploded' });
+      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux' }} />);
+
+      await user.click(await screen.findByRole('button', { name: 'Create copy' }));
+
+      expect(await screen.findByText("Couldn't create a playable copy: ffmpeg exploded")).toBeInTheDocument();
+      expect(screen.queryByText(/Open externally/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('hideAddToQueue', () => {
+    it('removes both the hover button and the menu item', async () => {
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath="/elsewhere/a.mp4" hideAddToQueue />,
+      );
+      await findSourceEl(container);
+
+      expect(screen.queryByRole('button', { name: 'Add to queue' })).not.toBeInTheDocument();
+      fireEvent.contextMenu(findClickOverlay(container));
+      await screen.findByRole('menuitem', { name: 'Loop' });
+      expect(screen.queryByRole('menuitem', { name: 'Add to queue' })).not.toBeInTheDocument();
+    });
+  });
 });

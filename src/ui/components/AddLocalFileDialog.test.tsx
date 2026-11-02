@@ -53,6 +53,14 @@ describe('AddLocalFileDialog', () => {
     expect(screen.getByDisplayValue('01/01/2024')).toBeInTheDocument();
   });
 
+  it('preselects and probes initialFilePath without opening the picker', async () => {
+    renderDialog({ initialFilePath: '/elsewhere/movie.mkv' });
+
+    await waitFor(() => expect(screen.getByLabelText('Title')).toHaveValue('Probed Title'));
+    expect(window.electronAPI.probeLocalFile).toHaveBeenCalledWith('/elsewhere/movie.mkv');
+    expect(window.electronAPI.openLocalVideoFile).not.toHaveBeenCalled();
+  });
+
   it('leaves the upload date picker empty when the probed date tag is unparseable', async () => {
     window.electronAPI.probeLocalFile = vi.fn().mockResolvedValue({
       id: 'abc123', width: 1920, height: 1080, duration: 120,
