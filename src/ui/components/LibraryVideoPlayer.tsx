@@ -1,14 +1,15 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Box, CardMedia, IconButton, Tooltip, Typography } from '@mui/material';
+import { Alert, Box, Button, CardMedia, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, IconButton, Snackbar, Tooltip, Typography } from '@mui/material';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
-import { MediaPlayer, MediaProvider, type MediaPlayerInstance } from '@vidstack/react';
+import { MEDIA_KEY_SHORTCUTS, MediaPlayer, MediaProvider, type MediaKeyShortcuts, type MediaPlayerInstance } from '@vidstack/react';
 import '@vidstack/react/player/styles/base.css';
 import type { LibraryVideoMetadata } from '../../types';
 import YouTubeEmbed from './YouTubeEmbed';
 import ResizableMediaContainer from './ResizableMediaContainer';
 import LibraryVideoPlayerControls from './LibraryVideoPlayerControls';
 import PlayerContextMenu from './PlayerContextMenu';
+import PlayerShortcutsDialog from './PlayerShortcutsDialog';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
 import { buildAppVideoUrl, safeRemoteImageUrl } from '../../utils/utils.ts';
 import { useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
@@ -42,7 +43,8 @@ export type ClipMarkersControl = {
 // containers (e.g. MKV) are a parsing limitation no delivery mechanism can
 // work around. This component quietly falls back to the static thumbnail
 // rather than attempting a player known to fail; "open in default player"
-// exists in LibraryVideoDetail for exactly this case.
+// exists in LibraryVideoDetail for exactly this case. Mirrored in
+// localFileAccess.mjs (main), which tells VidTools whether to ask first.
 const PLAYABLE_VIDEO_EXTENSIONS = new Set(['mp4', 'webm']);
 
 function getExtension(filePath: string): string {
@@ -60,7 +62,9 @@ function mimeTypeForExtension(ext: string): 'video/webm' | 'video/mp4' {
 
 // A native-playable extension goes straight to 'ready'. A non-native
 // extension (e.g. MKV) starts in 'preparingPreview' while a playable
-// derivative is generated, landing on 'ready' or 'previewFailed'.
+// derivative is generated, landing on 'ready' or 'previewFailed'. With
+// confirmPreview set it waits in 'awaitingPreviewConsent' instead, until the
+// user agrees to the copy being made.
 // 'runtimeFailed' is reachable from either path -- a file that *should* play
 // can still fail at actual decode time. computeInitialState below always
 // resolves synchronously to preparingPreview/ready on the very first render,
@@ -70,18 +74,23 @@ type PlaybackState =
   | { kind: 'preparingPreview'; percent: number }
   | { kind: 'previewFailed'; message?: string }
   | { kind: 'ready'; sourcePath: string; mimeType: 'video/mp4' | 'video/webm' }
-  | { kind: 'runtimeFailed' };
+  | { kind: 'runtimeFailed' }
+  | { kind: 'awaitingPreviewConsent' };
 
-function computeInitialState(filePath: string | null): PlaybackState {
+export type PreviewKind = 'remux' | 'reencode';
+
+function computeInitialState(filePath: string | null, confirmPreview: boolean): PlaybackState {
   if (filePath) {
     const ext = getExtension(filePath);
     if (PLAYABLE_VIDEO_EXTENSIONS.has(ext)) {
       return { kind: 'ready', sourcePath: filePath, mimeType: mimeTypeForExtension(ext) };
     }
   }
-  return { kind: 'preparingPreview', percent: 0 };
+  return confirmPreview ? { kind: 'awaitingPreviewConsent' } : { kind: 'preparingPreview', percent: 0 };
 }
 
+const FRAME_STEP_SECONDS = 1 / 24;
+const SPEED_LABEL_MS = 1500;
 const containerSx = { borderRadius: 2 };
 const fillSx = { width: '100%', height: '100%', display: 'block' };
 
@@ -115,10 +124,27 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // having no context menu item) never happens in practice; the caller
   // (LibraryVideoPlayerWithTools) always has a videoDir to write into.
   onChangeThumbnail?: (currentTime: number | null) => void;
-}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange, initialSeekSeconds, backgroundPlayOverride, onChangeThumbnail }, ref) {
+  // VidTools: ask before making a playable copy of a file Chromium can't
+  // play, instead of starting the conversion straight away. kind only
+  // changes the dialog's wording (a quick repackage vs a slow re-encode).
+  confirmPreview?: { kind: PreviewKind };
+  // VidTools files aren't library videos, which every queue entry links to.
+  hideAddToQueue?: boolean;
+  // Where the YouTube embed (not-downloaded video) starts; a new key reloads
+  // it even when the same time is asked for twice.
+  embedStart?: { seconds: number; key: number } | null;
+}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange, initialSeekSeconds, backgroundPlayOverride, onChangeThumbnail, confirmPreview, hideAddToQueue = false, embedStart }, ref) {
   const { thumbnail, videoId } = metadata;
   const filePath = overrideFilePath ?? metadata.downloadedFilePath;
-  const [state, setState] = useState<PlaybackState>(() => computeInitialState(filePath));
+  const [state, setState] = useState<PlaybackState>(() => computeInitialState(filePath, !!confirmPreview));
+  // The file the user agreed to make a playable copy of. Also how a natively
+  // playable file that failed at decode time (runtimeFailed) gets a copy.
+  const [consentedPath, setConsentedPath] = useState<string | null>(null);
+  const [consentDialogOpen, setConsentDialogOpen] = useState(false);
+  const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
+  const [speedLabel, setSpeedLabel] = useState<number | null>(null);
+  const lastRateRef = useRef(1);
+  const speedLabelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // One-time "you can start playback here" affordance -- gone for good once
   // playback has ever started (native controls take over from there).
   const [hasStartedPlayback, setHasStartedPlayback] = useState(false);
@@ -135,6 +161,9 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // thumbnail" is clicked -- by then the video may have kept playing past
   // the position the user actually right-clicked at.
   const [contextMenuCurrentTime, setContextMenuCurrentTime] = useState<number | null>(null);
+  // Kept after the toast closes so its text doesn't change mid fade-out.
+  const [copyFrameResult, setCopyFrameResult] = useState<{ success: boolean; message?: string } | null>(null);
+  const [copyFrameToastOpen, setCopyFrameToastOpen] = useState(false);
   const playerRef = useRef<MediaPlayerInstance>(null);
   const backgroundPlayer = useBackgroundPlayer();
   // Guards initialSeekSeconds from being re-applied on a later 'can-play'
@@ -155,8 +184,14 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     setIsAudioOnly(false);
     if (!filePath) return;
 
-    if (isNativePlayable) {
+    const consented = consentedPath === filePath;
+    if (isNativePlayable && !consented) {
       setState({ kind: 'ready', sourcePath: filePath, mimeType: mimeTypeForExtension(ext) });
+      return;
+    }
+    if (confirmPreview && !consented) {
+      setState({ kind: 'awaitingPreviewConsent' });
+      setConsentDialogOpen(true);
       return;
     }
 
@@ -181,8 +216,13 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
       cancelled = true;
       window.electronAPI.removePreviewGenerationProgressListener();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- ext/isNativePlayable are pure derivations of filePath, not independent inputs.
-  }, [filePath, cacheBustKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ext/isNativePlayable are pure derivations of filePath, not independent inputs; confirmPreview is a new object each render.
+  }, [filePath, cacheBustKey, consentedPath]);
+
+  const handleCreatePlayableCopy = () => {
+    setConsentDialogOpen(false);
+    if (filePath) setConsentedPath(filePath);
+  };
 
   // Unlike a native <video>'s play()/pause(), Vidstack's own throw/reject if
   // called before it considers the media genuinely ready -- a real
@@ -263,6 +303,73 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     if (wasEmpty) safePause();
   };
 
+  // filePath, not state.sourcePath: the latter may be a lossy .preview/
+  // re-encode, and the frame should come from the original file.
+  const handleCopyFrame = async (currentTime: number | null) => {
+    if (!filePath) return;
+    const result = await window.electronAPI.copyFrameToClipboard({ filePath, timestampSeconds: currentTime ?? 0 });
+    setCopyFrameResult(result);
+    setCopyFrameToastOpen(true);
+  };
+
+  // No frame rate is stored, so frame step is a fixed nudge: 24 fps has the
+  // longest frames of common video, so every press shows a new frame.
+  // Reads and writes the native <video> because Vidstack's currentTime only
+  // catches up on the next media event, which a held key outruns.
+  // While playing, the seek waits for the 'pause' event: a seek drops
+  // readyState to 1, and Vidstack ignores a 'pause' that lands then, leaving
+  // its state stuck on "playing" so neither play nor pause works again.
+  const stepFrame = (direction: 1 | -1) => {
+    const videoEl = playerRef.current?.el?.querySelector('video');
+    if (!videoEl || !playerRef.current) return;
+    const seek = () => {
+      const target = videoEl.currentTime + direction * FRAME_STEP_SECONDS;
+      videoEl.currentTime = Math.max(0, Math.min(target, videoEl.duration || target));
+    };
+    if (playerRef.current.paused) {
+      seek();
+    } else if (!videoEl.paused) {
+      videoEl.addEventListener('pause', seek, { once: true });
+      videoEl.pause();
+    }
+  };
+
+  const seekToMarker = (seconds: number | null | undefined) => {
+    if (seconds != null && playerRef.current) playerRef.current.currentTime = seconds;
+  };
+
+  // Mostly for noticing the way back to 1x, since the controls show no speed.
+  const handleRateChange = (rate: number) => {
+    if (rate === lastRateRef.current) return;
+    lastRateRef.current = rate;
+    setSpeedLabel(rate);
+    if (speedLabelTimerRef.current) clearTimeout(speedLabelTimerRef.current);
+    speedLabelTimerRef.current = setTimeout(() => setSpeedLabel(null), SPEED_LABEL_MS);
+  };
+  useEffect(() => () => {
+    if (speedLabelTimerRef.current) clearTimeout(speedLabelTimerRef.current);
+  }, []);
+
+  // Added to Vidstack's defaults (all listed in PlayerShortcutsDialog), which
+  // only listen while focus is inside the player.
+  const keyShortcuts: MediaKeyShortcuts = {
+    ...MEDIA_KEY_SHORTCUTS,
+    stepFrameBackward: { keys: ',', onKeyDown: ({ event }) => { event.preventDefault(); stepFrame(-1); } },
+    stepFrameForward: { keys: '.', onKeyDown: ({ event }) => { event.preventDefault(); stepFrame(1); } },
+    markClipStart: { keys: ['Meta+j', 'Ctrl+j'], onKeyDown: ({ event }) => { event.preventDefault(); clipMarkers?.onSetStart(); } },
+    markClipEnd: { keys: ['Meta+l', 'Ctrl+l'], onKeyDown: ({ event }) => { event.preventDefault(); clipMarkers?.onSetEnd(); } },
+    jumpToClipStart: { keys: 'Shift+J', onKeyDown: ({ event }) => { event.preventDefault(); seekToMarker(clipMarkers?.startSeconds); } },
+    jumpToClipEnd: { keys: 'Shift+L', onKeyDown: ({ event }) => { event.preventDefault(); seekToMarker(clipMarkers?.endSeconds); } },
+    showShortcuts: { keys: 'Shift+I', onKeyDown: ({ event }) => { event.preventDefault(); setShortcutsDialogOpen(true); } },
+    copyFrame: {
+      keys: ['Meta+s', 'Ctrl+s'],
+      onKeyDown: ({ event }) => {
+        event.preventDefault();
+        if (!isAudioOnly) handleCopyFrame(playerRef.current ? playerRef.current.currentTime : null);
+      },
+    },
+  };
+
   const handleCanPlay = () => {
     // Reads the native <video> element directly rather than Vidstack's own
     // state.viewType/mediaWidth/mediaHeight -- viewType is derived from the
@@ -329,7 +436,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     }
     return (
       <ResizableMediaContainer sx={containerSx}>
-        <YouTubeEmbed videoId={videoId} sx={fillSx} />
+        <YouTubeEmbed key={embedStart?.key} videoId={videoId} startSeconds={embedStart?.seconds} sx={fillSx} />
       </ResizableMediaContainer>
     );
   }
@@ -349,6 +456,8 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             src={{ src: buildAppVideoUrl(state.sourcePath, cacheBustKey), type: state.mimeType }}
             style={{ width: '100%', height: '100%', backgroundColor: 'black' }}
             loop={loopEnabled}
+            keyShortcuts={keyShortcuts}
+            onRateChange={handleRateChange}
             onTimeUpdate={handleLoopSequenceTimeUpdate}
             onCanPlay={handleCanPlay}
             onError={() => setState({ kind: 'runtimeFailed' })}
@@ -403,7 +512,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             />
             {/* Same action as the context menu's "Add to queue" item -- a
                 more discoverable, always-visible-on-hover entry point. */}
-            <Tooltip title="Add to queue">
+            {!hideAddToQueue && <Tooltip title="Add to queue">
               <IconButton
                 className="play-in-background-btn"
                 size="small"
@@ -418,7 +527,17 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
               >
                 <FormatListBulletedAddIcon fontSize="small" />
               </IconButton>
-            </Tooltip>
+            </Tooltip>}
+            {speedLabel != null &&
+              <Box
+                sx={{
+                  position: 'absolute', top: 8, left: 8, zIndex: 1, pointerEvents: 'none',
+                  px: 1, py: 0.25, borderRadius: 1,
+                  backgroundColor: 'rgba(0, 0, 0, 0.6)', color: 'common.white',
+                }}
+              >
+                <Typography variant="body2">{speedLabel}×</Typography>
+              </Box>}
             <LibraryVideoPlayerControls clipMarkers={clipMarkers} />
           </MediaPlayer>
           <PlayerContextMenu
@@ -434,10 +553,22 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             // set) -- backgroundPlayOverride (passed in by ClipCollectionView)
             // gives that case its own title/thumbnail/clipId instead of the
             // normal videoId/metadata-derived payload above.
-            onAddToQueue={handleAddToQueue}
+            onAddToQueue={hideAddToQueue ? undefined : handleAddToQueue}
+            onCopyFrame={isAudioOnly ? undefined : handleCopyFrame}
             onChangeThumbnail={onChangeThumbnail}
             currentTime={contextMenuCurrentTime}
           />
+          <PlayerShortcutsDialog open={shortcutsDialogOpen} onClose={() => setShortcutsDialogOpen(false)} />
+          <Snackbar
+            open={copyFrameToastOpen}
+            autoHideDuration={copyFrameResult?.success ? 3000 : 6000}
+            onClose={() => setCopyFrameToastOpen(false)}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          >
+            <Alert onClose={() => setCopyFrameToastOpen(false)} severity={copyFrameResult?.success ? 'success' : 'error'} variant="filled">
+              {copyFrameResult?.success ? 'Frame copied to clipboard' : `Couldn't copy frame: ${copyFrameResult?.message ?? 'unknown error'}`}
+            </Alert>
+          </Snackbar>
           {!hasStartedPlayback &&
             <IconButton
               onClick={safePlay}
@@ -471,7 +602,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             <Typography variant="caption" sx={{ color: 'common.white' }}>Preparing preview...</Typography>
             <LinearProgressWithLabel value={state.percent} valueBuffer={state.percent} />
           </Box>}
-        {state.kind !== 'preparingPreview' &&
+        {state.kind !== 'preparingPreview' && !confirmPreview &&
           <Typography
             variant="caption"
             sx={{
@@ -483,7 +614,41 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             {state.kind === 'runtimeFailed' && `This .${ext} file couldn't be played here -- use the "Open externally" option.`}
             {state.kind === 'previewFailed' && `Couldn't prepare a playable preview for this .${ext} file -- use the "Open externally" option.`}
           </Typography>}
+        {state.kind !== 'preparingPreview' && confirmPreview &&
+          <Box
+            sx={{
+              position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', gap: 1, p: 2, textAlign: 'center',
+            }}
+          >
+            <Typography variant="body2" sx={{ color: 'common.white' }}>
+              {state.kind === 'awaitingPreviewConsent' && `This .${ext} file can't be played directly.`}
+              {state.kind === 'runtimeFailed' && `This .${ext} file couldn't be played here.`}
+              {state.kind === 'previewFailed' && `Couldn't create a playable copy${state.message ? `: ${state.message}` : '.'}`}
+            </Typography>
+            {state.kind !== 'previewFailed' && consentedPath !== filePath &&
+              <Button variant="contained" size="small" onClick={handleCreatePlayableCopy}>Create playable copy</Button>}
+          </Box>}
       </Box>
+      {confirmPreview &&
+        <Dialog open={consentDialogOpen} onClose={() => setConsentDialogOpen(false)}>
+          <DialogTitle>Create a playable copy?</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              This .{ext} file can't be played directly. SlothArchiver can make a temporary playable
+              copy; your original file isn't changed.
+            </DialogContentText>
+            <DialogContentText sx={{ mt: 1 }}>
+              {confirmPreview.kind === 'remux'
+                ? 'This should be quick: the video is only repackaged, not re-encoded.'
+                : 'This needs a full re-encode, which can take a while for long videos.'}
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setConsentDialogOpen(false)}>Not now</Button>
+            <Button variant="contained" onClick={handleCreatePlayableCopy}>Create copy</Button>
+          </DialogActions>
+        </Dialog>}
     </ResizableMediaContainer>
   );
 });

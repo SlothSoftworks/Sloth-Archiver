@@ -50,7 +50,34 @@ export type LibraryVideoMetadata = {
     categories?: string[] | null;
     tags?: string[] | null;
     music?: { track: string | null; artist: string | null; album: string | null; genre: string | null } | null;
+    language?: string | null;
+    // Summary of <epochDir>/transcript.json (transcripts.mjs); the lines
+    // themselves only come from transcripts:get.
+    transcript?: TranscriptSummary | null;
 }
+
+export type TranscriptSource = 'manual' | 'auto';
+
+export type TranscriptSummary = {
+    language: string;
+    languageName: string;
+    source: TranscriptSource;
+    fetchedEpoch: number;
+    segmentCount: number;
+};
+
+export type TranscriptSegment = { start: number; end: number; text: string };
+
+export type Transcript = {
+    version: number;
+    language: string;
+    languageName: string;
+    source: TranscriptSource;
+    fetchedEpoch: number;
+    segments: TranscriptSegment[];
+    // Only on the default transcript: the languages the video offers.
+    availableLanguages?: { code: string; name: string; source: TranscriptSource }[];
+};
 
 export type LibraryVideoEpoch = {
     epoch: string;
@@ -68,6 +95,9 @@ export type LibraryVideo = {
     epochs: LibraryVideoEpoch[];
     thumbnailPath: string | null;
     clipCount: number;
+    // <videoDir>/video-data.json (library.mjs). Only on a full entry
+    // (library:getVideo) -- summarizeLibraryIndex leaves it out.
+    videoData?: { notes?: string };
 }
 
 export type LibraryChannel = {
@@ -97,6 +127,7 @@ export type LibraryClip = {
     // produce this clip -- absent on clips created before this field
     // existed.
     clipTimestamps?: { start: string; end: string };
+    notes?: string;
 }
 
 export type PlaylistEntry = {

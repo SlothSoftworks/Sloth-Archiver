@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, clipboard, nativeImage } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'url';
 import path from 'path'
 import { spawn } from 'child_process';
@@ -10,16 +10,21 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex } from './library.mjs';
-import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, setVideoNotes, setClipNotes, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, extractFrameToFile, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex } from './library.mjs';
+import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, clampTranscriptSettings, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
 import { createRotatingLogWriter, redactHomeDir } from './logFile.mjs';
 import { buildLibraryExport, parseLibraryExport, importLibraryExport, summarizeExport, IMPORT_MAX_BYTES } from './libraryExport.mjs';
-import { ensurePlayablePreview } from './previewCache.mjs';
+import { ensurePlayablePreview, isChromiumCompatible } from './previewCache.mjs';
+import { createLocalFileAccess, validateOpenablePath, isSameFile, isNativePlayableExtension, LOCAL_VIDEO_FILE_EXTENSIONS } from './localFileAccess.mjs';
 import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
 import { createChannelScanner, createChannelScanSession } from './channelScan.mjs';
+import {
+    pickTranscriptTrack, findTranscriptTrackByCode, listTranscriptLanguages, mergeTranscriptLanguages, buildSubtitleDownloadArgs, parseVtt,
+    readTranscript, readTranscriptForLanguage, listExtraTranscriptLanguages, writeTranscript, saveAvailableTranscriptLanguages, transcriptToText, createTranscriptQueue,
+} from './transcripts.mjs';
 import { createArchiveBacklogStore, summarizeBacklog, BACKLOG_MAX_ITEMS } from './archiveBacklog.mjs';
 import { parseYouTubeChannelUrl } from './utils/youtube.mjs';
 import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
@@ -224,6 +229,12 @@ const channelScans = createChannelScanSession({
 app.on('before-quit', () => channelScans.killAll());
 const backlogStore = createArchiveBacklogStore(path.join(app.getPath('userData'), 'backlog.json'));
 const ffmpegRunner = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog: log, isDev });
+
+const localFileAccess = createLocalFileAccess({ previewDir: path.join(app.getPath('temp'), 'SlothArchiver-vidtools') });
+app.on('before-quit', () => localFileAccess.clearPreviews());
+
+const SAME_FILE_MESSAGE = 'The output file is the source file. Pick a different name or folder.';
+
 const { getMediaDurationSeconds, getFfmpegVersion, runFfmpegWithProgress, convertWithFallback, clipAndConvert } = ffmpegRunner;
 
 // Registers app-video:// as a privileged scheme so the Library tab's player
@@ -367,7 +378,7 @@ async function handleAppVideoRequest(request) {
     const filePath = decodeURIComponent(url.pathname.slice(1));
 
     const { libraryDir } = readSettings();
-    const resolvedFilePath = resolveInsideLibrary(libraryDir, filePath);
+    const resolvedFilePath = localFileAccess.resolveReadableInput(libraryDir, filePath);
     if (!resolvedFilePath) {
         return new Response('Forbidden', { status: 403, headers: NO_STORE_HEADERS });
     }
@@ -691,6 +702,15 @@ ipcMain.handle('settings:setEmbedMetadataByDefault', async (e, value) => {
     settings.embedMetadataByDefault = clampEmbedMetadataByDefault(value);
     writeSettings(settings);
     return { success: true, embedMetadataByDefault: settings.embedMetadataByDefault };
+});
+
+ipcMain.handle('settings:getTranscriptSettings', async () => clampTranscriptSettings(readSettings()));
+
+ipcMain.handle('settings:setTranscriptSettings', async (e, value) => {
+    const settings = readSettings();
+    Object.assign(settings, clampTranscriptSettings({ ...clampTranscriptSettings(settings), ...value }));
+    writeSettings(settings);
+    return { success: true, ...clampTranscriptSettings(settings) };
 });
 
 // User-added muxers for the Library view's "convert to" ffmpeg utility,
@@ -1170,6 +1190,7 @@ ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, 
     await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
     const metadataTags = buildEmbedMetadataTags(metadata);
     await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
+    maybeAutoFetchTranscript({ videoDir, epoch, metadata });
     return { success: true };
 });
 
@@ -1189,6 +1210,7 @@ ipcMain.handle('library:swapDownload', async (e, { videoDir, epoch, tempFilePath
     const filePath = kind === 'audio' ? metadata.downloadedAudioFilePath : metadata.downloadedFilePath;
     const metadataTags = buildEmbedMetadataTags(metadata);
     await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
+    maybeAutoFetchTranscript({ videoDir, epoch, metadata });
     return metadata;
 });
 
@@ -1520,7 +1542,6 @@ app.on("ready", async () => {
     });
 
     mainWindow.loadURL(`${rendererOrigin}/index.html`);
-    if (isDev) mainWindow.webContents.openDevTools();
 })
 
 ipcMain.handle('dialog:openFolder', async (e, options) => dialog.showOpenDialog({
@@ -1531,12 +1552,6 @@ ipcMain.handle('dialog:openFolder', async (e, options) => dialog.showOpenDialog(
     // panel); Windows' native folder picker already always allows this.
     properties: ['openDirectory', 'createDirectory'],
 }));
-
-// A broad real-world video-extension list, not getSupportedVideoFilters()'s
-// re-encode-target list (that one deliberately excludes .avi/.mov/.webm/.flv,
-// which are all valid things to pick up as a local file to add). Mirrors
-// dialog:saveExportedFile's own extensions-list + allVideoFilter shape.
-const LOCAL_VIDEO_FILE_EXTENSIONS = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', 'm4v', '3gp', 'ts', 'mpg', 'mpeg'];
 
 ipcMain.handle('dialog:openLocalVideoFile', async () => dialog.showOpenDialog({
     properties: ['openFile'],
@@ -1625,6 +1640,41 @@ ipcMain.handle('library:changeThumbnail', async (e, { videoDir, mode, timestampS
     }
 });
 
+// Player context menu's "Copy frame" action. Grabs the frame with ffmpeg from
+// the original file rather than drawing the <video> element to a canvas,
+// since for formats Chromium can't play the element is showing a lossy
+// .preview/ re-encode (previewCache.mjs), not the original.
+export async function copyFrameToClipboard({ ffmpegRunner, inputPath, timestampSeconds }) {
+    const pngPath = path.join(os.tmpdir(), `sloth-frame-${crypto.randomUUID()}.png`);
+    try {
+        await extractFrameToFile({ ffmpegRunner, inputPath, outputPath: pngPath, timestampSeconds });
+        // ffmpeg exits cleanly with no output when the timestamp is past the
+        // last frame, so an empty image is the only failure signal there.
+        const image = nativeImage.createFromPath(pngPath);
+        if (image.isEmpty()) throw new Error('No frame could be read at this position.');
+        clipboard.writeImage(image);
+    } finally {
+        fs.rmSync(pngPath, { force: true });
+    }
+}
+
+ipcMain.handle('library:copyFrameToClipboard', async (e, { filePath, timestampSeconds }) => {
+    const { libraryDir } = readSettings();
+    const resolvedFilePath = localFileAccess.resolveReadableInput(libraryDir, filePath);
+    if (!resolvedFilePath) {
+        return { success: false, message: 'Refusing to read outside the configured library folder.' };
+    }
+    if (typeof timestampSeconds !== 'number' || !Number.isFinite(timestampSeconds) || timestampSeconds < 0) {
+        return { success: false, message: 'Invalid timestamp.' };
+    }
+    try {
+        await copyFrameToClipboard({ ffmpegRunner, inputPath: resolvedFilePath, timestampSeconds });
+        return { success: true };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
 // No renderer-supplied options object (SEC-014) -- every field is fixed
 // here; the renderer only suggests a file name.
 ipcMain.handle('dialog:saveVideoFile', async (e, defaultName) => {
@@ -1640,10 +1690,10 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName) => {
     return result;
 })
 
-function fetchVideoInfoForUrl(url) {
+function fetchVideoInfoForUrl(url, { skipCache = false } = {}) {
     assertValidHttpUrl(url, 'video URL');
     return fetchVideoInfo(url, {
-        ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS, onLog: log,
+        ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS, skipCache, onLog: log,
     });
 }
 
@@ -2399,10 +2449,13 @@ ipcMain.handle('dialog:saveExportedFile', async (e, { defaultName, extensions, i
 
 ipcMain.handle('library:extractMp3', async (e, { inputPath, outputPath }) => {
     const { libraryDir } = readSettings();
-    const resolvedInput = resolveInsideLibrary(libraryDir, inputPath);
+    const resolvedInput = localFileAccess.resolveReadableInput(libraryDir, inputPath);
     const resolvedOutput = resolveAppOrLibraryPath(libraryDir, outputPath);
     if (!resolvedInput || !resolvedOutput) {
         return { success: false, message: 'Refusing to read or write outside the configured library folder.' };
+    }
+    if (isSameFile(resolvedInput, resolvedOutput)) {
+        return { success: false, message: SAME_FILE_MESSAGE };
     }
     try {
         const duration = await getMediaDurationSeconds(resolvedInput);
@@ -2427,19 +2480,60 @@ ipcMain.handle('library:extractMp3', async (e, { inputPath, outputPath }) => {
 // channel (sendPreviewGenerationProgress above), not ffmpegUtilityProgress --
 // see that function's own comment for why sharing it isn't safe here.
 ipcMain.handle('library:ensurePlayablePreview', async (e, { filePath }) => {
-    return ensurePlayablePreview({
-        filePath,
-        ffmpegRunner,
-        onProgress: sendPreviewGenerationProgress,
-    });
+    const { libraryDir } = readSettings();
+    const insideLibrary = resolveInsideLibrary(libraryDir, filePath);
+    if (insideLibrary) {
+        return ensurePlayablePreview({ filePath: insideLibrary, ffmpegRunner, onProgress: sendPreviewGenerationProgress });
+    }
+    if (!localFileAccess.isOpened(filePath)) {
+        return { success: false, message: 'Refusing to read outside the configured library folder.' };
+    }
+    const resolved = path.resolve(filePath);
+    const previewPath = localFileAccess.previewPathFor(resolved);
+    localFileAccess.rememberReadable(previewPath);
+    return ensurePlayablePreview({ filePath: resolved, previewPath, ffmpegRunner, onProgress: sendPreviewGenerationProgress });
+});
+
+// VidTools' file picker and drop zone both land here. Re-called with the
+// same path when the tab remounts, so the current file's preview is kept and
+// only other files' previews are cleared.
+ipcMain.handle('vidtools:openFile', async (e, filePath) => {
+    const check = validateOpenablePath(filePath);
+    if (!check.success) return check;
+    const resolved = check.filePath;
+    localFileAccess.clearPreviews({ keep: localFileAccess.previewPathFor(resolved) });
+    localFileAccess.rememberReadable(resolved);
+    const [streams, duration] = await Promise.all([
+        ffmpegRunner.probeMediaStreams(resolved).catch(() => []),
+        ffmpegRunner.getMediaDurationSeconds(resolved).catch(() => 0),
+    ]);
+    const videoStream = streams.find((s) => s.codecType === 'video');
+    const audioStream = streams.find((s) => s.codecType === 'audio');
+    return {
+        success: true,
+        filePath: resolved,
+        name: path.basename(resolved),
+        dir: path.dirname(resolved),
+        sizeBytes: check.sizeBytes,
+        duration: duration || null,
+        width: videoStream?.width || null,
+        height: videoStream?.height || null,
+        videoCodec: videoStream?.codecName || null,
+        audioCodec: audioStream?.codecName || null,
+        needsPreview: !isNativePlayableExtension(resolved),
+        previewKind: isChromiumCompatible(streams) ? 'remux' : 'reencode',
+    };
 });
 
 ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, format, forceReencode = false }) => {
     const { libraryDir } = readSettings();
-    const resolvedInput = resolveInsideLibrary(libraryDir, inputPath);
+    const resolvedInput = localFileAccess.resolveReadableInput(libraryDir, inputPath);
     const resolvedOutput = resolveAppOrLibraryPath(libraryDir, outputPath);
     if (!resolvedInput || !resolvedOutput) {
         return { success: false, message: 'Refusing to read or write outside the configured library folder.' };
+    }
+    if (isSameFile(resolvedInput, resolvedOutput)) {
+        return { success: false, message: SAME_FILE_MESSAGE };
     }
     try {
         const duration = await getMediaDurationSeconds(resolvedInput);
@@ -2478,10 +2572,13 @@ ipcMain.handle('library:convertFormat', async (e, { inputPath, outputPath, forma
 // library:createClip so format/forceReencode behave identically either way.
 ipcMain.handle('library:extractClip', async (e, { inputPath, outputPath, start, end, format, forceReencode = false }) => {
     const { libraryDir } = readSettings();
-    const resolvedInput = resolveInsideLibrary(libraryDir, inputPath);
+    const resolvedInput = localFileAccess.resolveReadableInput(libraryDir, inputPath);
     const resolvedOutput = resolveAppOrLibraryPath(libraryDir, outputPath);
     if (!resolvedInput || !resolvedOutput) {
         return { success: false, message: 'Refusing to read or write outside the configured library folder.' };
+    }
+    if (isSameFile(resolvedInput, resolvedOutput)) {
+        return { success: false, message: SAME_FILE_MESSAGE };
     }
     if (!isValidClipTimestamp(start) || !isValidClipTimestamp(end)) {
         return { success: false, message: 'Invalid clip start/end timestamp.' };
@@ -2587,6 +2684,221 @@ ipcMain.handle('library:deleteClip', async (e, { videoDir, clipId }) => {
         const result = deleteClip({ libraryDir, videoDir, clipId });
         await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
         return result;
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+ipcMain.handle('library:setVideoNotes', async (e, { videoDir, notes }) => {
+    const { libraryDir } = readSettings();
+    try {
+        const savedNotes = setVideoNotes({ libraryDir, videoDir, notes });
+        await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
+        return { success: true, notes: savedNotes };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+});
+
+// Transcripts (transcripts.mjs). The epoch comes from the renderer, so it is
+// checked to be a plain epoch folder name before being joined onto the
+// already-contained videoDir.
+const TRANSCRIPT_BATCH_MAX_ITEMS = 5000;
+
+function resolveEpochDir(libraryDir, videoDir, epoch) {
+    if (typeof epoch !== 'string' || !/^\d{1,16}$/.test(epoch)) return null;
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    return resolvedVideoDir ? path.join(resolvedVideoDir, epoch) : null;
+}
+
+// A renderer-sent language code, or null when absent or not a plain code
+// (it ends up in a file name).
+function transcriptLanguageCode(language) {
+    if (typeof language !== 'string' || !language) return null;
+    return clampTranscriptSettings({ transcriptLanguage: language }).transcriptLanguage || null;
+}
+
+function readEpochMetadata(epochDir) {
+    try {
+        return JSON.parse(fs.readFileSync(path.join(epochDir, 'metadata.json'), 'utf-8'));
+    } catch {
+        return null;
+    }
+}
+
+// Info cached before subtitleTracks existed has none; one fresh fetch fills it.
+async function fetchSubtitleTracks(url) {
+    let { data } = await fetchVideoInfoForUrl(url);
+    if (!data.response.subtitleTracks) ({ data } = await fetchVideoInfoForUrl(url, { skipCache: true }));
+    return { subtitleTracks: data.response.subtitleTracks, language: data.response.language };
+}
+
+// Its own temp folder, never a download's: findFinalFile assumes exactly one
+// file lands in a download folder and would happily pick up a .vtt.
+function downloadSubtitleVtt(url, track) {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-subs-'));
+    const args = buildSubtitleDownloadArgs({ url, track, outputDir: tempDir, ffmpegDir, extraArgs: [...cookiesArgs(), ...jsRuntimeArgs()] });
+    return new Promise((resolve, reject) => {
+        const script = spawn(ytdlpPath, args, { env: ytdlpSpawnEnv() });
+        let stderr = '';
+        script.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+        script.on('error', (err) => {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            reject(Object.assign(new Error(`Failed to start yt-dlp: ${err.message}`), { kind: classifyDownloadError({ spawnError: err }).kind }));
+        });
+        script.on('close', (code) => {
+            try {
+                if (code !== 0) {
+                    const classified = classifyDownloadError({ stderr, exitCode: code });
+                    reject(Object.assign(new Error(classified.message), { kind: classified.kind }));
+                    return;
+                }
+                const vttName = fs.readdirSync(tempDir).find((name) => name.endsWith('.vtt'));
+                if (!vttName) {
+                    reject(Object.assign(new Error('yt-dlp did not return a transcript.'), { kind: 'noTranscript' }));
+                    return;
+                }
+                resolve(fs.readFileSync(path.join(tempDir, vttName), 'utf-8'));
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+    });
+}
+
+// Without a language: the version's default (Options language, else the
+// video's own). With one: exactly that language, saved as an extra file
+// next to the default -- or as the default when there is none yet.
+async function fetchTranscriptForEpoch({ videoDir, epoch, language }) {
+    const { libraryDir } = readSettings();
+    const epochDir = resolveEpochDir(libraryDir, videoDir, epoch);
+    const metadata = epochDir && readEpochMetadata(epochDir);
+    if (!metadata) return { success: false, message: 'Video not found in the library.' };
+    if (metadata.platform === 'local' || !metadata.originalUrl) {
+        return { success: false, kind: 'noTranscript', message: "Transcripts aren't available for local files." };
+    }
+    try {
+        const { subtitleTracks, language: videoLanguage } = await fetchSubtitleTracks(metadata.originalUrl);
+        const track = language
+            ? findTranscriptTrackByCode(subtitleTracks, language)
+            : pickTranscriptTrack({ subtitleTracks, language: videoLanguage, preferredLanguage: clampTranscriptSettings(readSettings()).transcriptLanguage });
+        if (!track) {
+            return { success: false, kind: 'noTranscript', message: language ? 'This video has no transcript in that language.' : 'This video has no transcript.' };
+        }
+        const segments = parseVtt(await downloadSubtitleVtt(metadata.originalUrl, track));
+        if (segments.length === 0) return { success: false, kind: 'noTranscript', message: 'The transcript was empty.' };
+        const existingDefault = readTranscript(epochDir);
+        const asDefault = !existingDefault || existingDefault.language === track.language;
+        const transcript = writeTranscript(epochDir, {
+            language: track.language, languageName: track.languageName, source: track.source, segments,
+            availableLanguages: listTranscriptLanguages(subtitleTracks),
+        }, { asDefault });
+        if (asDefault) await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
+        BrowserWindow.getAllWindows()[0]?.webContents.send('transcripts:updated', { videoDir, epoch, language: track.language });
+        log(`[transcript] fetched ${track.key} (${track.source}, ${segments.length} lines) for ${videoDir}/${epoch}`);
+        return { success: true, transcript, isDefault: asDefault };
+    } catch (err) {
+        const message = redactHomeDir(err instanceof Error ? err.message : String(err));
+        log(`[transcript] fetch failed for ${videoDir}/${epoch}: ${message}`);
+        return { success: false, kind: err?.kind || ERROR_KINDS.UNKNOWN, message };
+    }
+}
+
+const transcriptQueue = createTranscriptQueue({
+    fetchOne: fetchTranscriptForEpoch,
+    onBatchProgress: (status) => BrowserWindow.getAllWindows()[0]?.webContents.send('transcripts:progress', status),
+});
+
+// Enqueued, never awaited: a download must not wait on, or fail because of,
+// its transcript.
+function maybeAutoFetchTranscript({ videoDir, epoch, metadata }) {
+    if (!clampTranscriptSettings(readSettings()).fetchTranscriptOnDownload) return;
+    if (metadata?.transcript || metadata?.platform === 'local') return;
+    transcriptQueue.enqueue({ videoDir, epoch });
+}
+
+ipcMain.handle('transcripts:get', async (e, { videoDir, epoch, language }) => {
+    const epochDir = resolveEpochDir(readSettings().libraryDir, videoDir, epoch);
+    if (!epochDir) return { success: false, message: 'Video not found in the library.' };
+    return { success: true, transcript: readTranscriptForLanguage(epochDir, transcriptLanguageCode(language)) };
+});
+
+// The video's language list is kept on the default transcript, so this only
+// asks YouTube for a transcript fetched before that was stored.
+ipcMain.handle('transcripts:listLanguages', async (e, { videoDir, epoch }) => {
+    const epochDir = resolveEpochDir(readSettings().libraryDir, videoDir, epoch);
+    const metadata = epochDir && readEpochMetadata(epochDir);
+    if (!metadata) return { success: false, message: 'Video not found in the library.' };
+    const defaultTranscript = readTranscript(epochDir);
+    const extras = listExtraTranscriptLanguages(epochDir).map((code) => readTranscript(epochDir, code)).filter(Boolean);
+    let available = defaultTranscript?.availableLanguages;
+    if (!available) {
+        if (!metadata.originalUrl || metadata.platform === 'local') {
+            available = [];
+        } else {
+            try {
+                available = listTranscriptLanguages((await fetchSubtitleTracks(metadata.originalUrl)).subtitleTracks);
+                saveAvailableTranscriptLanguages(epochDir, available);
+            } catch (err) {
+                return { success: false, message: redactHomeDir(err instanceof Error ? err.message : String(err)) };
+            }
+        }
+    }
+    return { success: true, languages: mergeTranscriptLanguages(available, defaultTranscript, extras) };
+});
+
+ipcMain.handle('transcripts:fetch', async (e, { videoDir, epoch, language }) => {
+    const code = transcriptLanguageCode(language);
+    if (language && !code) return { success: false, kind: 'noTranscript', message: "That language can't be downloaded." };
+    return transcriptQueue.enqueue({ videoDir, epoch, language: code });
+});
+
+ipcMain.handle('transcripts:fetchMany', async (e, { items, label }) => {
+    if (!Array.isArray(items)) return { success: false, message: 'No videos given.' };
+    return transcriptQueue.enqueueBatch(
+        items.slice(0, TRANSCRIPT_BATCH_MAX_ITEMS).map(({ videoDir, epoch }) => ({ videoDir, epoch })),
+        { label: typeof label === 'string' ? label.slice(0, 1024) : null },
+    );
+});
+
+ipcMain.handle('transcripts:status', async () => transcriptQueue.status());
+
+ipcMain.handle('transcripts:cancel', async () => {
+    transcriptQueue.cancelBatch();
+    return { success: true };
+});
+
+ipcMain.handle('transcripts:copyText', async (e, { videoDir, epoch, language, withTimestamps }) => {
+    const epochDir = resolveEpochDir(readSettings().libraryDir, videoDir, epoch);
+    const transcript = epochDir && readTranscriptForLanguage(epochDir, transcriptLanguageCode(language));
+    if (!transcript) return { success: false, message: 'No transcript to copy.' };
+    clipboard.writeText(transcriptToText(transcript, { withTimestamps: !!withTimestamps }));
+    return { success: true };
+});
+
+ipcMain.handle('transcripts:saveText', async (e, { videoDir, epoch, language, withTimestamps }) => {
+    const epochDir = resolveEpochDir(readSettings().libraryDir, videoDir, epoch);
+    const transcript = epochDir && readTranscriptForLanguage(epochDir, transcriptLanguageCode(language));
+    if (!transcript) return { success: false, message: 'No transcript to save.' };
+    const metadata = readEpochMetadata(epochDir);
+    const { downloadDir } = readSettings();
+    const result = await dialog.showSaveDialog({
+        title: 'Save transcript',
+        buttonLabel: 'Save',
+        defaultPath: path.join(downloadDir || app.getPath('downloads'), `${sanitizeForFilesystem(`${metadata?.title || 'transcript'} (${transcript.languageName})`)}.txt`),
+        filters: [{ name: 'Text', extensions: ['txt'] }],
+    });
+    if (result.canceled || !result.filePath) return { success: false, canceled: true };
+    fs.writeFileSync(result.filePath, transcriptToText(transcript, { withTimestamps: !!withTimestamps }), 'utf-8');
+    return { success: true, filePath: result.filePath };
+});
+
+// No index update: clip notes aren't in the index, and ClipCollectionView
+// replaces the clip in its own list from the returned record.
+ipcMain.handle('library:setClipNotes', async (e, { videoDir, clipId, notes }) => {
+    const { libraryDir } = readSettings();
+    try {
+        return { success: true, clip: setClipNotes({ libraryDir, videoDir, clipId, notes }) };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }

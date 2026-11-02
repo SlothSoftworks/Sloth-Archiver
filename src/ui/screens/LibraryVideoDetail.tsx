@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -14,6 +14,8 @@ import {
   IconButton,
   Snackbar,
   Stack,
+  Tab,
+  Tabs,
   ToggleButton,
   ToggleButtonGroup,
   Tooltip,
@@ -33,11 +35,15 @@ import { getPlatformColor } from '../utils/platformIcons';
 import useDownloadVideo from '../hooks/useDownloadVideo.tsx';
 import { useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import VideoQualityDownload from './VideoQualityDownload';
+import VideoVersionInfo from '../components/VideoVersionInfo';
 import FfmpegUtilitiesPanel, { OTHER_FORMAT_VALUE } from './FfmpegUtilitiesPanel';
 import ExtraDataTable from './ExtraDataTable';
 import ClipCollectionView from '../components/ClipCollectionView';
+import NotesCard from '../components/NotesCard';
 import LibraryVideoPlayerWithTools from '../components/LibraryVideoPlayerWithTools';
-import type { LibraryClip, LibraryVideo } from '../../types';
+import TranscriptPanel from '../components/TranscriptPanel';
+import type { LibraryVideoPlayerHandle } from '../components/LibraryVideoPlayer';
+import type { LibraryClip, LibraryVideo, Transcript } from '../../types';
 
 // Mirrors library.mjs's own CURRENT_VIDEO_SCHEMA_VERSION (main process and
 // renderer never cross-import here). An entry whose stored schemaVersion is
@@ -143,6 +149,35 @@ export default function LibraryVideoDetail({
   // that is -- no caching layer keyed on the URL can ever have a stale entry
   // for one it's never seen before.
   const [cacheBustKey, setCacheBustKey] = useState(() => Date.now());
+
+  const playerHandleRef = useRef<LibraryVideoPlayerHandle>(null);
+  const [sideTab, setSideTab] = useState<'tools' | 'transcript'>('tools');
+  const [embedStart, setEmbedStart] = useState<{ seconds: number; key: number } | null>(null);
+
+  // A local file seeks in place; the YouTube embed (not downloaded) can't be
+  // seeked, so it's reloaded at that time instead.
+  const handleTranscriptSeek = (seconds: number) => {
+    const player = playerHandleRef.current;
+    if (player && player.getCurrentTime() !== null) {
+      player.seekTo(seconds);
+      player.play();
+      return;
+    }
+    setEmbedStart((prev) => ({ seconds, key: (prev?.key ?? 0) + 1 }));
+  };
+
+  const getPlayerCurrentTime = useCallback(() => playerHandleRef.current?.getCurrentTime() ?? null, []);
+
+  const handleTranscriptFetched = (transcript: Transcript) => {
+    setMetadata((prev) => ({
+      ...prev,
+      transcript: {
+        language: transcript.language, languageName: transcript.languageName, source: transcript.source,
+        fetchedEpoch: transcript.fetchedEpoch, segmentCount: transcript.segments.length,
+      },
+    }));
+    onVersionsChanged();
+  };
 
   // FFMPEG utilities -- kept minimal: a single target-format choice for
   // convert, plain start/end text fields for the clip trim, no scrubber.
@@ -314,6 +349,7 @@ export default function LibraryVideoDetail({
     if (!found) return;
     setSelectedEpoch(epoch);
     setMetadata(found.metadata);
+    setEmbedStart(null);
     // Reset transient per-epoch UI state -- these reflect the previous
     // version's in-progress state and don't apply to the newly selected one.
     setSelectedResolution('');
@@ -888,6 +924,8 @@ export default function LibraryVideoDetail({
             initialSeekSeconds={resumeFromBackgroundSeconds}
             initialClipStartSeconds={initialClipStartSeconds}
             initialClipEndSeconds={initialClipEndSeconds}
+            playerHandleRef={playerHandleRef}
+            embedStart={embedStart}
             onClipCreated={(clip) => {
               setClips((prev) => [...prev, clip]);
               onVersionsChanged();
@@ -909,21 +947,48 @@ export default function LibraryVideoDetail({
               {formatComment(metadata.description || '')}
             </Typography>
           </Card>
+
+          <NotesCard
+            notes={video.videoData?.notes ?? ''}
+            onSave={async (notes) => {
+              const result = await window.electronAPI.setVideoNotes({ videoDir: video.videoDir, notes });
+              if (result.success) onVersionsChanged();
+              return result;
+            }}
+          />
         </Stack>
 
-        {/* "Instrument panel" -- version selector, download status, and every
-            download/quality-swap control in one Card so they read as a
-            single section. */}
+        {/* "Instrument panel" -- version, quality and tags always on top,
+            then the download/ffmpeg Tools and the Transcript as tabs, all in
+            one Card so they read as a single section. */}
         <Stack spacing={2} sx={{ width: { xs: '100%', md: '30%' } }}>
-          <Card sx={{ p: 1.5 }} variant="outlined">
-            <Stack spacing={1.5}>
+          <Card variant="outlined">
+            <VideoVersionInfo
+              video={video}
+              metadata={metadata}
+              selectedEpoch={selectedEpoch}
+              onSelectEpoch={handleSelectEpoch}
+              videoTags={videoTags}
+              onVideoTagsChanged={onVideoTagsChanged}
+            />
+            <Tabs value={sideTab} onChange={(_e, value) => setSideTab(value)} variant="fullWidth" sx={{ minHeight: 40, borderBottom: 1, borderColor: 'divider' }}>
+              <Tab value="tools" label="Tools" sx={{ minHeight: 40 }} />
+              <Tab
+                value="transcript"
+                sx={{ minHeight: 40 }}
+                label={
+                  <Stack direction="row" spacing={0.75} alignItems="center">
+                    <span>Transcript</span>
+                    {metadata.transcript && <Box data-testid="transcript-available-dot" sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: 'primary.main' }} />}
+                  </Stack>
+                }
+              />
+            </Tabs>
+            {/* Tools stays mounted while hidden so switching tabs never loses
+                in-progress state in the download/ffmpeg panels. */}
+            <Stack data-testid="side-tools" spacing={1.5} sx={{ p: 1.5, display: sideTab === 'tools' ? 'flex' : 'none' }}>
               <VideoQualityDownload
-                video={video}
                 metadata={metadata}
-                videoTags={videoTags}
-                onVideoTagsChanged={onVideoTagsChanged}
-                selectedEpoch={selectedEpoch}
-                onSelectEpoch={handleSelectEpoch}
                 videoResolutions={videoResolutions}
                 mp3Resolution={mp3Resolution}
                 selectedFormat={selectedFormat}
@@ -979,6 +1044,18 @@ export default function LibraryVideoDetail({
 
               {isGeneric && <ExtraDataTable metadata={metadata} />}
             </Stack>
+            {sideTab === 'transcript' && selectedEpoch && (
+              <Box sx={{ p: 1.5 }}>
+                <TranscriptPanel
+                  videoDir={video.videoDir}
+                  epoch={selectedEpoch}
+                  isLocal={metadata.platform === 'local'}
+                  onSeek={handleTranscriptSeek}
+                  getCurrentTime={getPlayerCurrentTime}
+                  onFetched={handleTranscriptFetched}
+                />
+              </Box>
+            )}
           </Card>
         </Stack>
       </Stack>

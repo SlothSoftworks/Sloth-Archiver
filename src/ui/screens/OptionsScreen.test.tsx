@@ -42,6 +42,8 @@ beforeEach(() => {
     setResumeMinDurationSeconds: vi.fn().mockResolvedValue({ success: true, resumeMinDurationSeconds: 1200 }),
     getEmbedMetadataByDefault: vi.fn().mockResolvedValue({ embedMetadataByDefault: true }),
     setEmbedMetadataByDefault: vi.fn().mockResolvedValue({ success: true, embedMetadataByDefault: true }),
+    getTranscriptSettings: vi.fn().mockResolvedValue({ fetchTranscriptOnDownload: false, transcriptLanguage: '' }),
+    setTranscriptSettings: vi.fn().mockResolvedValue({ success: true, fetchTranscriptOnDownload: false, transcriptLanguage: '' }),
     getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
   };
 });
@@ -123,6 +125,22 @@ describe('OptionsScreen', () => {
     await user.click(checkbox);
 
     expect(window.electronAPI.setEmbedMetadataByDefault).toHaveBeenCalledWith(false);
+  });
+
+  it('loads and saves the transcript settings', async () => {
+    window.electronAPI.getTranscriptSettings = vi.fn().mockResolvedValue({ fetchTranscriptOnDownload: false, transcriptLanguage: 'ja' });
+    window.electronAPI.setTranscriptSettings = vi.fn().mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+    renderScreen();
+
+    const checkbox = await screen.findByRole('checkbox', { name: 'Fetch transcript when a video is downloaded' });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Transcript language' })).toHaveTextContent('Japanese'));
+    await user.click(checkbox);
+    expect(window.electronAPI.setTranscriptSettings).toHaveBeenCalledWith({ fetchTranscriptOnDownload: true });
+
+    await user.click(screen.getByRole('combobox', { name: 'Transcript language' }));
+    await user.click(await screen.findByRole('option', { name: "Video's original language" }));
+    expect(window.electronAPI.setTranscriptSettings).toHaveBeenCalledWith({ transcriptLanguage: '' });
   });
 
   it('choosing a download folder persists the picked path and updates the display', async () => {

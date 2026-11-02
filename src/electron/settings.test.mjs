@@ -7,6 +7,7 @@ import {
   normalizeCustomConvertFormats,
   CUSTOM_CONVERT_FORMATS_MAX,
   pickFolderDialogOptions,
+  clampTranscriptSettings,
 } from './settings.mjs';
 
 describe('validateDirectorySetting (SEC-014)', () => {
@@ -72,5 +73,18 @@ describe('pickFolderDialogOptions (SEC-014)', () => {
     expect(pickFolderDialogOptions({ title: 5, defaultPath: '' })).toEqual({});
     expect(pickFolderDialogOptions(undefined)).toEqual({});
     expect(pickFolderDialogOptions(null)).toEqual({});
+  });
+});
+
+describe('clampTranscriptSettings', () => {
+  it('defaults to off and the video\'s own language', () => {
+    expect(clampTranscriptSettings()).toEqual({ fetchTranscriptOnDownload: false, transcriptLanguage: '' });
+    expect(clampTranscriptSettings({ fetchTranscriptOnDownload: 'yes', transcriptLanguage: 42 })).toEqual({ fetchTranscriptOnDownload: false, transcriptLanguage: '' });
+  });
+
+  it('keeps valid values and rejects anything that isn\'t a language code', () => {
+    expect(clampTranscriptSettings({ fetchTranscriptOnDownload: true, transcriptLanguage: 'pt-BR' })).toEqual({ fetchTranscriptOnDownload: true, transcriptLanguage: 'pt-BR' });
+    expect(clampTranscriptSettings({ transcriptLanguage: 'es-419' }).transcriptLanguage).toBe('es-419');
+    expect(clampTranscriptSettings({ transcriptLanguage: 'en,--exec rm' }).transcriptLanguage).toBe('');
   });
 });

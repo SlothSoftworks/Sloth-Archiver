@@ -4,7 +4,7 @@
 // require()/module.exports, not import/export syntax. A '.mjs' preload
 // throws "Cannot use import statement outside a module" the moment the
 // window opens under a sandboxed BrowserWindow.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     pickFolder: (options) => ipcRenderer.invoke('dialog:openFolder', options),
@@ -78,8 +78,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openLocalVideoFile: () => ipcRenderer.invoke('dialog:openLocalVideoFile'),
     openImageFile: () => ipcRenderer.invoke('dialog:openImageFile'),
     probeLocalFile: (filePath) => ipcRenderer.invoke('library:probeLocalFile', filePath),
+    openVidToolsFile: (filePath) => ipcRenderer.invoke('vidtools:openFile', filePath),
+    // Electron 43 has no File.path; a dropped File only maps to a path here.
+    getPathForFile: (file) => webUtils.getPathForFile(file),
     addLocalFile: (payload, targetTag) => ipcRenderer.invoke('library:addLocalFile', payload, targetTag),
     changeThumbnail: (payload) => ipcRenderer.invoke('library:changeThumbnail', payload),
+    copyFrameToClipboard: (payload) => ipcRenderer.invoke('library:copyFrameToClipboard', payload),
+    setVideoNotes: (payload) => ipcRenderer.invoke('library:setVideoNotes', payload),
+    getTranscript: (payload) => ipcRenderer.invoke('transcripts:get', payload),
+    listTranscriptLanguages: (payload) => ipcRenderer.invoke('transcripts:listLanguages', payload),
+    fetchTranscript: (payload) => ipcRenderer.invoke('transcripts:fetch', payload),
+    fetchTranscripts: (payload) => ipcRenderer.invoke('transcripts:fetchMany', payload),
+    getTranscriptBatchStatus: () => ipcRenderer.invoke('transcripts:status'),
+    cancelTranscriptBatch: () => ipcRenderer.invoke('transcripts:cancel'),
+    copyTranscriptText: (payload) => ipcRenderer.invoke('transcripts:copyText', payload),
+    saveTranscriptText: (payload) => ipcRenderer.invoke('transcripts:saveText', payload),
+    onTranscriptUpdated: (callback) => ipcRenderer.on('transcripts:updated', (_event, data) => callback(data)),
+    removeTranscriptUpdatedListener: () => ipcRenderer.removeAllListeners('transcripts:updated'),
+    onTranscriptBatchProgress: (callback) => ipcRenderer.on('transcripts:progress', (_event, status) => callback(status)),
+    removeTranscriptBatchProgressListener: () => ipcRenderer.removeAllListeners('transcripts:progress'),
+    getTranscriptSettings: () => ipcRenderer.invoke('settings:getTranscriptSettings'),
+    setTranscriptSettings: (value) => ipcRenderer.invoke('settings:setTranscriptSettings', value),
+    setClipNotes: (payload) => ipcRenderer.invoke('library:setClipNotes', payload),
     fetchPlaylistEntries: (playlistUrl) => ipcRenderer.invoke('library:fetchPlaylistEntries', playlistUrl),
     enrichPlaylistEntry: (payload) => ipcRenderer.invoke('library:enrichPlaylistEntry', payload),
     listPlaylists: () => ipcRenderer.invoke('library:listPlaylists'),

@@ -35,6 +35,7 @@ function describeImportSummary(summary: LibraryImportSummary): string[] {
   if (summary.sublibrariesCreated) lines.push(plural(summary.sublibrariesCreated, 'new sublibrary', 'new sublibraries'));
   if (summary.playlistsAdded) lines.push(plural(summary.playlistsAdded, 'saved playlist'));
   if (summary.labelsApplied) lines.push(`${plural(summary.labelsApplied, 'label')} applied`);
+  if (summary.notesAdded) lines.push(`Notes added to ${plural(summary.notesAdded, 'video')}`);
   if (summary.videosAlreadyPresent) lines.push(`${plural(summary.videosAlreadyPresent, 'video')} already in your library (left as is)`);
   if (summary.playlistsAlreadyPresent) lines.push(`${plural(summary.playlistsAlreadyPresent, 'playlist')} already saved (left as is)`);
   if (summary.localFilesSkipped) lines.push(`${plural(summary.localFilesSkipped, 'local-file entry', 'local-file entries')} skipped -- there's no source to download those from`);
@@ -102,7 +103,7 @@ export default function LibraryBackupSection({ libraryConfigured }: { libraryCon
   };
 
   const planLines = preview ? describeImportSummary(preview.plan) : [];
-  const hasChanges = !!preview && (preview.plan.versionsAdded > 0 || preview.plan.playlistsAdded > 0 || preview.plan.labelsApplied > 0 || preview.plan.sublibrariesCreated > 0);
+  const hasChanges = !!preview && (preview.plan.versionsAdded > 0 || preview.plan.playlistsAdded > 0 || preview.plan.labelsApplied > 0 || preview.plan.notesAdded > 0 || preview.plan.sublibrariesCreated > 0);
 
   return (
     <>

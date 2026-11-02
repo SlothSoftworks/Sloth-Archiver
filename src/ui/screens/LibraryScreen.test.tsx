@@ -131,6 +131,9 @@ beforeEach(() => {
     setThumbnailSize: vi.fn().mockResolvedValue({ success: true, thumbnailSize: 220 }),
     refreshLibraryIndex: vi.fn().mockResolvedValue({ channels: makeChannels() }),
     refreshChannelIcon: vi.fn(),
+    getTranscriptBatchStatus: vi.fn().mockResolvedValue(null),
+    onTranscriptBatchProgress: vi.fn(),
+    removeTranscriptBatchProgressListener: vi.fn(),
     openDirectory: vi.fn(),
     listLibraryTags: vi.fn().mockResolvedValue({ tags: [{ tagName: 'DefaultLibrary', folderName: 'DefaultLibrary', createdEpoch: 1 }] }),
     createLibraryTag: vi.fn().mockResolvedValue({ success: true, tag: { tagName: 'Music', folderName: 'Music', createdEpoch: 2 } }),
@@ -1374,6 +1377,29 @@ describe('LibraryScreen', () => {
       expect(screen.queryByRole('button', { name: 'Refresh channel icon' })).not.toBeInTheDocument();
     });
 
+    it('offers "Fetch missing transcripts" for a platform group, but not for local files', async () => {
+      const user = userEvent.setup();
+      const channels = makeChannelsWithPlatformGroup();
+      const localGroup = {
+        ...channels[0], channelFolderName: 'NonYT/local', displayName: 'local', platform: 'local',
+        videos: [makeVideo({
+          videoFolderName: 'vidL', videoDir: '/lib/NonYT/local/vidL',
+          metadata: { ...makeVideo().metadata, videoId: 'vidL', title: 'Home Movie', platform: 'local' },
+        })],
+      };
+      (window.electronAPI.getLibraryIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ channels: [localGroup, ...channels] });
+      render(<LibraryScreen />);
+
+      await user.click(await screen.findByText('soundcloud'));
+      expect(await screen.findByText('Gamma Track')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Fetch missing transcripts' })).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Back to channels' }));
+      await user.click(await screen.findByText('local'));
+      expect(await screen.findByText('Home Movie')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Fetch missing transcripts' })).not.toBeInTheDocument();
+    });
+
     it('a real channel still shows its "Refresh channel icon" button in the video grid, unaffected', async () => {
       const user = userEvent.setup();
       render(<LibraryScreen />);
@@ -1403,6 +1429,18 @@ describe('LibraryScreen', () => {
       await user.click(screen.getByRole('button', { name: 'Add local file to library' }));
 
       expect(screen.getByText('Add local file to library', { selector: 'h2' })).toBeInTheDocument();
+    });
+
+    it('opens prefilled when VidTools hands a file over as router state', async () => {
+      rtlRender(
+        <MemoryRouter initialEntries={[{ pathname: '/library', state: { addLocalFilePath: '/elsewhere/movie.mkv' } }]}>
+          <LibraryTagsProvider><BulkAddProvider><BackgroundPlayerProvider><LibraryScreen /></BackgroundPlayerProvider></BulkAddProvider></LibraryTagsProvider>
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByText('Add local file to library', { selector: 'h2' })).toBeInTheDocument();
+      await waitFor(() => expect(window.electronAPI.probeLocalFile).toHaveBeenCalledWith('/elsewhere/movie.mkv'));
+      expect(window.electronAPI.openLocalVideoFile).not.toHaveBeenCalled();
     });
 
     it('is not offered on the Playlists section', async () => {

@@ -9,6 +9,7 @@ export default function PlayerContextMenu({
   loopEnabled, onToggleLoop,
   loopSequenceEnabled, onToggleLoopSequence, loopSequenceDisabled,
   onAddToQueue,
+  onCopyFrame,
   onChangeThumbnail, currentTime,
 }: {
   open: boolean;
@@ -22,11 +23,14 @@ export default function PlayerContextMenu({
   // undefined (not just a disabled flag) hides the item entirely -- the
   // caller only ever omits it for a not-yet-ready video.
   onAddToQueue?: () => void;
+  // undefined hides the item -- the caller omits it when there's no video
+  // frame to copy (audio-only source).
+  onCopyFrame?: (currentTime: number | null) => void;
   // Available for every library entry, unlike onAddToQueue -- always passed
   // when the caller has a real videoDir to write the replaced thumbnail into.
   onChangeThumbnail?: (currentTime: number | null) => void;
   // Playback position at the moment the menu was opened -- prefills the
-  // dialog's timestamp field.
+  // thumbnail dialog's timestamp field and is the frame "Copy frame to clipboard" grabs.
   currentTime: number | null;
 }) {
   return (
@@ -45,6 +49,11 @@ export default function PlayerContextMenu({
         <MenuItem onClick={() => { onAddToQueue(); onClose(); }}>
           <ListItemIcon />
           Add to queue
+        </MenuItem>}
+      {onCopyFrame &&
+        <MenuItem onClick={() => { onCopyFrame(currentTime); onClose(); }}>
+          <ListItemIcon />
+          Copy frame to clipboard
         </MenuItem>}
       {onChangeThumbnail &&
         <MenuItem onClick={() => { onChangeThumbnail(currentTime); onClose(); }}>

@@ -14,6 +14,7 @@ const plan = {
   playlistsAdded: 1,
   playlistsAlreadyPresent: 0,
   labelsApplied: 0,
+  notesAdded: 0,
 };
 const nothingNew = { ...plan, sublibrariesCreated: 0, videosAdded: 0, versionsAdded: 0, playlistsAdded: 0, localFilesSkipped: 0, videosAlreadyPresent: 6 };
 
@@ -91,6 +92,17 @@ describe('LibraryBackupSection', () => {
     expect(screen.getByRole('button', { name: 'Import' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(window.electronAPI.applyLibraryImport).not.toHaveBeenCalled();
+  });
+
+  it('offers to import a file whose only change is notes for videos already present', async () => {
+    const user = userEvent.setup();
+    vi.mocked(window.electronAPI.previewLibraryImport).mockResolvedValue({
+      success: true, token: 'tok-3', fileName: 'notes.json', exportedAt: null, counts: { sublibraries: 1, videos: 6, versions: 6, playlists: 0 }, plan: { ...nothingNew, notesAdded: 2 },
+    });
+    render(<LibraryBackupSection libraryConfigured />);
+    await user.click(screen.getByRole('button', { name: 'Import library' }));
+    expect(await screen.findByText(/Notes added to 2 videos/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
   });
 
   it('shows why a chosen file could not be read', async () => {

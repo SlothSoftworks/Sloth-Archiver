@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render as rtlRender, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import userEvent from '@testing-library/user-event';
 import LibraryVideoPlayer, { type ClipMarkersControl } from './LibraryVideoPlayer';
@@ -118,6 +118,11 @@ beforeEach(() => {
 });
 
 describe('LibraryVideoPlayer', () => {
+  it('starts the YouTube embed at embedStart, for a transcript click on a video that isn\'t downloaded', () => {
+    const { container } = render(<LibraryVideoPlayer metadata={baseMetadata()} embedStart={{ seconds: 42.7, key: 1 }} />);
+    expect(container.querySelector('iframe')).toHaveAttribute('src', 'https://www.youtube-nocookie.com/embed/abc123def45?start=42&autoplay=1');
+  });
+
   it('embeds the YouTube player when no local file is downloaded', () => {
     const { container } = render(<LibraryVideoPlayer metadata={baseMetadata()} />);
     const iframe = container.querySelector('iframe');
@@ -678,6 +683,276 @@ describe('LibraryVideoPlayer', () => {
       fireReadinessCascade(video); // includes 'canplay', which triggers the seek+play
 
       await waitFor(() => expect(video.currentTime).toBe(42));
+    });
+  });
+
+  describe('Copy frame to clipboard', () => {
+    it('copies from the original file, not the generated preview, and confirms it', async () => {
+      const user = userEvent.setup();
+      window.electronAPI.copyFrameToClipboard = vi.fn().mockResolvedValue({ success: true });
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mkv' })} />,
+      );
+      await findSourceEl(container);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await user.click(await screen.findByRole('menuitem', { name: 'Copy frame to clipboard' }));
+
+      expect(window.electronAPI.copyFrameToClipboard).toHaveBeenCalledWith({ filePath: '/lib/c/v1/1/video.mkv', timestampSeconds: 0 });
+      expect(await screen.findByText('Frame copied to clipboard')).toBeInTheDocument();
+    });
+
+    it('shows the backend\'s message when copying fails', async () => {
+      const user = userEvent.setup();
+      window.electronAPI.copyFrameToClipboard = vi.fn().mockResolvedValue({ success: false, message: 'No frame could be read at this position.' });
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} />,
+      );
+      await findSourceEl(container);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await user.click(await screen.findByRole('menuitem', { name: 'Copy frame to clipboard' }));
+
+      expect(await screen.findByText("Couldn't copy frame: No frame could be read at this position.")).toBeInTheDocument();
+    });
+
+    it('is hidden for an audio-only source', async () => {
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/track.mp4' })} />,
+      );
+      await findSourceEl(container);
+      // jsdom's videoWidth/videoHeight default to 0, i.e. no video track.
+      fireReadinessCascade(container.querySelector('video') as HTMLVideoElement);
+
+      fireEvent.contextMenu(findClickOverlay(container));
+      await screen.findByRole('menuitem', { name: 'Loop' });
+      expect(screen.queryByRole('menuitem', { name: 'Copy frame to clipboard' })).not.toBeInTheDocument();
+    });
+  });
+
+  // Vidstack only listens for shortcuts once focus has entered the player.
+  describe('keyboard shortcuts', () => {
+    async function renderFocused(filePath: string, clipMarkers?: ClipMarkersControl) {
+      const { container } = render(<LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: filePath })} clipMarkers={clipMarkers} />);
+      await findSourceEl(container);
+      const player = container.querySelector('[data-media-player]') as HTMLElement;
+      const video = container.querySelector('video') as HTMLVideoElement;
+      fireEvent.focusIn(player);
+      return { player, video };
+    }
+
+    it('Cmd+S and Ctrl+S copy the current frame', async () => {
+      window.electronAPI.copyFrameToClipboard = vi.fn().mockResolvedValue({ success: true });
+      const { player, video } = await renderFocused('/lib/c/v1/1/video.mp4');
+      Object.defineProperty(video, 'videoWidth', { value: 1920, configurable: true });
+      Object.defineProperty(video, 'videoHeight', { value: 1080, configurable: true });
+      fireReadinessCascade(video);
+
+      fireEvent.keyDown(player, { key: 's', metaKey: true });
+      fireEvent.keyDown(player, { key: 's', ctrlKey: true });
+
+      await waitFor(() => expect(window.electronAPI.copyFrameToClipboard).toHaveBeenCalledTimes(2));
+      expect(window.electronAPI.copyFrameToClipboard).toHaveBeenCalledWith({ filePath: '/lib/c/v1/1/video.mp4', timestampSeconds: 0 });
+    });
+
+    it('Cmd+S does nothing for an audio-only source', async () => {
+      window.electronAPI.copyFrameToClipboard = vi.fn();
+      const { player, video } = await renderFocused('/lib/c/v1/1/track.mp4');
+      fireReadinessCascade(video);
+
+      fireEvent.keyDown(player, { key: 's', metaKey: true });
+
+      expect(window.electronAPI.copyFrameToClipboard).not.toHaveBeenCalled();
+    });
+
+    it('. and , step 1/24 s forward and back, clamped to the start', async () => {
+      const { player, video } = await renderFocused('/lib/c/v1/1/video.mp4');
+      Object.defineProperty(video, 'duration', { value: 100, configurable: true });
+      video.currentTime = 10;
+
+      fireEvent.keyDown(player, { key: '.' });
+      expect(video.currentTime).toBeCloseTo(10 + 1 / 24);
+      fireEvent.keyDown(player, { key: ',' });
+      fireEvent.keyDown(player, { key: ',' });
+      expect(video.currentTime).toBeCloseTo(10 - 1 / 24);
+
+      video.currentTime = 0.01;
+      fireEvent.keyDown(player, { key: ',' });
+      expect(video.currentTime).toBe(0);
+    });
+
+    // A seek drops readyState to 1, and Vidstack ignores a 'pause' event that
+    // arrives then -- so the step must wait for the pause to be recorded, or
+    // Vidstack stays stuck on "playing" and play/pause stop working.
+    it('while playing, pauses first and only steps once the pause has landed', async () => {
+      const { player, video } = await renderFocused('/lib/c/v1/1/video.mp4');
+      let nativePaused = true;
+      Object.defineProperty(video, 'paused', { get: () => nativePaused, configurable: true });
+      Object.defineProperty(video, 'duration', { value: 100, configurable: true });
+      video.pause = vi.fn(() => { nativePaused = true; });
+      fireReadinessCascade(video);
+      nativePaused = false;
+      fireEvent.play(video);
+      fireEvent.playing(video);
+      await waitFor(() => expect(player).toHaveAttribute('data-playing'));
+      video.currentTime = 10;
+
+      fireEvent.keyDown(player, { key: '.' });
+      fireEvent.keyDown(player, { key: '.' });
+      expect(video.pause).toHaveBeenCalledTimes(1);
+      expect(video.currentTime).toBe(10);
+
+      fireEvent.pause(video);
+      await waitFor(() => expect(player).toHaveAttribute('data-paused'));
+      expect(video.currentTime).toBeCloseTo(10 + 1 / 24);
+    });
+
+    function markers(overrides: Partial<ClipMarkersControl> = {}): ClipMarkersControl {
+      return {
+        startSeconds: null, endSeconds: null,
+        onSetStart: vi.fn(), onSetEnd: vi.fn(), onStartSecondsChange: vi.fn(), onEndSecondsChange: vi.fn(),
+        onSave: vi.fn(), saveDisabled: true, onClear: vi.fn(), clearDisabled: true,
+        ...overrides,
+      };
+    }
+
+    it('Cmd/Ctrl+J and Cmd/Ctrl+L mark the clip start and end', async () => {
+      const clip = markers();
+      const { player } = await renderFocused('/lib/c/v1/1/video.mp4', clip);
+
+      fireEvent.keyDown(player, { key: 'j', metaKey: true });
+      fireEvent.keyDown(player, { key: 'l', ctrlKey: true });
+
+      expect(clip.onSetStart).toHaveBeenCalledTimes(1);
+      expect(clip.onSetEnd).toHaveBeenCalledTimes(1);
+    });
+
+    it('Shift+J and Shift+L jump to the set markers', async () => {
+      const { player, video } = await renderFocused('/lib/c/v1/1/video.mp4', markers({ startSeconds: 12, endSeconds: 34 }));
+      Object.defineProperty(video, 'duration', { value: 100, configurable: true });
+      fireReadinessCascade(video);
+
+      fireEvent.keyDown(player, { key: 'J', shiftKey: true });
+      await waitFor(() => expect(video.currentTime).toBe(12));
+      fireEvent.keyDown(player, { key: 'L', shiftKey: true });
+      await waitFor(() => expect(video.currentTime).toBe(34));
+    });
+
+    it('Shift+J does nothing when the start marker is not set', async () => {
+      const { player, video } = await renderFocused('/lib/c/v1/1/video.mp4', markers({ endSeconds: 34 }));
+      Object.defineProperty(video, 'duration', { value: 100, configurable: true });
+      fireReadinessCascade(video);
+      video.currentTime = 5;
+
+      fireEvent.keyDown(player, { key: 'J', shiftKey: true });
+
+      expect(video.currentTime).toBe(5);
+    });
+
+    it('shows the playback speed briefly when it changes', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const { video } = await renderFocused('/lib/c/v1/1/video.mp4');
+        fireReadinessCascade(video);
+
+        video.playbackRate = 1.25;
+        fireEvent(video, new Event('ratechange'));
+        expect(await screen.findByText('1.25×')).toBeInTheDocument();
+
+        act(() => { vi.advanceTimersByTime(1600); });
+        expect(screen.queryByText('1.25×')).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('Shift+I opens the shortcuts list', async () => {
+      const { player } = await renderFocused('/lib/c/v1/1/video.mp4');
+
+      fireEvent.keyDown(player, { key: 'I', shiftKey: true });
+
+      const dialog = await screen.findByRole('dialog', { name: 'Keyboard shortcuts' });
+      expect(within(dialog).getByText('Pause and step back / forward one frame')).toBeInTheDocument();
+    });
+  });
+
+  describe('confirmPreview (VidTools)', () => {
+    const mkv = '/elsewhere/movie.mkv';
+
+    it('asks before making a copy, and makes it once the user agrees', async () => {
+      const user = userEvent.setup();
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux' }} />,
+      );
+
+      expect(await screen.findByRole('dialog', { name: 'Create a playable copy?' })).toBeInTheDocument();
+      expect(screen.getByText(/only repackaged, not re-encoded/)).toBeInTheDocument();
+      expect(window.electronAPI.ensurePlayablePreview).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole('button', { name: 'Create copy' }));
+
+      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: mkv });
+      const source = await findSourceEl(container);
+      expect(source).toHaveAttribute('src', 'app-video://local/%2Fmock%2Fpreview.mp4?v=0');
+    });
+
+    it('warns that a re-encode is slow', async () => {
+      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'reencode' }} />);
+      expect(await screen.findByText(/full re-encode, which can take a while/)).toBeInTheDocument();
+    });
+
+    it('declining leaves a button that makes the copy later', async () => {
+      const user = userEvent.setup();
+      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux' }} />);
+
+      await user.click(await screen.findByRole('button', { name: 'Not now' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(screen.getByText("This .mkv file can't be played directly.")).toBeInTheDocument();
+      expect(window.electronAPI.ensurePlayablePreview).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole('button', { name: 'Create playable copy' }));
+      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: mkv });
+    });
+
+    it('plays a native file straight away, and offers a copy if it fails to decode', async () => {
+      const user = userEvent.setup();
+      const mp4 = '/elsewhere/hevc.mp4';
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mp4} confirmPreview={{ kind: 'reencode' }} />,
+      );
+      const source = await findSourceEl(container);
+      expect(source).toHaveAttribute('src', 'app-video://local/%2Felsewhere%2Fhevc.mp4?v=0');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      fireDecodeError(container.querySelector('video') as HTMLVideoElement);
+      await user.click(await screen.findByRole('button', { name: 'Create playable copy' }));
+
+      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: mp4 });
+    });
+
+    it('shows the failure message instead of the library caption', async () => {
+      const user = userEvent.setup();
+      window.electronAPI.ensurePlayablePreview = vi.fn().mockResolvedValue({ success: false, message: 'ffmpeg exploded' });
+      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux' }} />);
+
+      await user.click(await screen.findByRole('button', { name: 'Create copy' }));
+
+      expect(await screen.findByText("Couldn't create a playable copy: ffmpeg exploded")).toBeInTheDocument();
+      expect(screen.queryByText(/Open externally/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('hideAddToQueue', () => {
+    it('removes both the hover button and the menu item', async () => {
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath="/elsewhere/a.mp4" hideAddToQueue />,
+      );
+      await findSourceEl(container);
+
+      expect(screen.queryByRole('button', { name: 'Add to queue' })).not.toBeInTheDocument();
+      fireEvent.contextMenu(findClickOverlay(container));
+      await screen.findByRole('menuitem', { name: 'Loop' });
+      expect(screen.queryByRole('menuitem', { name: 'Add to queue' })).not.toBeInTheDocument();
     });
   });
 });

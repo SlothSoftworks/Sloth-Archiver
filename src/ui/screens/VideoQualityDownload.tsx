@@ -1,14 +1,10 @@
-import { useState } from 'react';
 import {
   Box,
   Button,
-  Chip,
   Divider,
-  FormControl,
   FormGroup,
   Grid,
   IconButton,
-  InputLabel,
   MenuItem,
   Select,
   Stack,
@@ -18,15 +14,11 @@ import {
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
-import DownloadDoneIcon from '@mui/icons-material/DownloadDone';
 import AudiotrackIcon from '@mui/icons-material/Audiotrack';
 import CancelIcon from '@mui/icons-material/Cancel';
-import LocalOfferOutlinedIcon from '@mui/icons-material/LocalOfferOutlined';
-import { pink } from '@mui/material/colors';
-import { buildAppVideoUrl, formatEpochLabel, isLongVideoForPostprocess } from '../../utils/utils.ts';
+import { buildAppVideoUrl, isLongVideoForPostprocess } from '../../utils/utils.ts';
 import LinearProgressWithLabel from '../components/LinearProgressWithLabel';
-import VideoTagsPopover from '../components/VideoTagsPopover';
-import type { LibraryVideo, LibraryVideoMetadata, Resolution } from '../../types';
+import type { LibraryVideoMetadata, Resolution } from '../../types';
 
 // Shared between the first-download and "download different quality" flows
 // -- excludeResolution blocks re-picking whatever's already downloaded
@@ -121,19 +113,15 @@ function LongVideoPostprocessWarning({ duration }: { duration: number | null }) 
   );
 }
 
-// The version selector + video quality download/swap controls + MP3 audio
-// sub-section -- everything in the instrument panel above the FFMPEG
-// utilities divider. All state stays owned by LibraryVideoDetail (the
+// The video quality download/swap controls + MP3 audio sub-section --
+// everything in the Tools tab above the FFMPEG utilities divider. All state stays owned by LibraryVideoDetail (the
 // version switch, the shared useDownloadVideo() instance, and ffmpegAction
 // are each read by more than one panel -- e.g. the Audio section below
 // shows ffmpeg's own "Extracting MP3" progress inline when
 // extractAudioToLibrary is running), so this is a presentational component:
 // it renders from props and calls back up rather than owning its own copy.
 export default function VideoQualityDownload({
-  video,
   metadata,
-  selectedEpoch,
-  onSelectEpoch,
   videoResolutions,
   mp3Resolution,
   selectedFormat,
@@ -166,13 +154,8 @@ export default function VideoQualityDownload({
   onExtractAudioToLibrary,
   isRetrying,
   onCancelDownload,
-  videoTags,
-  onVideoTagsChanged,
 }: {
-  video: LibraryVideo;
   metadata: LibraryVideoMetadata;
-  selectedEpoch: string | null;
-  onSelectEpoch: (epoch: string) => void;
   videoResolutions: Resolution[];
   mp3Resolution: Resolution | undefined;
   selectedFormat: string;
@@ -217,69 +200,9 @@ export default function VideoQualityDownload({
   // currently showing, since only one can be active at a time.
   isRetrying: boolean;
   onCancelDownload: () => void;
-  // The active sublibrary's whole tag map -- this video's own applied tags
-  // are derived from it below, same shape LibraryScreen.tsx already loads
-  // for the bulk "Tag selected" dialog and the library grid's own chips.
-  videoTags: Record<string, string[]>;
-  onVideoTagsChanged: () => Promise<void> | void;
 }) {
-  const [tagsAnchorEl, setTagsAnchorEl] = useState<HTMLElement | null>(null);
-  const allTagNames = Object.keys(videoTags);
-  const appliedTagNames = allTagNames.filter((name) => videoTags[name].includes(metadata.videoId));
-
-  const handleToggleTag = async (tagName: string, applied: boolean) => {
-    await window.electronAPI.setVideoTag(tagName, metadata.videoId, applied);
-    await onVideoTagsChanged();
-  };
-
   return (
     <>
-      {(video.epochs.length > 1 || metadata.downloadedFilePath) &&
-        <Stack spacing={1.5}>
-          {video.epochs.length > 1 &&
-            <FormControl size="small" fullWidth>
-              <InputLabel id="library-version-select-label">Version</InputLabel>
-              <Select
-                labelId="library-version-select-label"
-                label="Version"
-                value={selectedEpoch || ''}
-                onChange={(e) => onSelectEpoch(e.target.value)}
-              >
-                {video.epochs.map(({ epoch, metadata: epochMetadata }) => (
-                  <MenuItem key={epoch} value={epoch}>
-                    <Stack direction="row" spacing={0.5} alignItems="center">
-                      {(epochMetadata.downloadedFilePath || epochMetadata.downloadedAudioFilePath) &&
-                        <DownloadDoneIcon fontSize="small" color="success" />}
-                      <span>
-                        {formatEpochLabel(epoch)}{epoch === video.latestEpoch ? ' (latest)' : ''}
-                      </span>
-                    </Stack>
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>}
-          {metadata.downloadedFilePath &&
-            <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Stack direction="row" spacing={0.5} alignItems="center">
-                <Chip
-                  color="success"
-                  label={metadata.downloadedResolution === 'MP3' ? 'MP3' : `${metadata.downloadedResolution}p`}
-                />
-              </Stack>
-              <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap" sx={{ justifyContent: 'flex-end' }}>
-                {appliedTagNames.map((tag) => (
-                  <Chip key={tag} size="small" label={tag} sx={{ bgcolor: pink[700], color: '#fff' }} />
-                ))}
-                <Tooltip title="Edit tags">
-                  <IconButton size="small" onClick={(e) => setTagsAnchorEl(e.currentTarget)} aria-label="Edit tags">
-                    <LocalOfferOutlinedIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
-            </Stack>}
-          <Divider />
-        </Stack>}
-
       {swappingQuality ? (
         isSwapDownloading ? (
           <Stack spacing={1} sx={{ p: 1 }}>
@@ -440,15 +363,6 @@ export default function VideoQualityDownload({
             )}
           </Stack>
         </>}
-      <VideoTagsPopover
-        open={!!tagsAnchorEl}
-        anchorEl={tagsAnchorEl}
-        onClose={() => setTagsAnchorEl(null)}
-        allTags={allTagNames}
-        appliedTags={appliedTagNames}
-        onToggle={handleToggleTag}
-        onCreate={(tagName) => handleToggleTag(tagName, true)}
-      />
     </>
   );
 }

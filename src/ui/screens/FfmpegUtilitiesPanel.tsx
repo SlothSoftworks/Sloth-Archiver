@@ -113,7 +113,8 @@ export default function FfmpegUtilitiesPanel({
   setForceReencode: (value: boolean) => void;
   onExtractMp3: () => void;
   onConvertFormat: () => void;
-  onEmbedMetadata: () => void;
+  // Left out by VidTools, which never writes metadata; hides the row.
+  onEmbedMetadata?: () => void;
 }) {
   const ffmpegControlsDisabled = !isVideoDownloaded || ffmpegAction !== null;
   // Embed Metadata doesn't need the video file specifically -- it can tag
@@ -213,7 +214,7 @@ export default function FfmpegUtilitiesPanel({
           </Tooltip>
         </Stack>
 
-        <Stack direction="row" spacing={1} alignItems="center">
+        {onEmbedMetadata && <Stack direction="row" spacing={1} alignItems="center">
           <Typography variant="body2" sx={{ flexGrow: 1 }}>Embed metadata</Typography>
           <Tooltip title="Embed metadata">
             <span>
@@ -222,7 +223,7 @@ export default function FfmpegUtilitiesPanel({
               </IconButton>
             </span>
           </Tooltip>
-        </Stack>
+        </Stack>}
       </Stack>
     </>
   );

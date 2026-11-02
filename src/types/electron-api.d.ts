@@ -1,6 +1,25 @@
-import type { LibraryVideo, LibraryVideoMetadata, PlaylistEntry, PlaylistSummary, PlaylistSnapshot, LibraryClip } from '../types';
+import type { LibraryVideo, LibraryVideoMetadata, PlaylistEntry, PlaylistSummary, PlaylistSnapshot, LibraryClip, Transcript } from '../types';
 
 export {}
+
+export type TranscriptLanguage = { code: string; name: string; source: 'manual' | 'auto' };
+// A languages-dialog row: saved means it's on disk, so showing it costs no request.
+export type TranscriptLanguageOption = TranscriptLanguage & { saved: boolean; isDefault: boolean };
+export type TranscriptFetchResult =
+    | { success: true; transcript: Transcript; isDefault: boolean }
+    | { success: false; kind?: string; message: string; cancelled?: boolean };
+export type TranscriptBatchStatus = {
+    // Who started it (LibraryScreen passes the channel folder name).
+    label: string | null;
+    total: number;
+    done: number;
+    failed: number;
+    current: string | null;
+    // 'cancelled', or the error kind that stopped it early ('rateLimit', 'botBlock').
+    stoppedReason: string | null;
+    finished: boolean;
+};
+type EpochRef = { videoDir: string; epoch: string };
 
 type FolderPickerResult = {
     filePath: string;
@@ -28,6 +47,7 @@ export type LibraryImportSummary = {
     playlistsAdded: number;
     playlistsAlreadyPresent: number;
     labelsApplied: number;
+    notesAdded: number;
 };
 
 // Mirrors LibraryScreen.tsx's own SortField/SortDirection unions.
@@ -39,6 +59,21 @@ type LibrarySortDirection = 'asc' | 'desc';
 // equal to folderName, since sublibrary names aren't renamable separately
 // from their folder). Exported so useLibraryTags.tsx and its consumers share
 // this one declaration instead of each keeping their own local copy.
+export type VidToolsFile = {
+    filePath: string;
+    name: string;
+    dir: string;
+    sizeBytes: number;
+    duration: number | null;
+    width: number | null;
+    height: number | null;
+    videoCodec: string | null;
+    audioCodec: string | null;
+    needsPreview: boolean;
+    previewKind: 'remux' | 'reencode';
+};
+export type VidToolsOpenResult = ({ success: true } & VidToolsFile) | { success: false; message: string };
+
 export type LibraryTag = {
     tagName: string;
     folderName: string;
@@ -252,8 +287,27 @@ declare global {
             openLocalVideoFile: () => Promise<OpenFolderResult>
             openImageFile: () => Promise<OpenFolderResult>
             probeLocalFile: (filePath: string) => Promise<{ id: string; width: number | null; height: number | null; duration: number | null; tags: { title: string | null; artist: string | null; date: string | null; genre: string | null; comment: string | null } }>
+            openVidToolsFile: (filePath: string) => Promise<VidToolsOpenResult>
+            getPathForFile: (file: File) => string
             addLocalFile: (payload: { sourceFilePath: string; formFields: T; mode?: 'add' | 'override' | 'addVersion'; videoDir?: string }, targetTag?: string) => Promise<{ success: boolean; videoDir: string; epoch: string }>
             changeThumbnail: (payload: { videoDir: string; mode: 'timestamp' | 'file'; timestampSeconds?: number; imageFilePath?: string; downloadedFilePath?: string }) => Promise<{ success: boolean; thumbnailPath?: string; message?: string }>
+            copyFrameToClipboard: (payload: { filePath: string; timestampSeconds: number }) => Promise<{ success: boolean; message?: string }>
+            setVideoNotes: (payload: { videoDir: string; notes: string }) => Promise<{ success: boolean; notes?: string; message?: string }>
+            getTranscript: (payload: EpochRef & { language?: string }) => Promise<{ success: boolean; transcript?: Transcript | null; message?: string }>
+            listTranscriptLanguages: (payload: EpochRef) => Promise<{ success: boolean; languages?: TranscriptLanguageOption[]; message?: string }>
+            fetchTranscript: (payload: EpochRef & { language?: string }) => Promise<TranscriptFetchResult>
+            fetchTranscripts: (payload: { items: EpochRef[]; label?: string }) => Promise<{ success: boolean; message?: string }>
+            getTranscriptBatchStatus: () => Promise<TranscriptBatchStatus | null>
+            cancelTranscriptBatch: () => Promise<{ success: boolean }>
+            copyTranscriptText: (payload: EpochRef & { language?: string; withTimestamps: boolean }) => Promise<{ success: boolean; message?: string }>
+            saveTranscriptText: (payload: EpochRef & { language?: string; withTimestamps: boolean }) => Promise<{ success: boolean; canceled?: boolean; filePath?: string; message?: string }>
+            onTranscriptUpdated: (callback: (data: EpochRef & { language?: string }) => void) => void
+            removeTranscriptUpdatedListener: () => void
+            onTranscriptBatchProgress: (callback: (status: TranscriptBatchStatus) => void) => void
+            removeTranscriptBatchProgressListener: () => void
+            getTranscriptSettings: () => Promise<{ fetchTranscriptOnDownload: boolean; transcriptLanguage: string }>
+            setTranscriptSettings: (value: { fetchTranscriptOnDownload?: boolean; transcriptLanguage?: string }) => Promise<{ success: boolean; fetchTranscriptOnDownload: boolean; transcriptLanguage: string }>
+            setClipNotes: (payload: { videoDir: string; clipId: string; notes: string }) => Promise<{ success: boolean; clip?: LibraryClip; message?: string }>
             fetchPlaylistEntries: (playlistUrl: string) => Promise<{ success: boolean; entries?: { id: string; title: string | null; url: string; thumbnailUrl: string; uploadDate: string | null }[]; playlistId?: string; message?: string }>
             enrichPlaylistEntry: (payload: { playlistId: string; videoId: string; title?: string | null; uploadDate?: string | null; thumbnailUrl?: string | null }) => Promise<{ success: boolean; message?: string }>
             listPlaylists: () => Promise<{ playlists: PlaylistSummary[] }>

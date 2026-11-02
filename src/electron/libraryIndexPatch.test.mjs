@@ -13,6 +13,7 @@ import {
   moveLibraryEntry,
   recordClip,
   deleteClip,
+  setVideoNotes,
   createLibraryTag,
   scanLibrary,
   patchLibraryIndex,
@@ -140,6 +141,8 @@ function randomWrite(random, step, music) {
     fs.writeFileSync(path.join(videoDir, 'video-thumbnail.jpg'), 'img');
     // Channel icon lands beside the videos -- the patch must pick it up too.
     if (!videoDir.includes(`${path.sep}NonYT${path.sep}`)) fs.writeFileSync(path.join(path.dirname(videoDir), 'channel-icon.png'), 'img');
+    // Keyed on step, not random(), so the seeded write sequence is unchanged.
+    setVideoNotes({ libraryDir, videoDir, notes: step % 3 === 0 ? '' : `note ${step}` });
     return { [DEFAULT_LIBRARY_DIR_NAME]: [videoDir] };
   }
   if (roll < 0.90) {

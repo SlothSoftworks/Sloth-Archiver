@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { buildResolutions, reshapeVideoInfo, fetchVideoInfo, pruneExpiredVideoInfoCache } from './videoInfo.mjs';
+import { buildResolutions, reshapeVideoInfo, fetchVideoInfo, pruneExpiredVideoInfoCache, isDeadVideoInfo } from './videoInfo.mjs';
 import { ERROR_KINDS } from './downloadErrors.mjs';
 
 // Trimmed down from real yt-dlp -J output captured per-platform, not
@@ -68,6 +68,19 @@ describe('buildResolutions', () => {
 });
 
 describe('reshapeVideoInfo', () => {
+  it('carries the compact subtitle track list a transcript fetch picks from', () => {
+    const info = {
+      ...loadFixture('youtube'),
+      language: 'en',
+      subtitles: { en: [{ ext: 'vtt', name: 'English' }] },
+      automatic_captions: { 'en-orig': [{ ext: 'vtt', name: 'English (Original)' }], fr: [{ ext: 'vtt', name: 'French' }] },
+    };
+    expect(reshapeVideoInfo(info).subtitleTracks).toEqual({
+      manual: [{ code: 'en', name: 'English' }],
+      auto: [{ code: 'en-orig', name: 'English (Original)' }],
+    });
+  });
+
   it('derives platform "youtube" from extractor_key "Youtube", carries extractorKey, license, timestamp', () => {
     const info = loadFixture('youtube');
     const response = reshapeVideoInfo(info);
@@ -111,6 +124,15 @@ describe('reshapeVideoInfo', () => {
     expect(response.platform).toBe('peertube');
     expect(response.categories).toEqual(info.categories);
     expect(response.tags).toEqual(info.tags);
+  });
+
+  it('takes the uploader from `channel` when `uploader` is empty (Instagram)', () => {
+    const response = reshapeVideoInfo(loadFixture('instagram'));
+
+    expect(response.platform).toBe('instagram');
+    expect(response.uploader).toBe('myhoegoin');
+    expect(response.channelId).toBeNull();
+    expect(isDeadVideoInfo(response)).toBe(false);
   });
 
   it('derives platform for archive.org (extractor_key "ArchiveOrg") and carries its license/timestamp', () => {
@@ -224,6 +246,16 @@ describe('fetchVideoInfo rejections', () => {
   it('uses unknown for a non-YouTube URL with no formats', async () => {
     const { promise } = fetchWith([{ stdout: JSON.stringify({ id: 'x', formats: [] }) }], { url: 'https://example.com/v/1' });
     await expect(promise).rejects.toMatchObject({ kind: ERROR_KINDS.UNKNOWN, message: 'yt-dlp could not retrieve any downloadable formats for this URL.' });
+  });
+
+  it('accepts a video identified only by an uploader id or a `channel` name (Instagram)', async () => {
+    const instagram = loadFixture('instagram');
+    const { promise } = fetchWith([{ stdout: JSON.stringify(instagram) }], { url: instagram.webpage_url });
+    const result = await promise;
+    expect(result.data.response.uploader).toBe('myhoegoin');
+
+    const idOnly = fetchWith([{ stdout: JSON.stringify({ id: 'x', title: 'T', uploader_id: '42', formats: [{ height: 720, vcodec: 'avc1' }] }) }], { url: 'https://example.com/v/1' });
+    await expect(idOnly.promise).resolves.toMatchObject({ success: true });
   });
 
   it('uses unknown for a dead video and for unparseable output', async () => {

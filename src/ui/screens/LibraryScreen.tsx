@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useMatch, useNavigate, useSearchParams } from 'react-router';
+import { useLocation, useMatch, useNavigate, useSearchParams } from 'react-router';
 import {
   Alert,
   Avatar,
@@ -64,6 +64,7 @@ import CreateSubLibraryDialog from '../components/CreateSubLibraryDialog';
 import AddLocalFileDialog, { type LocalFileFormFields } from '../components/AddLocalFileDialog';
 import MoveToSubLibraryDialog from '../components/MoveToSubLibraryDialog';
 import TagSelectedDialog from '../components/TagSelectedDialog';
+import ChannelTranscriptFetch from '../components/ChannelTranscriptFetch';
 import TagFilterPopover, { type SystemFilterKey } from '../components/TagFilterPopover';
 import { getPlatformIcon, getPlatformColor } from '../utils/platformIcons';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
@@ -220,6 +221,7 @@ export default function LibraryScreen() {
   const [creatingTag, setCreatingTag] = useState(false);
   const [createTagError, setCreateTagError] = useState<string | null>(null);
   const [addLocalFileDialogOpen, setAddLocalFileDialogOpen] = useState(false);
+  const [addLocalFileInitialPath, setAddLocalFileInitialPath] = useState<string | null>(null);
   const [addingLocalFile, setAddingLocalFile] = useState(false);
   const [addLocalFileError, setAddLocalFileError] = useState<string | null>(null);
   // Set once a submitted add turns out to be a duplicate (same shape as
@@ -241,7 +243,19 @@ export default function LibraryScreen() {
   const deepLinkMatch = useMatch('/library/video/:videoId');
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { start } = useBulkAddQueue();
+
+  // VidTools' "Add to library" hands its file over as router state. Cleared
+  // straight away so a later visit to /library doesn't reopen the dialog.
+  useEffect(() => {
+    const addLocalFilePath = (location.state as { addLocalFilePath?: string } | null)?.addLocalFilePath;
+    if (!addLocalFilePath) return;
+    setAddLocalFileInitialPath(addLocalFilePath);
+    setAddLocalFileDialogOpen(true);
+    navigate('/library', { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   // libraryTags/activeLibraryTag/activeLibraryTagDir come from the shared
   // useLibraryTags() hook, not fetched here -- everything else below is
@@ -881,7 +895,7 @@ export default function LibraryScreen() {
           onMoveSelected={() => setMoveDialogOpen(true)}
           canTag={canTag}
           onTagSelected={() => setTagDialogOpen(true)}
-          onAddLocalFile={() => setAddLocalFileDialogOpen(true)}
+          onAddLocalFile={() => { setAddLocalFileInitialPath(null); setAddLocalFileDialogOpen(true); }}
         />}
       {!loading && libraryDir && librarySection === 'playlists' && playlistBulkBar &&
         <LibraryBottomBar
@@ -904,6 +918,7 @@ export default function LibraryScreen() {
       <AddLocalFileDialog
         open={addLocalFileDialogOpen}
         onClose={() => { setAddLocalFileDialogOpen(false); setAddLocalFileError(null); }}
+        initialFilePath={addLocalFileInitialPath}
         submitting={addingLocalFile}
         error={addLocalFileError}
         onSubmit={handleAddLocalFileSubmit}
@@ -1730,6 +1745,12 @@ function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, 
             }
             label="Select all"
           />
+          {!(channel.isPlatformGroup && channel.platform === 'local') && (
+            <ChannelTranscriptFetch
+              channel={channel}
+              onFinished={async () => onChannelsUpdated((await window.electronAPI.getLibraryIndex()).channels)}
+            />
+          )}
           {!channel.isPlatformGroup && (
             <Tooltip title="Refresh channel icon">
               <span>

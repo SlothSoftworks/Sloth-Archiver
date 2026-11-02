@@ -108,6 +108,18 @@ export function clampEmbedMetadataByDefault(value) {
     return typeof value === 'boolean' ? value : EMBED_METADATA_BY_DEFAULT_DEFAULT;
 }
 
+// Off by default: each fetch is one more YouTube request per download.
+export const FETCH_TRANSCRIPT_ON_DOWNLOAD_DEFAULT = false;
+
+// '' means "the video's own language". Otherwise a BCP 47-ish code as
+// yt-dlp keys its subtitle tracks ('en', 'pt-BR', 'es-419').
+export function clampTranscriptSettings({ fetchTranscriptOnDownload, transcriptLanguage } = {}) {
+    return {
+        fetchTranscriptOnDownload: typeof fetchTranscriptOnDownload === 'boolean' ? fetchTranscriptOnDownload : FETCH_TRANSCRIPT_ON_DOWNLOAD_DEFAULT,
+        transcriptLanguage: typeof transcriptLanguage === 'string' && /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(transcriptLanguage) ? transcriptLanguage : '',
+    };
+}
+
 // SEC-014: directory settings used to persist whatever the renderer sent.
 // libraryDir in particular is the root of every containment check
 // (resolveInsideLibrary, library.mjs) -- setting it to "/" would make the

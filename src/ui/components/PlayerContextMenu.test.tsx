@@ -86,4 +86,20 @@ describe('PlayerContextMenu', () => {
     expect(onChangeThumbnail).toHaveBeenCalledWith(42.5);
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('hides Copy frame to clipboard when onCopyFrame is not passed', () => {
+    renderMenu();
+    expect(screen.queryByRole('menuitem', { name: 'Copy frame to clipboard' })).not.toBeInTheDocument();
+  });
+
+  it('clicking Copy frame to clipboard fires the callback with the captured currentTime and closes the menu', async () => {
+    const user = userEvent.setup();
+    const onCopyFrame = vi.fn();
+    const { onClose } = renderMenu({ onCopyFrame, currentTime: 12.25 });
+
+    await user.click(screen.getByRole('menuitem', { name: 'Copy frame to clipboard' }));
+
+    expect(onCopyFrame).toHaveBeenCalledWith(12.25);
+    expect(onClose).toHaveBeenCalled();
+  });
 });

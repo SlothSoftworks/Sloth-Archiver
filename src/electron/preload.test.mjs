@@ -12,6 +12,7 @@ const on = vi.fn();
 const removeAllListeners = vi.fn();
 const removeListener = vi.fn();
 const exposeInMainWorld = vi.fn();
+const getPathForFile = vi.fn();
 
 // vi.mock('electron', ...) -- the approach every other test file in this
 // project uses -- doesn't reach this file's require('electron') call: that
@@ -30,6 +31,7 @@ require.cache[require.resolve('electron')] = {
   exports: {
     contextBridge: { exposeInMainWorld },
     ipcRenderer: { invoke, on, removeAllListeners, removeListener },
+    webUtils: { getPathForFile },
   },
 };
 
@@ -102,7 +104,21 @@ const invokeTable = [
   ['clearBacklog', [], ['backlog:clear']],
   ['openLocalVideoFile', [], ['dialog:openLocalVideoFile']],
   ['probeLocalFile', ['/p/file.mp4'], ['library:probeLocalFile', '/p/file.mp4']],
+  ['openVidToolsFile', ['/p/file.mkv'], ['vidtools:openFile', '/p/file.mkv']],
   ['addLocalFile', [{ sourceFilePath: '/p/file.mp4' }, 'Music'], ['library:addLocalFile', { sourceFilePath: '/p/file.mp4' }, 'Music']],
+  ['copyFrameToClipboard', [{ filePath: '/p/v.mp4', timestampSeconds: 3 }], ['library:copyFrameToClipboard', { filePath: '/p/v.mp4', timestampSeconds: 3 }]],
+  ['setVideoNotes', [{ videoDir: '/v', notes: 'n' }], ['library:setVideoNotes', { videoDir: '/v', notes: 'n' }]],
+  ['setClipNotes', [{ videoDir: '/v', clipId: 'c1', notes: 'n' }], ['library:setClipNotes', { videoDir: '/v', clipId: 'c1', notes: 'n' }]],
+  ['getTranscript', [{ videoDir: '/v', epoch: '1' }], ['transcripts:get', { videoDir: '/v', epoch: '1' }]],
+  ['listTranscriptLanguages', [{ videoDir: '/v', epoch: '1' }], ['transcripts:listLanguages', { videoDir: '/v', epoch: '1' }]],
+  ['fetchTranscript', [{ videoDir: '/v', epoch: '1', language: 'en' }], ['transcripts:fetch', { videoDir: '/v', epoch: '1', language: 'en' }]],
+  ['fetchTranscripts', [{ items: [], label: 'Channel A' }], ['transcripts:fetchMany', { items: [], label: 'Channel A' }]],
+  ['getTranscriptBatchStatus', [], ['transcripts:status']],
+  ['cancelTranscriptBatch', [], ['transcripts:cancel']],
+  ['copyTranscriptText', [{ videoDir: '/v', epoch: '1', withTimestamps: false }], ['transcripts:copyText', { videoDir: '/v', epoch: '1', withTimestamps: false }]],
+  ['saveTranscriptText', [{ videoDir: '/v', epoch: '1', withTimestamps: true }], ['transcripts:saveText', { videoDir: '/v', epoch: '1', withTimestamps: true }]],
+  ['getTranscriptSettings', [], ['settings:getTranscriptSettings']],
+  ['setTranscriptSettings', [{ fetchTranscriptOnDownload: true }], ['settings:setTranscriptSettings', { fetchTranscriptOnDownload: true }]],
   ['fetchPlaylistEntries', ['url'], ['library:fetchPlaylistEntries', 'url']],
   ['enrichPlaylistEntry', [{ e: 1 }], ['library:enrichPlaylistEntry', { e: 1 }]],
   ['recordLibraryDownload', [{ r: 1 }], ['library:recordDownload', { r: 1 }]],
@@ -126,6 +142,13 @@ describe.each(invokeTable)('electronAPI.%s', (key, args, expectedInvokeArgs) => 
     electronAPI[key](...args);
     expect(invoke).toHaveBeenCalledWith(...expectedInvokeArgs);
   });
+});
+
+it('getPathForFile maps a dropped File through webUtils', () => {
+  getPathForFile.mockReturnValue('/dropped/video.mkv');
+  const file = { name: 'video.mkv' };
+  expect(electronAPI.getPathForFile(file)).toBe('/dropped/video.mkv');
+  expect(getPathForFile).toHaveBeenCalledWith(file);
 });
 
 describe('electronAPI event subscriptions', () => {
@@ -153,6 +176,22 @@ describe('electronAPI event subscriptions', () => {
     removeAllListeners.mockClear();
     electronAPI.removeLibraryBackgroundUpdateListener();
     expect(removeAllListeners).toHaveBeenCalledWith('library:backgroundUpdate');
+  });
+
+  it.each([
+    ['onTranscriptUpdated', 'removeTranscriptUpdatedListener', 'transcripts:updated', { videoDir: '/v', epoch: '1' }],
+    ['onTranscriptBatchProgress', 'removeTranscriptBatchProgressListener', 'transcripts:progress', { total: 2, done: 1 }],
+  ])('%s/%s wire to the %s channel', (onName, removeName, channel, payload) => {
+    on.mockClear();
+    const callback = vi.fn();
+    electronAPI[onName](callback);
+    expect(on).toHaveBeenCalledWith(channel, expect.any(Function));
+    on.mock.calls[0][1]({}, payload);
+    expect(callback).toHaveBeenCalledWith(payload);
+
+    removeAllListeners.mockClear();
+    electronAPI[removeName]();
+    expect(removeAllListeners).toHaveBeenCalledWith(channel);
   });
 
   it('onFfmpegUtilityProgress/removeFfmpegUtilityProgressListener wire to the ffmpegUtilityProgress channel', () => {
