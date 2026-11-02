@@ -42,6 +42,8 @@ beforeEach(() => {
     setResumeMinDurationSeconds: vi.fn().mockResolvedValue({ success: true, resumeMinDurationSeconds: 1200 }),
     getEmbedMetadataByDefault: vi.fn().mockResolvedValue({ embedMetadataByDefault: true }),
     setEmbedMetadataByDefault: vi.fn().mockResolvedValue({ success: true, embedMetadataByDefault: true }),
+    getTranscriptSettings: vi.fn().mockResolvedValue({ fetchTranscriptOnDownload: false, transcriptLanguage: '' }),
+    setTranscriptSettings: vi.fn().mockResolvedValue({ success: true, fetchTranscriptOnDownload: false, transcriptLanguage: '' }),
     getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
   };
 });

@@ -71,12 +71,18 @@ function renderDialogWithCreateHarness() {
   );
 }
 
+// Pasted in one step: typing long links key by key times out under full-suite load.
+async function enterLinks(user: ReturnType<typeof userEvent.setup>, text: string) {
+  await user.click(screen.getByPlaceholderText(/youtube\.com\/playlist/));
+  await user.paste(text);
+}
+
 describe('BulkAddDialog', () => {
   it('shows a validation error and does not submit when a link is invalid', async () => {
     const user = userEvent.setup();
     const { onClose } = renderDialog();
 
-    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), 'not a url, https://youtu.be/def');
+    await enterLinks(user, 'not a url, https://youtu.be/def');
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(await screen.findByText(/link\(s\) aren't valid URLs/)).toBeInTheDocument();
@@ -87,7 +93,7 @@ describe('BulkAddDialog', () => {
     const user = userEvent.setup();
     const { onClose } = renderDialog();
 
-    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), 'https://youtu.be/aaa, https://youtu.be/bbb');
+    await enterLinks(user, 'https://youtu.be/aaa, https://youtu.be/bbb');
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -101,7 +107,7 @@ describe('BulkAddDialog', () => {
     });
     const { onClose } = renderDialog();
 
-    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), 'https://www.youtube.com/playlist?list=PL1');
+    await enterLinks(user, 'https://www.youtube.com/playlist?list=PL1');
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
     await waitFor(() => expect(window.electronAPI.fetchPlaylistEntries).toHaveBeenCalledWith('https://www.youtube.com/playlist?list=PL1'));
@@ -115,10 +121,7 @@ describe('BulkAddDialog', () => {
     });
     const { onClose } = renderDialog();
 
-    await user.type(
-      screen.getByPlaceholderText(/youtube\.com\/playlist/),
-      'https://www.youtube.com/watch?v=RrmWFjnAP2E&list=PL1{enter}https://www.youtube.com/watch?v=oiuyhxp4w9I&rco=1',
-    );
+    await enterLinks(user, 'https://www.youtube.com/watch?v=RrmWFjnAP2E&list=PL1\nhttps://www.youtube.com/watch?v=oiuyhxp4w9I&rco=1');
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
     await waitFor(() => expect(window.electronAPI.fetchPlaylistEntries).toHaveBeenCalledWith('https://www.youtube.com/watch?v=RrmWFjnAP2E&list=PL1'));
@@ -133,7 +136,7 @@ describe('BulkAddDialog', () => {
     (window.electronAPI.fetchPlaylistEntries as ReturnType<typeof vi.fn>).mockResolvedValue({ success: false, message: 'blocked' });
     const { onClose } = renderDialog();
 
-    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), 'https://www.youtube.com/playlist?list=PL1');
+    await enterLinks(user, 'https://www.youtube.com/playlist?list=PL1');
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(await screen.findByText('blocked')).toBeInTheDocument();
@@ -267,7 +270,7 @@ describe('BulkAddDialog: channel links', () => {
     const { onClose, getQueue } = renderDialogInApp();
     act(() => getQueue().setPanelOpen(true));
 
-    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), '  https://www.youtube.com/@veritasium  ');
+    await enterLinks(user, '  https://www.youtube.com/@veritasium  ');
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(await screen.findByText('Channel archive view')).toBeInTheDocument();
@@ -283,7 +286,7 @@ describe('BulkAddDialog: channel links', () => {
     const user = userEvent.setup();
     const { onClose, getQueue } = renderDialogInApp();
 
-    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), 'https://youtu.be/aaa, https://www.youtube.com/channel/UCHnyfMqiRRG1u-2MsSQLbXA/videos, https://www.youtube.com/playlist?list=PL1');
+    await enterLinks(user, 'https://youtu.be/aaa, https://www.youtube.com/channel/UCHnyfMqiRRG1u-2MsSQLbXA/videos, https://www.youtube.com/playlist?list=PL1');
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(await screen.findByText('Channel links need to be added on their own.')).toBeInTheDocument();
@@ -302,7 +305,7 @@ describe('BulkAddDialog: channel links', () => {
     });
     const { onClose, getQueue } = renderDialogInApp();
 
-    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), 'https://www.youtube.com/playlist?list=PL1, https://youtu.be/bbb');
+    await enterLinks(user, 'https://www.youtube.com/playlist?list=PL1, https://youtu.be/bbb');
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -315,7 +318,7 @@ describe('BulkAddDialog: channel links', () => {
   it('says so instead of misfiling a channel link when there is no channel-archive provider', async () => {
     const user = userEvent.setup();
     const { onClose } = renderDialog();
-    await user.type(screen.getByPlaceholderText(/youtube\.com\/playlist/), 'https://www.youtube.com/@veritasium');
+    await enterLinks(user, 'https://www.youtube.com/@veritasium');
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(await screen.findByText('Channel links can\'t be added from here.')).toBeInTheDocument();

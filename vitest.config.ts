@@ -17,6 +17,9 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: 'node',
+    // Multi-step jsdom UI flows take ~1 s alone but can pass 5 s (the
+    // default) when every file runs in parallel, failing on load alone.
+    testTimeout: 15_000,
     include: ['src/**/*.test.{js,mjs,ts,tsx}'],
     setupFiles: ['./vitest.setup.ts'],
     coverage: {
