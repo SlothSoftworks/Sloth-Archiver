@@ -4,6 +4,60 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [1.7.0] — 2026-11-01
+- **Transcripts for your library videos.** A video's detail view now has a
+  Transcript tab next to its tools. Fetch a version's transcript and it's
+  shown as a timestamped list you can search (matches are highlighted and
+  counted); click any line to jump the player there. It works for any
+  platform that offers subtitles, not for local files.
+  - The uploader's own subtitles are used when there are any, otherwise
+    the auto-generated captions, in the video's original language — or in a
+    language you choose under Options → Transcripts, when the video has it.
+    Auto-generated captions come out as clean single lines, not the
+    repeated rolling lines YouTube shows.
+  - While a downloaded video plays, the current line is highlighted and
+    kept in view. Scroll the list yourself and it stops following, with a
+    "Back to current" button to pick it up again.
+  - The language button lists every language the video offers and shows
+    which are already saved on your computer. A saved one opens instantly;
+    any other is downloaded once and kept alongside the original, never
+    replacing it.
+  - Copy a transcript to the clipboard, or save it as a .txt file, with or
+    without timestamps.
+  - "Fetch missing transcripts" in a channel's header fetches every video
+    that doesn't have one yet, one at a time with a pause between each, and
+    shows its progress; it carries on if you leave the channel, can be
+    stopped, and stops by itself if YouTube starts limiting requests.
+  - Options → Transcripts can also fetch a transcript automatically
+    whenever a video is downloaded (off by default). It runs in the
+    background, so the download never waits for it or fails because of it.
+  - Transcripts are kept with each version in the library folder. They're
+    not included in a library export.
+- **VidTools: player and ffmpeg tools for any video on your computer.** A
+  new VidTools tab opens a video you pick or drop onto it — without adding
+  it to your library — to play it, make clips, convert it or extract its
+  audio, and shows its size, duration, resolution and codecs. Results are
+  saved where you choose and your original file is never changed. "Add to
+  library" hands the file straight to the add-local-file dialog.
+- **Notes on videos and clips.** Write your own notes on any library video
+  or clip, up to 500 characters each. Notes are included in a library
+  export; importing adds them only to videos that don't already have notes.
+- **Keyboard shortcuts in the player.** Space/K play and pause, J/L and the
+  arrow keys skip 5 seconds (10 with Shift), `,` and `.` step frame by
+  frame, 0–9 jump through the video, `<` and `>` change the speed (shown
+  briefly in the corner of the video), and M/F mute and go fullscreen.
+  Cmd/Ctrl+J and Cmd/Ctrl+L set the clip start and end, Shift+J and Shift+L
+  jump back to them, and Cmd/Ctrl+S copies the current frame. Shift+I shows
+  the full list.
+- **Copy a video frame to the clipboard.** Right-click the player and choose
+  "Copy frame to clipboard" (or press Cmd/Ctrl+S) to copy the exact frame
+  on screen as an image.
+- **A tidier video detail view.** The download and ffmpeg tools now share
+  the side panel with the transcript as Tools and Transcript tabs, with the
+  version, quality and labels kept above both.
+- **Fixed Instagram videos failing to add.** Instagram leaves the uploader
+  name empty, which made the app treat the video as unavailable.
+
 ## [1.6.0] — 2026-10-12
 - **Archive a whole YouTube channel, picking exactly which videos you
   want.** Paste a channel link into the Downloader tab (or on its own into
