@@ -27,6 +27,7 @@ import {
   summarizeExport,
   EXPORT_FORMAT,
   EXPORT_FORMAT_VERSION,
+  toPortableEpochMetadata,
 } from './libraryExport.mjs';
 
 let root;
@@ -111,6 +112,13 @@ describe('buildLibraryExport', () => {
 
   it('refuses without a library folder', async () => {
     await expect(buildLibraryExport('', '1.5.0')).rejects.toThrow(/No library folder/);
+  });
+});
+
+describe('toPortableEpochMetadata', () => {
+  it('drops the transcript summary, since transcript.json is not exported', () => {
+    const transcript = { language: 'en', languageName: 'English', source: 'auto', fetchedEpoch: 1, segmentCount: 3 };
+    expect(toPortableEpochMetadata({ videoId: 'v', transcript }).transcript).toBeNull();
   });
 });
 

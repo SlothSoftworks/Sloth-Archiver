@@ -54,6 +54,8 @@ export function toPortableEpochMetadata(metadata) {
         downloadedResolution: null,
         downloadedFormat: null,
         lastPlaybackPositionSeconds: null,
+        // transcript.json isn't exported, so the summary would point at nothing.
+        transcript: null,
     };
 }
 

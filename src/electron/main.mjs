@@ -11,7 +11,7 @@ import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs'
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
 import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, setVideoNotes, setClipNotes, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, extractFrameToFile, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex } from './library.mjs';
-import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
+import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, clampTranscriptSettings, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
@@ -21,6 +21,7 @@ import { ensurePlayablePreview, isChromiumCompatible } from './previewCache.mjs'
 import { createLocalFileAccess, validateOpenablePath, isSameFile, isNativePlayableExtension, LOCAL_VIDEO_FILE_EXTENSIONS } from './localFileAccess.mjs';
 import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
 import { createChannelScanner, createChannelScanSession } from './channelScan.mjs';
+import { pickTranscriptTrack, listTranscriptLanguages, buildSubtitleDownloadArgs, parseVtt, readTranscript, writeTranscript, transcriptToText, createTranscriptQueue } from './transcripts.mjs';
 import { createArchiveBacklogStore, summarizeBacklog, BACKLOG_MAX_ITEMS } from './archiveBacklog.mjs';
 import { parseYouTubeChannelUrl } from './utils/youtube.mjs';
 import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
@@ -700,6 +701,15 @@ ipcMain.handle('settings:setEmbedMetadataByDefault', async (e, value) => {
     return { success: true, embedMetadataByDefault: settings.embedMetadataByDefault };
 });
 
+ipcMain.handle('settings:getTranscriptSettings', async () => clampTranscriptSettings(readSettings()));
+
+ipcMain.handle('settings:setTranscriptSettings', async (e, value) => {
+    const settings = readSettings();
+    Object.assign(settings, clampTranscriptSettings({ ...clampTranscriptSettings(settings), ...value }));
+    writeSettings(settings);
+    return { success: true, ...clampTranscriptSettings(settings) };
+});
+
 // User-added muxers for the Library view's "convert to" ffmpeg utility,
 // beyond the small hardcoded popular set (LibraryVideoDetail.tsx) -- a plain
 // string list, not validated against ffmpeg's own muxer list.
@@ -1177,6 +1187,7 @@ ipcMain.handle('library:recordDownload', async (e, { videoDir, epoch, filePath, 
     await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
     const metadataTags = buildEmbedMetadataTags(metadata);
     await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
+    maybeAutoFetchTranscript({ videoDir, epoch, metadata });
     return { success: true };
 });
 
@@ -1196,6 +1207,7 @@ ipcMain.handle('library:swapDownload', async (e, { videoDir, epoch, tempFilePath
     const filePath = kind === 'audio' ? metadata.downloadedAudioFilePath : metadata.downloadedFilePath;
     const metadataTags = buildEmbedMetadataTags(metadata);
     await maybeAutoEmbedMetadata({ filePath, kind, metadataTags, thumbnailPath: findVideoThumbnailPath(videoDir), libraryDir, logContext: `${videoDir}/${epoch}` });
+    maybeAutoFetchTranscript({ videoDir, epoch, metadata });
     return metadata;
 });
 
@@ -1675,10 +1687,10 @@ ipcMain.handle('dialog:saveVideoFile', async (e, defaultName) => {
     return result;
 })
 
-function fetchVideoInfoForUrl(url) {
+function fetchVideoInfoForUrl(url, { skipCache = false } = {}) {
     assertValidHttpUrl(url, 'video URL');
     return fetchVideoInfo(url, {
-        ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS, onLog: log,
+        ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs: VIDEO_INFO_CACHE_TTL_MS, skipCache, onLog: log,
     });
 }
 
@@ -2683,6 +2695,156 @@ ipcMain.handle('library:setVideoNotes', async (e, { videoDir, notes }) => {
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
+});
+
+// Transcripts (transcripts.mjs). The epoch comes from the renderer, so it is
+// checked to be a plain epoch folder name before being joined onto the
+// already-contained videoDir.
+const TRANSCRIPT_BATCH_MAX_ITEMS = 5000;
+
+function resolveEpochDir(libraryDir, videoDir, epoch) {
+    if (typeof epoch !== 'string' || !/^\d{1,16}$/.test(epoch)) return null;
+    const resolvedVideoDir = resolveInsideLibrary(libraryDir, videoDir);
+    return resolvedVideoDir ? path.join(resolvedVideoDir, epoch) : null;
+}
+
+function readEpochMetadata(epochDir) {
+    try {
+        return JSON.parse(fs.readFileSync(path.join(epochDir, 'metadata.json'), 'utf-8'));
+    } catch {
+        return null;
+    }
+}
+
+// Info cached before subtitleTracks existed has none; one fresh fetch fills it.
+async function fetchSubtitleTracks(url) {
+    let { data } = await fetchVideoInfoForUrl(url);
+    if (!data.response.subtitleTracks) ({ data } = await fetchVideoInfoForUrl(url, { skipCache: true }));
+    return { subtitleTracks: data.response.subtitleTracks, language: data.response.language };
+}
+
+// Its own temp folder, never a download's: findFinalFile assumes exactly one
+// file lands in a download folder and would happily pick up a .vtt.
+function downloadSubtitleVtt(url, track) {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sloth-archiver-subs-'));
+    const args = buildSubtitleDownloadArgs({ url, track, outputDir: tempDir, ffmpegDir, extraArgs: [...cookiesArgs(), ...jsRuntimeArgs()] });
+    return new Promise((resolve, reject) => {
+        const script = spawn(ytdlpPath, args, { env: ytdlpSpawnEnv() });
+        let stderr = '';
+        script.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+        script.on('error', (err) => {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            reject(Object.assign(new Error(`Failed to start yt-dlp: ${err.message}`), { kind: classifyDownloadError({ spawnError: err }).kind }));
+        });
+        script.on('close', (code) => {
+            try {
+                if (code !== 0) {
+                    const classified = classifyDownloadError({ stderr, exitCode: code });
+                    reject(Object.assign(new Error(classified.message), { kind: classified.kind }));
+                    return;
+                }
+                const vttName = fs.readdirSync(tempDir).find((name) => name.endsWith('.vtt'));
+                if (!vttName) {
+                    reject(Object.assign(new Error('yt-dlp did not return a transcript.'), { kind: 'noTranscript' }));
+                    return;
+                }
+                resolve(fs.readFileSync(path.join(tempDir, vttName), 'utf-8'));
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+    });
+}
+
+async function fetchTranscriptForEpoch({ videoDir, epoch, language }) {
+    const { libraryDir } = readSettings();
+    const epochDir = resolveEpochDir(libraryDir, videoDir, epoch);
+    const metadata = epochDir && readEpochMetadata(epochDir);
+    if (!metadata) return { success: false, message: 'Video not found in the library.' };
+    if (metadata.platform === 'local' || !metadata.originalUrl) {
+        return { success: false, kind: 'noTranscript', message: "Transcripts aren't available for local files." };
+    }
+    try {
+        const { subtitleTracks, language: videoLanguage } = await fetchSubtitleTracks(metadata.originalUrl);
+        const preferredLanguage = language || clampTranscriptSettings(readSettings()).transcriptLanguage;
+        const track = pickTranscriptTrack({ subtitleTracks, language: videoLanguage, preferredLanguage });
+        if (!track) return { success: false, kind: 'noTranscript', message: 'This video has no transcript.' };
+        const segments = parseVtt(await downloadSubtitleVtt(metadata.originalUrl, track));
+        if (segments.length === 0) return { success: false, kind: 'noTranscript', message: 'The transcript was empty.' };
+        const transcript = writeTranscript(epochDir, { language: track.language, languageName: track.languageName, source: track.source, segments });
+        await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
+        BrowserWindow.getAllWindows()[0]?.webContents.send('transcripts:updated', { videoDir, epoch });
+        log(`[transcript] fetched ${track.key} (${track.source}, ${segments.length} lines) for ${videoDir}/${epoch}`);
+        return { success: true, transcript };
+    } catch (err) {
+        const message = redactHomeDir(err instanceof Error ? err.message : String(err));
+        log(`[transcript] fetch failed for ${videoDir}/${epoch}: ${message}`);
+        return { success: false, kind: err?.kind || ERROR_KINDS.UNKNOWN, message };
+    }
+}
+
+const transcriptQueue = createTranscriptQueue({
+    fetchOne: fetchTranscriptForEpoch,
+    onBatchProgress: (status) => BrowserWindow.getAllWindows()[0]?.webContents.send('transcripts:progress', status),
+});
+
+// Enqueued, never awaited: a download must not wait on, or fail because of,
+// its transcript.
+function maybeAutoFetchTranscript({ videoDir, epoch, metadata }) {
+    if (!clampTranscriptSettings(readSettings()).fetchTranscriptOnDownload) return;
+    if (metadata?.transcript || metadata?.platform === 'local') return;
+    transcriptQueue.enqueue({ videoDir, epoch });
+}
+
+ipcMain.handle('transcripts:get', async (e, { videoDir, epoch }) => {
+    const epochDir = resolveEpochDir(readSettings().libraryDir, videoDir, epoch);
+    if (!epochDir) return { success: false, message: 'Video not found in the library.' };
+    return { success: true, transcript: readTranscript(epochDir) };
+});
+
+ipcMain.handle('transcripts:listLanguages', async (e, { videoDir, epoch }) => {
+    const epochDir = resolveEpochDir(readSettings().libraryDir, videoDir, epoch);
+    const metadata = epochDir && readEpochMetadata(epochDir);
+    if (!metadata?.originalUrl || metadata.platform === 'local') return { success: true, languages: [] };
+    try {
+        const { subtitleTracks } = await fetchSubtitleTracks(metadata.originalUrl);
+        return { success: true, languages: listTranscriptLanguages(subtitleTracks) };
+    } catch (err) {
+        return { success: false, message: redactHomeDir(err instanceof Error ? err.message : String(err)) };
+    }
+});
+
+ipcMain.handle('transcripts:fetch', async (e, { videoDir, epoch, language }) => transcriptQueue.enqueue({
+    videoDir, epoch, language: typeof language === 'string' ? clampTranscriptSettings({ transcriptLanguage: language }).transcriptLanguage : '',
+}));
+
+ipcMain.handle('transcripts:fetchMany', async (e, { items }) => {
+    if (!Array.isArray(items)) return { success: false, message: 'No videos given.' };
+    return transcriptQueue.enqueueBatch(items.slice(0, TRANSCRIPT_BATCH_MAX_ITEMS).map(({ videoDir, epoch }) => ({ videoDir, epoch })));
+});
+
+ipcMain.handle('transcripts:status', async () => transcriptQueue.status());
+
+ipcMain.handle('transcripts:cancel', async () => {
+    transcriptQueue.cancelBatch();
+    return { success: true };
+});
+
+ipcMain.handle('transcripts:saveText', async (e, { videoDir, epoch, withTimestamps }) => {
+    const epochDir = resolveEpochDir(readSettings().libraryDir, videoDir, epoch);
+    const transcript = epochDir && readTranscript(epochDir);
+    if (!transcript) return { success: false, message: 'No transcript to save.' };
+    const metadata = readEpochMetadata(epochDir);
+    const { downloadDir } = readSettings();
+    const result = await dialog.showSaveDialog({
+        title: 'Save transcript',
+        buttonLabel: 'Save',
+        defaultPath: path.join(downloadDir || app.getPath('downloads'), `${sanitizeForFilesystem(metadata?.title || 'transcript')}.txt`),
+        filters: [{ name: 'Text', extensions: ['txt'] }],
+    });
+    if (result.canceled || !result.filePath) return { success: false, canceled: true };
+    fs.writeFileSync(result.filePath, transcriptToText(transcript, { withTimestamps: !!withTimestamps }), 'utf-8');
+    return { success: true, filePath: result.filePath };
 });
 
 // No index update: clip notes aren't in the index, and ClipCollectionView

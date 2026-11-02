@@ -50,7 +50,32 @@ export type LibraryVideoMetadata = {
     categories?: string[] | null;
     tags?: string[] | null;
     music?: { track: string | null; artist: string | null; album: string | null; genre: string | null } | null;
+    language?: string | null;
+    // Summary of <epochDir>/transcript.json (transcripts.mjs); the lines
+    // themselves only come from transcripts:get.
+    transcript?: TranscriptSummary | null;
 }
+
+export type TranscriptSource = 'manual' | 'auto';
+
+export type TranscriptSummary = {
+    language: string;
+    languageName: string;
+    source: TranscriptSource;
+    fetchedEpoch: number;
+    segmentCount: number;
+};
+
+export type TranscriptSegment = { start: number; end: number; text: string };
+
+export type Transcript = {
+    version: number;
+    language: string;
+    languageName: string;
+    source: TranscriptSource;
+    fetchedEpoch: number;
+    segments: TranscriptSegment[];
+};
 
 export type LibraryVideoEpoch = {
     epoch: string;

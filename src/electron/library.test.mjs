@@ -675,6 +675,20 @@ describe('refreshLibraryEntryMetadata', () => {
     expect(refreshed.title).toBe('Updated Title');
     expect(refreshed.lastPlaybackPositionSeconds).toBe(77);
   });
+
+  it('keeps the transcript summary and the video language', () => {
+    const { videoDir, epochDir, metadata } = writeLibraryEntry({ libraryDir, videoMetaData: baseVideoMetaData({ language: 'en' }) });
+    const epoch = String(metadata.addedEpoch);
+    expect(metadata.language).toBe('en');
+    expect(metadata.transcript).toBeNull();
+    const transcript = { language: 'en', languageName: 'English', source: 'auto', fetchedEpoch: 1, segmentCount: 3 };
+    const metadataPath = path.join(epochDir, 'metadata.json');
+    fs.writeFileSync(metadataPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(metadataPath, 'utf-8')), transcript }));
+
+    const refreshed = refreshLibraryEntryMetadata({ libraryDir, videoDir, epoch, videoMetaData: baseVideoMetaData({ title: 'Updated Title' }) });
+
+    expect(refreshed.transcript).toEqual(transcript);
+  });
 });
 
 describe('swapLibraryDownload', () => {

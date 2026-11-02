@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import { isYouTubeUrl } from './utils/youtube.mjs';
 import { ERROR_KINDS, classifyDownloadError } from './downloadErrors.mjs';
 import { sanitizeForFilesystem } from './library.mjs';
+import { buildSubtitleTracks } from './transcripts.mjs';
 
 // Matches runFfmpegWithProgress's own '-b:a 192k' for the MP3 extraction
 // pass -- the estimate has to agree with what really gets encoded.
@@ -122,6 +123,7 @@ export function reshapeVideoInfo(info) {
         license: info.license || null,
         timestamp: info.timestamp || null,
         music: buildMusicInfo(info),
+        subtitleTracks: buildSubtitleTracks(info),
     };
 }
 
@@ -256,10 +258,10 @@ function videoInfoError(message, kind = ERROR_KINDS.UNKNOWN) {
 // video classification -> reshape -> cache write. One function so main.mjs's
 // IPC handler stays a thin wrapper, same shape as updater.mjs's
 // performYtdlpUpdate.
-export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs, onLog = () => {}, spawn: spawnProcess = spawn }) {
+export function fetchVideoInfo(url, { ytdlpPath, ffmpegDir, cookiesArgs, jsRuntimeArgs, ytdlpSpawnEnv, readVideoInfoCache, writeVideoInfoCache, cacheTtlMs, skipCache = false, onLog = () => {}, spawn: spawnProcess = spawn }) {
     const cache = readVideoInfoCache();
     const cached = cache[url];
-    if (cached && Date.now() - cached.savedEpoch < cacheTtlMs) {
+    if (!skipCache && cached && Date.now() - cached.savedEpoch < cacheTtlMs) {
         // Self-healing: a dead-video response doesn't get served as valid
         // forever -- drop it and fall through to a fresh fetch.
         if (!isDeadVideoInfo(cached.response)) {

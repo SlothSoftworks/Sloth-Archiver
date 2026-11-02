@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Alert, Link, Snackbar } from '@mui/material';
 import LibraryVideoPlayer, { type LibraryVideoPlayerHandle, type PreviewKind } from './LibraryVideoPlayer';
 import SaveClipDialog from './SaveClipDialog';
@@ -58,6 +58,10 @@ export type LibraryVideoPlayerWithToolsProps = {
   backgroundPlayOverride?: { videoId: string; title: string; thumbnailPath: string | null; clipId: string };
   // Passed straight through to LibraryVideoPlayer.
   confirmPreview?: { kind: PreviewKind };
+  embedStart?: { seconds: number; key: number } | null;
+  // Lets the caller drive the player too (the transcript seeks and follows
+  // it); falls back to a private ref.
+  playerHandleRef?: RefObject<LibraryVideoPlayerHandle | null>;
   hideAddToQueue?: boolean;
 };
 
@@ -73,8 +77,10 @@ export default function LibraryVideoPlayerWithTools({
   metadata, thumbnailPath, cacheBustKey, overrideFilePath, videoDir, epoch, existingClipTitles, convertFormatOptions, onClipCreated,
   standaloneClipping = false, onClipSavedToFile, initialSeekSeconds, backgroundPlayOverride,
   initialClipStartSeconds, initialClipEndSeconds, onThumbnailChanged, confirmPreview, hideAddToQueue,
+  embedStart, playerHandleRef,
 }: LibraryVideoPlayerWithToolsProps) {
-  const playerRef = useRef<LibraryVideoPlayerHandle>(null);
+  const ownPlayerRef = useRef<LibraryVideoPlayerHandle>(null);
+  const playerRef = playerHandleRef ?? ownPlayerRef;
   const [clipStartSeconds, setClipStartSeconds] = useState<number | null>(initialClipStartSeconds ?? null);
   const [clipEndSeconds, setClipEndSeconds] = useState<number | null>(initialClipEndSeconds ?? null);
   const [saveClipDialogOpen, setSaveClipDialogOpen] = useState(false);
@@ -253,6 +259,7 @@ export default function LibraryVideoPlayerWithTools({
         onChangeThumbnail={videoDir ? handleChangeThumbnail : undefined}
         confirmPreview={confirmPreview}
         hideAddToQueue={hideAddToQueue}
+        embedStart={embedStart}
         clipMarkers={{
           startSeconds: clipStartSeconds,
           endSeconds: clipEndSeconds,

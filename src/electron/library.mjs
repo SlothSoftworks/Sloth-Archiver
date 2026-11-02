@@ -600,7 +600,7 @@ export function setClipNotes({ libraryDir, videoDir, clipId, notes }) {
 // uniformly off reshapeVideoInfo's own shape for every platform, YouTube
 // included, even though only generic entries' UI surfaces them today.
 function buildCommonEpochMetadata(videoMetaData, addedEpoch) {
-    const { id, title, fullTitle, description, thumbnail, originalUrl, duration, durationString, uploadDate, uploader, resolutions, uploaderId, timestamp, license, categories, tags, music } = videoMetaData;
+    const { id, title, fullTitle, description, thumbnail, originalUrl, duration, durationString, uploadDate, uploader, resolutions, uploaderId, timestamp, license, categories, tags, music, language } = videoMetaData;
     return {
         schemaVersion: CURRENT_VIDEO_SCHEMA_VERSION,
         videoId: id,
@@ -631,6 +631,9 @@ function buildCommonEpochMetadata(videoMetaData, addedEpoch) {
         categories: categories || null,
         tags: tags || null,
         music: music || null,
+        language: language || null,
+        // Filled in by writeTranscript (transcripts.mjs) once one is fetched.
+        transcript: null,
     };
 }
 
@@ -751,6 +754,7 @@ export function refreshLibraryEntryMetadata({ libraryDir, videoDir, epoch, video
         downloadedFormat: existing.downloadedFormat ?? null,
         downloadedAudioFilePath: existing.downloadedAudioFilePath ?? null,
         lastPlaybackPositionSeconds: existing.lastPlaybackPositionSeconds ?? null,
+        transcript: existing.transcript ?? null,
     };
     fs.writeFileSync(metadataPath, JSON.stringify(merged, null, 2), 'utf-8');
     return merged;

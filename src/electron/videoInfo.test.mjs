@@ -68,6 +68,19 @@ describe('buildResolutions', () => {
 });
 
 describe('reshapeVideoInfo', () => {
+  it('carries the compact subtitle track list a transcript fetch picks from', () => {
+    const info = {
+      ...loadFixture('youtube'),
+      language: 'en',
+      subtitles: { en: [{ ext: 'vtt', name: 'English' }] },
+      automatic_captions: { 'en-orig': [{ ext: 'vtt', name: 'English (Original)' }], fr: [{ ext: 'vtt', name: 'French' }] },
+    };
+    expect(reshapeVideoInfo(info).subtitleTracks).toEqual({
+      manual: [{ code: 'en', name: 'English' }],
+      auto: [{ code: 'en-orig', name: 'English (Original)' }],
+    });
+  });
+
   it('derives platform "youtube" from extractor_key "Youtube", carries extractorKey, license, timestamp', () => {
     const info = loadFixture('youtube');
     const response = reshapeVideoInfo(info);

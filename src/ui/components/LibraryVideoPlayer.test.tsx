@@ -118,6 +118,11 @@ beforeEach(() => {
 });
 
 describe('LibraryVideoPlayer', () => {
+  it('starts the YouTube embed at embedStart, for a transcript click on a video that isn\'t downloaded', () => {
+    const { container } = render(<LibraryVideoPlayer metadata={baseMetadata()} embedStart={{ seconds: 42.7, key: 1 }} />);
+    expect(container.querySelector('iframe')).toHaveAttribute('src', 'https://www.youtube-nocookie.com/embed/abc123def45?start=42&autoplay=1');
+  });
+
   it('embeds the YouTube player when no local file is downloaded', () => {
     const { container } = render(<LibraryVideoPlayer metadata={baseMetadata()} />);
     const iframe = container.querySelector('iframe');

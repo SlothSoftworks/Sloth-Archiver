@@ -20,8 +20,9 @@ import type { LibraryClip, DownloadProgressMessage } from '../../types';
 // player and exercises exactly that, via a single button that fires
 // onClipCreated with a canned clip.
 vi.mock('../components/LibraryVideoPlayerWithTools', () => ({
-  default: ({ onClipCreated, overrideFilePath }: { onClipCreated?: (clip: LibraryClip) => void; overrideFilePath?: string }) => (
+  default: ({ onClipCreated, overrideFilePath, embedStart }: { onClipCreated?: (clip: LibraryClip) => void; overrideFilePath?: string; embedStart?: { seconds: number; key: number } | null }) => (
     <>
+      {embedStart && <div data-testid="fake-player-embed-start" data-seconds={embedStart.seconds} data-key={embedStart.key} />}
       <button
         onClick={() => onClipCreated?.({ id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 10 })}
       >
@@ -162,6 +163,65 @@ function renderDetail(
 }
 
 describe('LibraryVideoDetail', () => {
+  describe('Tools / Transcript side tabs', () => {
+    const transcript = {
+      version: 1, language: 'en', languageName: 'English', source: 'auto', fetchedEpoch: 1,
+      segments: [{ start: 42, end: 45, text: 'A line worth jumping to' }],
+    };
+
+    it('shows the tools first and the transcript on its tab, keeping the tools mounted', async () => {
+      window.electronAPI.getTranscript = vi.fn().mockResolvedValue({ success: true, transcript });
+      window.electronAPI.onTranscriptUpdated = vi.fn();
+      window.electronAPI.removeTranscriptUpdatedListener = vi.fn();
+      const user = userEvent.setup();
+      const video = makeVideo();
+      renderDetail(video);
+
+      expect(screen.getByRole('tab', { name: 'Tools' })).toHaveAttribute('aria-selected', 'true');
+      expect(screen.queryByText('A line worth jumping to')).not.toBeInTheDocument();
+      await user.click(screen.getByRole('tab', { name: 'Transcript' }));
+
+      expect(await screen.findByText('A line worth jumping to')).toBeInTheDocument();
+      expect(screen.getByText('a description')).toBeInTheDocument();
+      expect(screen.getByTestId('side-tools')).not.toBeVisible();
+      expect(window.electronAPI.getTranscript).toHaveBeenCalledWith({ videoDir: video.videoDir, epoch: video.latestEpoch });
+    });
+
+    it('restarts the YouTube embed at a clicked line when there is no local file, re-keying on every click', async () => {
+      window.electronAPI.getTranscript = vi.fn().mockResolvedValue({ success: true, transcript });
+      window.electronAPI.onTranscriptUpdated = vi.fn();
+      window.electronAPI.removeTranscriptUpdatedListener = vi.fn();
+      const user = userEvent.setup();
+      renderDetail(makeVideo());
+
+      await user.click(screen.getByRole('tab', { name: 'Transcript' }));
+      await user.click(await screen.findByText('A line worth jumping to'));
+      expect(screen.getByTestId('fake-player-embed-start')).toHaveAttribute('data-seconds', '42');
+      expect(screen.getByTestId('fake-player-embed-start')).toHaveAttribute('data-key', '1');
+
+      await user.click(screen.getByText('A line worth jumping to'));
+      expect(screen.getByTestId('fake-player-embed-start')).toHaveAttribute('data-key', '2');
+    });
+
+    it('keeps the quality and tags row visible on the Transcript tab', async () => {
+      window.electronAPI.getTranscript = vi.fn().mockResolvedValue({ success: true, transcript });
+      window.electronAPI.onTranscriptUpdated = vi.fn();
+      window.electronAPI.removeTranscriptUpdatedListener = vi.fn();
+      const user = userEvent.setup();
+      renderDetail(makeVideo({ downloadedFilePath: '/v/video.mp4', downloadedResolution: '720', downloadedFormat: 'dflt' }));
+
+      await user.click(screen.getByRole('tab', { name: 'Transcript' }));
+      await screen.findByText('A line worth jumping to');
+      expect(screen.getByText('720p')).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Edit tags' })).toBeVisible();
+    });
+
+    it('marks the Transcript tab when the version has one', () => {
+      renderDetail(makeVideo({ transcript: { language: 'en', languageName: 'English', source: 'auto', fetchedEpoch: 1, segmentCount: 1 } }));
+      expect(screen.getByTestId('transcript-available-dot')).toBeInTheDocument();
+    });
+  });
+
   it('renders the title, upload date, and back navigation', async () => {
     const video = makeVideo();
     const { onBack } = renderDetail(video);

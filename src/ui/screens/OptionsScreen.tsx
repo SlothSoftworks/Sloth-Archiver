@@ -74,6 +74,16 @@ const dividerLeftOnSmTopOnXs = {
   pt: { xs: 3, sm: 0 },
 };
 const dividerTop = { borderTop: '1px solid', borderColor: 'divider', pt: 3 };
+
+// Codes as YouTube keys its subtitle tracks. A video without the chosen
+// language natively falls back to its own language (transcripts.mjs).
+const TRANSCRIPT_LANGUAGE_OPTIONS: [code: string, label: string][] = [
+  ['', "Video's original language"],
+  ['en', 'English'], ['es', 'Spanish'], ['pt', 'Portuguese'], ['fr', 'French'], ['de', 'German'],
+  ['it', 'Italian'], ['nl', 'Dutch'], ['pl', 'Polish'], ['ru', 'Russian'], ['tr', 'Turkish'],
+  ['ar', 'Arabic'], ['hi', 'Hindi'], ['id', 'Indonesian'], ['ja', 'Japanese'], ['ko', 'Korean'],
+  ['zh-Hans', 'Chinese (Simplified)'], ['zh-Hant', 'Chinese (Traditional)'],
+];
 const dividerTopAndLeftOnSm = {
   borderTop: '1px solid',
   borderColor: 'divider',
@@ -140,6 +150,8 @@ export default function OptionsScreen() {
   const [resumeTrackingMode, setResumeTrackingModeState] = useState<'never' | 'always' | 'custom'>('custom');
   const [resumeMinDurationSeconds, setResumeMinDurationSecondsState] = useState(1200);
   const [embedMetadataByDefault, setEmbedMetadataByDefaultState] = useState(true);
+  const [fetchTranscriptOnDownload, setFetchTranscriptOnDownload] = useState(false);
+  const [transcriptLanguage, setTranscriptLanguage] = useState('');
   const [appVersion, setAppVersion] = useState('');
 
   const refreshStatus = async () => {
@@ -204,6 +216,18 @@ export default function OptionsScreen() {
     setEmbedMetadataByDefaultState(embedMetadataByDefault);
   };
 
+  const refreshTranscriptSettings = async () => {
+    const settings = await window.electronAPI.getTranscriptSettings();
+    setFetchTranscriptOnDownload(settings.fetchTranscriptOnDownload);
+    setTranscriptLanguage(settings.transcriptLanguage);
+  };
+
+  const handleTranscriptSettingsChange = async (value: { fetchTranscriptOnDownload?: boolean; transcriptLanguage?: string }) => {
+    if (value.fetchTranscriptOnDownload !== undefined) setFetchTranscriptOnDownload(value.fetchTranscriptOnDownload);
+    if (value.transcriptLanguage !== undefined) setTranscriptLanguage(value.transcriptLanguage);
+    await window.electronAPI.setTranscriptSettings(value);
+  };
+
   // Re-fetches on mount and whenever the shared signal bumps (e.g. the
   // header's own "Clear cookies" action, or -- once this file's own writes
   // below also bump it -- another OptionsScreen mutation), instead of only
@@ -223,6 +247,7 @@ export default function OptionsScreen() {
     refreshResumeTrackingMode();
     refreshResumeMinDurationSeconds();
     refreshEmbedMetadataByDefault();
+    refreshTranscriptSettings();
     window.electronAPI.getAppVersion().then(setAppVersion);
   }, []);
 
@@ -538,6 +563,30 @@ export default function OptionsScreen() {
               control={<Checkbox checked={embedMetadataByDefault} onChange={handleEmbedMetadataByDefaultChange} />}
               label="Embed metadata into new downloads automatically"
             />
+          </Grid>
+
+          <Grid size={{ xs: 12, sm: 6 }} sx={dividerTop}>
+            <Typography variant="h6" gutterBottom>Transcripts</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Uploader subtitles are used when they exist, auto-generated captions
+              otherwise. A video without the chosen language uses its own.
+            </Typography>
+            <Stack spacing={1.5} alignItems="flex-start">
+              <TextField
+                select
+                label="Transcript language"
+                size="small"
+                value={transcriptLanguage}
+                onChange={(e) => handleTranscriptSettingsChange({ transcriptLanguage: e.target.value })}
+                sx={{ minWidth: 240 }}
+              >
+                {TRANSCRIPT_LANGUAGE_OPTIONS.map(([code, label]) => <MenuItem key={code} value={code}>{label}</MenuItem>)}
+              </TextField>
+              <FormControlLabel
+                control={<Checkbox checked={fetchTranscriptOnDownload} onChange={(e) => handleTranscriptSettingsChange({ fetchTranscriptOnDownload: e.target.checked })} />}
+                label="Fetch transcript when a video is downloaded"
+              />
+            </Stack>
           </Grid>
         </Grid>
       </OptionsGroup>

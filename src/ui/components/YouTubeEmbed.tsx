@@ -12,13 +12,16 @@ import { isValidYouTubeVideoId } from '../../utils/utils.ts';
 // id shape before being spliced into the frame URL (SEC-009) -- an id
 // carrying "../", "?" or "#" could otherwise point the frame at a different
 // path on that origin. An invalid id renders nothing rather than a frame.
-export default function YouTubeEmbed({ videoId, sx }: { videoId: string; sx?: SxProps<Theme> }) {
+// startSeconds is how the transcript seeks a video that isn't downloaded:
+// a plain iframe can't be seeked, so the caller re-keys it to reload there.
+export default function YouTubeEmbed({ videoId, startSeconds, sx }: { videoId: string; startSeconds?: number | null; sx?: SxProps<Theme> }) {
   if (!isValidYouTubeVideoId(videoId)) return null;
+  const query = startSeconds != null ? `?start=${Math.floor(startSeconds)}&autoplay=1` : '';
   return (
     <Box
       component="iframe"
       title="YouTube video player"
-      src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}`}
+      src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}${query}`}
       referrerPolicy="strict-origin-when-cross-origin"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
       allowFullScreen

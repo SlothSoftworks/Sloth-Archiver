@@ -130,7 +130,10 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   confirmPreview?: { kind: PreviewKind };
   // VidTools files aren't library videos, which every queue entry links to.
   hideAddToQueue?: boolean;
-}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange, initialSeekSeconds, backgroundPlayOverride, onChangeThumbnail, confirmPreview, hideAddToQueue = false }, ref) {
+  // Where the YouTube embed (not-downloaded video) starts; a new key reloads
+  // it even when the same time is asked for twice.
+  embedStart?: { seconds: number; key: number } | null;
+}>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange, initialSeekSeconds, backgroundPlayOverride, onChangeThumbnail, confirmPreview, hideAddToQueue = false, embedStart }, ref) {
   const { thumbnail, videoId } = metadata;
   const filePath = overrideFilePath ?? metadata.downloadedFilePath;
   const [state, setState] = useState<PlaybackState>(() => computeInitialState(filePath, !!confirmPreview));
@@ -433,7 +436,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     }
     return (
       <ResizableMediaContainer sx={containerSx}>
-        <YouTubeEmbed videoId={videoId} sx={fillSx} />
+        <YouTubeEmbed key={embedStart?.key} videoId={videoId} startSeconds={embedStart?.seconds} sx={fillSx} />
       </ResizableMediaContainer>
     );
   }
