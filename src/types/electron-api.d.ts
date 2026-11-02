@@ -3,10 +3,14 @@ import type { LibraryVideo, LibraryVideoMetadata, PlaylistEntry, PlaylistSummary
 export {}
 
 export type TranscriptLanguage = { code: string; name: string; source: 'manual' | 'auto' };
+// A languages-dialog row: saved means it's on disk, so showing it costs no request.
+export type TranscriptLanguageOption = TranscriptLanguage & { saved: boolean; isDefault: boolean };
 export type TranscriptFetchResult =
-    | { success: true; transcript: Transcript }
+    | { success: true; transcript: Transcript; isDefault: boolean }
     | { success: false; kind?: string; message: string; cancelled?: boolean };
 export type TranscriptBatchStatus = {
+    // Who started it (LibraryScreen passes the channel folder name).
+    label: string | null;
     total: number;
     done: number;
     failed: number;
@@ -289,14 +293,15 @@ declare global {
             changeThumbnail: (payload: { videoDir: string; mode: 'timestamp' | 'file'; timestampSeconds?: number; imageFilePath?: string; downloadedFilePath?: string }) => Promise<{ success: boolean; thumbnailPath?: string; message?: string }>
             copyFrameToClipboard: (payload: { filePath: string; timestampSeconds: number }) => Promise<{ success: boolean; message?: string }>
             setVideoNotes: (payload: { videoDir: string; notes: string }) => Promise<{ success: boolean; notes?: string; message?: string }>
-            getTranscript: (payload: EpochRef) => Promise<{ success: boolean; transcript?: Transcript | null; message?: string }>
-            listTranscriptLanguages: (payload: EpochRef) => Promise<{ success: boolean; languages?: TranscriptLanguage[]; message?: string }>
+            getTranscript: (payload: EpochRef & { language?: string }) => Promise<{ success: boolean; transcript?: Transcript | null; message?: string }>
+            listTranscriptLanguages: (payload: EpochRef) => Promise<{ success: boolean; languages?: TranscriptLanguageOption[]; message?: string }>
             fetchTranscript: (payload: EpochRef & { language?: string }) => Promise<TranscriptFetchResult>
-            fetchTranscripts: (payload: { items: EpochRef[] }) => Promise<{ success: boolean; message?: string }>
+            fetchTranscripts: (payload: { items: EpochRef[]; label?: string }) => Promise<{ success: boolean; message?: string }>
             getTranscriptBatchStatus: () => Promise<TranscriptBatchStatus | null>
             cancelTranscriptBatch: () => Promise<{ success: boolean }>
-            saveTranscriptText: (payload: EpochRef & { withTimestamps: boolean }) => Promise<{ success: boolean; canceled?: boolean; filePath?: string; message?: string }>
-            onTranscriptUpdated: (callback: (data: EpochRef) => void) => void
+            copyTranscriptText: (payload: EpochRef & { language?: string; withTimestamps: boolean }) => Promise<{ success: boolean; message?: string }>
+            saveTranscriptText: (payload: EpochRef & { language?: string; withTimestamps: boolean }) => Promise<{ success: boolean; canceled?: boolean; filePath?: string; message?: string }>
+            onTranscriptUpdated: (callback: (data: EpochRef & { language?: string }) => void) => void
             removeTranscriptUpdatedListener: () => void
             onTranscriptBatchProgress: (callback: (status: TranscriptBatchStatus) => void) => void
             removeTranscriptBatchProgressListener: () => void

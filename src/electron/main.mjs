@@ -21,7 +21,10 @@ import { ensurePlayablePreview, isChromiumCompatible } from './previewCache.mjs'
 import { createLocalFileAccess, validateOpenablePath, isSameFile, isNativePlayableExtension, LOCAL_VIDEO_FILE_EXTENSIONS } from './localFileAccess.mjs';
 import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
 import { createChannelScanner, createChannelScanSession } from './channelScan.mjs';
-import { pickTranscriptTrack, listTranscriptLanguages, buildSubtitleDownloadArgs, parseVtt, readTranscript, writeTranscript, transcriptToText, createTranscriptQueue } from './transcripts.mjs';
+import {
+    pickTranscriptTrack, findTranscriptTrackByCode, listTranscriptLanguages, mergeTranscriptLanguages, buildSubtitleDownloadArgs, parseVtt,
+    readTranscript, readTranscriptForLanguage, listExtraTranscriptLanguages, writeTranscript, saveAvailableTranscriptLanguages, transcriptToText, createTranscriptQueue,
+} from './transcripts.mjs';
 import { createArchiveBacklogStore, summarizeBacklog, BACKLOG_MAX_ITEMS } from './archiveBacklog.mjs';
 import { parseYouTubeChannelUrl } from './utils/youtube.mjs';
 import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
@@ -2708,6 +2711,13 @@ function resolveEpochDir(libraryDir, videoDir, epoch) {
     return resolvedVideoDir ? path.join(resolvedVideoDir, epoch) : null;
 }
 
+// A renderer-sent language code, or null when absent or not a plain code
+// (it ends up in a file name).
+function transcriptLanguageCode(language) {
+    if (typeof language !== 'string' || !language) return null;
+    return clampTranscriptSettings({ transcriptLanguage: language }).transcriptLanguage || null;
+}
+
 function readEpochMetadata(epochDir) {
     try {
         return JSON.parse(fs.readFileSync(path.join(epochDir, 'metadata.json'), 'utf-8'));
@@ -2756,6 +2766,9 @@ function downloadSubtitleVtt(url, track) {
     });
 }
 
+// Without a language: the version's default (Options language, else the
+// video's own). With one: exactly that language, saved as an extra file
+// next to the default -- or as the default when there is none yet.
 async function fetchTranscriptForEpoch({ videoDir, epoch, language }) {
     const { libraryDir } = readSettings();
     const epochDir = resolveEpochDir(libraryDir, videoDir, epoch);
@@ -2766,16 +2779,24 @@ async function fetchTranscriptForEpoch({ videoDir, epoch, language }) {
     }
     try {
         const { subtitleTracks, language: videoLanguage } = await fetchSubtitleTracks(metadata.originalUrl);
-        const preferredLanguage = language || clampTranscriptSettings(readSettings()).transcriptLanguage;
-        const track = pickTranscriptTrack({ subtitleTracks, language: videoLanguage, preferredLanguage });
-        if (!track) return { success: false, kind: 'noTranscript', message: 'This video has no transcript.' };
+        const track = language
+            ? findTranscriptTrackByCode(subtitleTracks, language)
+            : pickTranscriptTrack({ subtitleTracks, language: videoLanguage, preferredLanguage: clampTranscriptSettings(readSettings()).transcriptLanguage });
+        if (!track) {
+            return { success: false, kind: 'noTranscript', message: language ? 'This video has no transcript in that language.' : 'This video has no transcript.' };
+        }
         const segments = parseVtt(await downloadSubtitleVtt(metadata.originalUrl, track));
         if (segments.length === 0) return { success: false, kind: 'noTranscript', message: 'The transcript was empty.' };
-        const transcript = writeTranscript(epochDir, { language: track.language, languageName: track.languageName, source: track.source, segments });
-        await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
-        BrowserWindow.getAllWindows()[0]?.webContents.send('transcripts:updated', { videoDir, epoch });
+        const existingDefault = readTranscript(epochDir);
+        const asDefault = !existingDefault || existingDefault.language === track.language;
+        const transcript = writeTranscript(epochDir, {
+            language: track.language, languageName: track.languageName, source: track.source, segments,
+            availableLanguages: listTranscriptLanguages(subtitleTracks),
+        }, { asDefault });
+        if (asDefault) await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
+        BrowserWindow.getAllWindows()[0]?.webContents.send('transcripts:updated', { videoDir, epoch, language: track.language });
         log(`[transcript] fetched ${track.key} (${track.source}, ${segments.length} lines) for ${videoDir}/${epoch}`);
-        return { success: true, transcript };
+        return { success: true, transcript, isDefault: asDefault };
     } catch (err) {
         const message = redactHomeDir(err instanceof Error ? err.message : String(err));
         log(`[transcript] fetch failed for ${videoDir}/${epoch}: ${message}`);
@@ -2796,31 +2817,48 @@ function maybeAutoFetchTranscript({ videoDir, epoch, metadata }) {
     transcriptQueue.enqueue({ videoDir, epoch });
 }
 
-ipcMain.handle('transcripts:get', async (e, { videoDir, epoch }) => {
+ipcMain.handle('transcripts:get', async (e, { videoDir, epoch, language }) => {
     const epochDir = resolveEpochDir(readSettings().libraryDir, videoDir, epoch);
     if (!epochDir) return { success: false, message: 'Video not found in the library.' };
-    return { success: true, transcript: readTranscript(epochDir) };
+    return { success: true, transcript: readTranscriptForLanguage(epochDir, transcriptLanguageCode(language)) };
 });
 
+// The video's language list is kept on the default transcript, so this only
+// asks YouTube for a transcript fetched before that was stored.
 ipcMain.handle('transcripts:listLanguages', async (e, { videoDir, epoch }) => {
     const epochDir = resolveEpochDir(readSettings().libraryDir, videoDir, epoch);
     const metadata = epochDir && readEpochMetadata(epochDir);
-    if (!metadata?.originalUrl || metadata.platform === 'local') return { success: true, languages: [] };
-    try {
-        const { subtitleTracks } = await fetchSubtitleTracks(metadata.originalUrl);
-        return { success: true, languages: listTranscriptLanguages(subtitleTracks) };
-    } catch (err) {
-        return { success: false, message: redactHomeDir(err instanceof Error ? err.message : String(err)) };
+    if (!metadata) return { success: false, message: 'Video not found in the library.' };
+    const defaultTranscript = readTranscript(epochDir);
+    const extras = listExtraTranscriptLanguages(epochDir).map((code) => readTranscript(epochDir, code)).filter(Boolean);
+    let available = defaultTranscript?.availableLanguages;
+    if (!available) {
+        if (!metadata.originalUrl || metadata.platform === 'local') {
+            available = [];
+        } else {
+            try {
+                available = listTranscriptLanguages((await fetchSubtitleTracks(metadata.originalUrl)).subtitleTracks);
+                saveAvailableTranscriptLanguages(epochDir, available);
+            } catch (err) {
+                return { success: false, message: redactHomeDir(err instanceof Error ? err.message : String(err)) };
+            }
+        }
     }
+    return { success: true, languages: mergeTranscriptLanguages(available, defaultTranscript, extras) };
 });
 
-ipcMain.handle('transcripts:fetch', async (e, { videoDir, epoch, language }) => transcriptQueue.enqueue({
-    videoDir, epoch, language: typeof language === 'string' ? clampTranscriptSettings({ transcriptLanguage: language }).transcriptLanguage : '',
-}));
+ipcMain.handle('transcripts:fetch', async (e, { videoDir, epoch, language }) => {
+    const code = transcriptLanguageCode(language);
+    if (language && !code) return { success: false, kind: 'noTranscript', message: "That language can't be downloaded." };
+    return transcriptQueue.enqueue({ videoDir, epoch, language: code });
+});
 
-ipcMain.handle('transcripts:fetchMany', async (e, { items }) => {
+ipcMain.handle('transcripts:fetchMany', async (e, { items, label }) => {
     if (!Array.isArray(items)) return { success: false, message: 'No videos given.' };
-    return transcriptQueue.enqueueBatch(items.slice(0, TRANSCRIPT_BATCH_MAX_ITEMS).map(({ videoDir, epoch }) => ({ videoDir, epoch })));
+    return transcriptQueue.enqueueBatch(
+        items.slice(0, TRANSCRIPT_BATCH_MAX_ITEMS).map(({ videoDir, epoch }) => ({ videoDir, epoch })),
+        { label: typeof label === 'string' ? label.slice(0, 1024) : null },
+    );
 });
 
 ipcMain.handle('transcripts:status', async () => transcriptQueue.status());
@@ -2830,16 +2868,24 @@ ipcMain.handle('transcripts:cancel', async () => {
     return { success: true };
 });
 
-ipcMain.handle('transcripts:saveText', async (e, { videoDir, epoch, withTimestamps }) => {
+ipcMain.handle('transcripts:copyText', async (e, { videoDir, epoch, language, withTimestamps }) => {
     const epochDir = resolveEpochDir(readSettings().libraryDir, videoDir, epoch);
-    const transcript = epochDir && readTranscript(epochDir);
+    const transcript = epochDir && readTranscriptForLanguage(epochDir, transcriptLanguageCode(language));
+    if (!transcript) return { success: false, message: 'No transcript to copy.' };
+    clipboard.writeText(transcriptToText(transcript, { withTimestamps: !!withTimestamps }));
+    return { success: true };
+});
+
+ipcMain.handle('transcripts:saveText', async (e, { videoDir, epoch, language, withTimestamps }) => {
+    const epochDir = resolveEpochDir(readSettings().libraryDir, videoDir, epoch);
+    const transcript = epochDir && readTranscriptForLanguage(epochDir, transcriptLanguageCode(language));
     if (!transcript) return { success: false, message: 'No transcript to save.' };
     const metadata = readEpochMetadata(epochDir);
     const { downloadDir } = readSettings();
     const result = await dialog.showSaveDialog({
         title: 'Save transcript',
         buttonLabel: 'Save',
-        defaultPath: path.join(downloadDir || app.getPath('downloads'), `${sanitizeForFilesystem(metadata?.title || 'transcript')}.txt`),
+        defaultPath: path.join(downloadDir || app.getPath('downloads'), `${sanitizeForFilesystem(`${metadata?.title || 'transcript'} (${transcript.languageName})`)}.txt`),
         filters: [{ name: 'Text', extensions: ['txt'] }],
     });
     if (result.canceled || !result.filePath) return { success: false, canceled: true };

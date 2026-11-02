@@ -45,21 +45,35 @@ export function originalTranscriptLanguage({ subtitleTracks, language }) {
     return subtitleTracks?.manual[0]?.code || null;
 }
 
+function manualTrack(track) {
+    return { key: track.code, flag: '--write-subs', source: 'manual', language: track.code, languageName: displayNameFor(track.code, track.name) };
+}
+
+function autoTrack(track) {
+    const language = track.code.replace(/-orig$/, '');
+    return { key: track.code, flag: '--write-auto-subs', source: 'auto', language, languageName: displayNameFor(language, track.name) };
+}
+
 function findTrackFor(subtitleTracks, target) {
     const targetBase = baseLanguage(target);
     const manual = subtitleTracks.manual.find((t) => t.code === target)
         || subtitleTracks.manual.find((t) => baseLanguage(t.code) === targetBase);
-    if (manual) {
-        return { key: manual.code, flag: '--write-subs', source: 'manual', language: manual.code, languageName: displayNameFor(manual.code, manual.name) };
-    }
+    if (manual) return manualTrack(manual);
     const auto = subtitleTracks.auto.find((t) => t.code === `${target}-orig`)
         || subtitleTracks.auto.find((t) => t.code === target)
         || subtitleTracks.auto.find((t) => baseLanguage(t.code) === targetBase);
-    if (auto) {
-        const autoLanguage = auto.code.replace(/-orig$/, '');
-        return { key: auto.code, flag: '--write-auto-subs', source: 'auto', language: autoLanguage, languageName: displayNameFor(autoLanguage, auto.name) };
-    }
-    return null;
+    return auto ? autoTrack(auto) : null;
+}
+
+// The track behind one listTranscriptLanguages code, exactly -- no prefix
+// match and no fallback, so a transcript never lands under another
+// language's file name.
+export function findTranscriptTrackByCode(subtitleTracks, code) {
+    if (!subtitleTracks) return null;
+    const manual = subtitleTracks.manual.find((t) => t.code === code);
+    if (manual) return manualTrack(manual);
+    const auto = subtitleTracks.auto.find((t) => t.code === `${code}-orig`) || subtitleTracks.auto.find((t) => t.code === code);
+    return auto ? autoTrack(auto) : null;
 }
 
 // Uploader subtitles beat auto-captions for the same language. A preferred
@@ -157,26 +171,73 @@ export function parseVtt(text) {
     return segments;
 }
 
-export function transcriptPath(epochDir) {
-    return path.join(epochDir, TRANSCRIPT_FILE_NAME);
+const EXTRA_TRANSCRIPT_FILE = /^transcript\.([A-Za-z0-9-]+)\.json$/;
+
+// transcript.json is the version's default transcript; any other language
+// the user downloads sits next to it as transcript.<code>.json. Codes are
+// validated by the caller (clampTranscriptSettings' pattern).
+export function transcriptPath(epochDir, language = null) {
+    return path.join(epochDir, language ? `transcript.${language}.json` : TRANSCRIPT_FILE_NAME);
 }
 
-export function readTranscript(epochDir) {
+export function readTranscript(epochDir, language = null) {
     try {
-        return JSON.parse(fs.readFileSync(transcriptPath(epochDir), 'utf-8'));
+        return JSON.parse(fs.readFileSync(transcriptPath(epochDir, language), 'utf-8'));
     } catch {
         return null;
     }
 }
 
-// Temp-then-rename, then the small summary on metadata.json that the index
-// carries (the segments themselves never go into the index).
-export function writeTranscript(epochDir, { language, languageName, source, segments, fetchedEpoch = Date.now() }) {
+export function listExtraTranscriptLanguages(epochDir) {
+    try {
+        return fs.readdirSync(epochDir).map((name) => name.match(EXTRA_TRANSCRIPT_FILE)?.[1]).filter(Boolean);
+    } catch {
+        return [];
+    }
+}
+
+// The default answers for its own language, so a language is never stored twice.
+export function readTranscriptForLanguage(epochDir, language) {
+    const defaultTranscript = readTranscript(epochDir);
+    if (!language || defaultTranscript?.language === language) return defaultTranscript;
+    return readTranscript(epochDir, language);
+}
+
+// The languages dialog's rows: what the video offers, marked with what is
+// saved. A saved language the video no longer lists still shows.
+export function mergeTranscriptLanguages(available, defaultTranscript, extraTranscripts) {
+    const saved = new Map();
+    if (defaultTranscript) saved.set(defaultTranscript.language, defaultTranscript);
+    for (const t of extraTranscripts) if (!saved.has(t.language)) saved.set(t.language, t);
+    const isDefault = (code) => defaultTranscript?.language === code;
+    const rows = available.map((l) => ({ ...l, saved: saved.has(l.code), isDefault: isDefault(l.code) }));
+    for (const [code, t] of saved) {
+        if (!rows.some((row) => row.code === code)) rows.push({ code, name: t.languageName, source: t.source, saved: true, isDefault: isDefault(code) });
+    }
+    return rows;
+}
+
+function writeJsonAtomic(filePath, value) {
+    const tempPath = `${filePath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(value), 'utf-8');
+    fs.renameSync(tempPath, filePath);
+}
+
+// The default transcript also keeps the video's language list, so the
+// languages dialog doesn't have to ask YouTube again.
+export function saveAvailableTranscriptLanguages(epochDir, availableLanguages) {
+    const transcript = readTranscript(epochDir);
+    if (transcript) writeJsonAtomic(transcriptPath(epochDir), { ...transcript, availableLanguages });
+}
+
+// The default (asDefault) also gets the small summary on metadata.json that
+// the index carries -- the segments themselves never go into the index.
+// An extra language only writes its own file.
+export function writeTranscript(epochDir, { language, languageName, source, segments, availableLanguages, fetchedEpoch = Date.now() }, { asDefault = true } = {}) {
     const transcript = { version: TRANSCRIPT_FORMAT_VERSION, language, languageName, source, fetchedEpoch, segments };
-    const finalPath = transcriptPath(epochDir);
-    const tempPath = `${finalPath}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(transcript), 'utf-8');
-    fs.renameSync(tempPath, finalPath);
+    if (asDefault && availableLanguages) transcript.availableLanguages = availableLanguages;
+    writeJsonAtomic(transcriptPath(epochDir, asDefault ? null : language), transcript);
+    if (!asDefault) return transcript;
 
     const metadataPath = path.join(epochDir, 'metadata.json');
     const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
@@ -209,8 +270,8 @@ export function createTranscriptQueue({ fetchOne, gapMs = 2000, onBatchProgress 
 
     function batchStatus() {
         if (!batch) return null;
-        const { total, done, failed, current, stoppedReason, finished } = batch;
-        return { total, done, failed, current, stoppedReason, finished };
+        const { label, total, done, failed, current, stoppedReason, finished } = batch;
+        return { label, total, done, failed, current, stoppedReason, finished };
     }
 
     async function drain() {
@@ -266,9 +327,11 @@ export function createTranscriptQueue({ fetchOne, gapMs = 2000, onBatchProgress 
         });
     }
 
-    function enqueueBatch(items) {
+    // label says who started the batch (e.g. a channel), so only that view
+    // shows its progress.
+    function enqueueBatch(items, { label = null } = {}) {
         if (batch && !batch.finished) return { success: false, message: 'A transcript batch is already running.' };
-        batch = { total: items.length, done: 0, failed: 0, current: null, stoppedReason: null, finished: false, cancelled: false };
+        batch = { label, total: items.length, done: 0, failed: 0, current: null, stoppedReason: null, finished: false, cancelled: false };
         const b = batch;
         if (items.length === 0) finishBatch(b);
         for (const item of items) pending.push({ item, batch: b, resolve: () => {} });

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -165,6 +165,8 @@ export default function LibraryVideoDetail({
     }
     setEmbedStart((prev) => ({ seconds, key: (prev?.key ?? 0) + 1 }));
   };
+
+  const getPlayerCurrentTime = useCallback(() => playerHandleRef.current?.getCurrentTime() ?? null, []);
 
   const handleTranscriptFetched = (transcript: Transcript) => {
     setMetadata((prev) => ({
@@ -1049,6 +1051,7 @@ export default function LibraryVideoDetail({
                   epoch={selectedEpoch}
                   isLocal={metadata.platform === 'local'}
                   onSeek={handleTranscriptSeek}
+                  getCurrentTime={getPlayerCurrentTime}
                   onFetched={handleTranscriptFetched}
                 />
               </Box>

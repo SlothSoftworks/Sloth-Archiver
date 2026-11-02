@@ -4,8 +4,9 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
-    buildSubtitleTracks, pickTranscriptTrack, listTranscriptLanguages, originalTranscriptLanguage,
-    buildSubtitleDownloadArgs, parseVtt, writeTranscript, readTranscript, transcriptToText, createTranscriptQueue,
+    buildSubtitleTracks, pickTranscriptTrack, findTranscriptTrackByCode, listTranscriptLanguages, mergeTranscriptLanguages, originalTranscriptLanguage,
+    buildSubtitleDownloadArgs, parseVtt, writeTranscript, readTranscript, readTranscriptForLanguage, listExtraTranscriptLanguages,
+    saveAvailableTranscriptLanguages, transcriptToText, createTranscriptQueue,
 } from './transcripts.mjs';
 
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'subtitles');
@@ -138,6 +139,48 @@ describe('listTranscriptLanguages', () => {
     });
 });
 
+describe('findTranscriptTrackByCode', () => {
+    const tracks = {
+        manual: [{ code: 'en-US', name: 'English (United States)' }],
+        auto: [{ code: 'en-orig', name: 'English (Original)' }],
+    };
+
+    it('finds the exact track a listed language came from', () => {
+        expect(findTranscriptTrackByCode(tracks, 'en-US')).toMatchObject({ key: 'en-US', source: 'manual', language: 'en-US' });
+        expect(findTranscriptTrackByCode(tracks, 'en')).toMatchObject({ key: 'en-orig', flag: '--write-auto-subs', source: 'auto', language: 'en' });
+    });
+
+    it('never falls back to another language', () => {
+        expect(findTranscriptTrackByCode(tracks, 'ja')).toBeNull();
+        expect(findTranscriptTrackByCode(null, 'en')).toBeNull();
+    });
+});
+
+describe('mergeTranscriptLanguages', () => {
+    const available = [
+        { code: 'en', name: 'English', source: 'manual' },
+        { code: 'ja', name: 'Japanese', source: 'manual' },
+        { code: 'fr', name: 'French', source: 'auto' },
+    ];
+
+    it('marks the default and the saved extras', () => {
+        const rows = mergeTranscriptLanguages(available, { language: 'en' }, [{ language: 'ja' }]);
+        expect(rows).toEqual([
+            { code: 'en', name: 'English', source: 'manual', saved: true, isDefault: true },
+            { code: 'ja', name: 'Japanese', source: 'manual', saved: true, isDefault: false },
+            { code: 'fr', name: 'French', source: 'auto', saved: false, isDefault: false },
+        ]);
+    });
+
+    it('keeps a saved language the video no longer lists', () => {
+        const rows = mergeTranscriptLanguages([], { language: 'en', languageName: 'English', source: 'auto' }, [{ language: 'de', languageName: 'German', source: 'manual' }]);
+        expect(rows).toEqual([
+            { code: 'en', name: 'English', source: 'auto', saved: true, isDefault: true },
+            { code: 'de', name: 'German', source: 'manual', saved: true, isDefault: false },
+        ]);
+    });
+});
+
 describe('writeTranscript / readTranscript / transcriptToText', () => {
     let epochDir;
     beforeEach(() => {
@@ -156,6 +199,43 @@ describe('writeTranscript / readTranscript / transcriptToText', () => {
         expect(metadata.downloadedFilePath).toBe('/x/video.mp4');
         expect(metadata.transcript).toEqual({ language: 'en', languageName: 'English', source: 'auto', fetchedEpoch: 5, segmentCount: 2 });
         expect(fs.readdirSync(epochDir).sort()).toEqual(['metadata.json', 'transcript.json']);
+    });
+
+    it('keeps the language list on the default only', () => {
+        const availableLanguages = [{ code: 'en', name: 'English', source: 'auto' }];
+        writeTranscript(epochDir, { language: 'en', languageName: 'English', source: 'auto', segments, availableLanguages, fetchedEpoch: 5 });
+        expect(readTranscript(epochDir).availableLanguages).toEqual(availableLanguages);
+
+        writeTranscript(epochDir, { language: 'ja', languageName: 'Japanese', source: 'manual', segments, availableLanguages, fetchedEpoch: 6 }, { asDefault: false });
+        expect(readTranscript(epochDir, 'ja')).not.toHaveProperty('availableLanguages');
+    });
+
+    it('writes an extra language to its own file, leaving the default and metadata alone', () => {
+        writeTranscript(epochDir, { language: 'en', languageName: 'English', source: 'auto', segments, fetchedEpoch: 5 });
+        writeTranscript(epochDir, { language: 'ja', languageName: 'Japanese', source: 'manual', segments: [segments[0]], fetchedEpoch: 6 }, { asDefault: false });
+
+        expect(fs.readdirSync(epochDir).sort()).toEqual(['metadata.json', 'transcript.ja.json', 'transcript.json']);
+        expect(readTranscript(epochDir).language).toBe('en');
+        expect(readTranscript(epochDir, 'ja')).toMatchObject({ language: 'ja', segments: [segments[0]] });
+        expect(listExtraTranscriptLanguages(epochDir)).toEqual(['ja']);
+        const metadata = JSON.parse(fs.readFileSync(path.join(epochDir, 'metadata.json'), 'utf-8'));
+        expect(metadata.transcript).toMatchObject({ language: 'en', fetchedEpoch: 5 });
+    });
+
+    it('answers for the default language from the default file', () => {
+        writeTranscript(epochDir, { language: 'en', languageName: 'English', source: 'auto', segments, fetchedEpoch: 5 });
+        writeTranscript(epochDir, { language: 'ja', languageName: 'Japanese', source: 'manual', segments, fetchedEpoch: 6 }, { asDefault: false });
+
+        expect(readTranscriptForLanguage(epochDir, null).language).toBe('en');
+        expect(readTranscriptForLanguage(epochDir, 'en').language).toBe('en');
+        expect(readTranscriptForLanguage(epochDir, 'ja').language).toBe('ja');
+        expect(readTranscriptForLanguage(epochDir, 'fr')).toBeNull();
+    });
+
+    it('backfills the language list onto an older default', () => {
+        writeTranscript(epochDir, { language: 'en', languageName: 'English', source: 'auto', segments, fetchedEpoch: 5 });
+        saveAvailableTranscriptLanguages(epochDir, [{ code: 'en', name: 'English', source: 'auto' }]);
+        expect(readTranscript(epochDir)).toMatchObject({ language: 'en', segments, availableLanguages: [{ code: 'en', name: 'English', source: 'auto' }] });
     });
 
     it('reads null when there is no transcript', () => {
@@ -207,11 +287,11 @@ describe('createTranscriptQueue', () => {
         const fetchOne = vi.fn(async (item) => (item.videoDir === 'b' ? { success: false, kind: 'unavailable' } : { success: true }));
         const queue = createTranscriptQueue({ fetchOne, sleep: async () => {}, onBatchProgress: (s) => progress.push(s) });
 
-        expect(queue.enqueueBatch([{ videoDir: 'a' }, { videoDir: 'b' }, { videoDir: 'c' }])).toEqual({ success: true });
+        expect(queue.enqueueBatch([{ videoDir: 'a' }, { videoDir: 'b' }, { videoDir: 'c' }], { label: 'Channel A' })).toEqual({ success: true });
         await vi.waitFor(() => expect(queue.status().finished).toBe(true));
 
-        expect(queue.status()).toEqual({ total: 3, done: 3, failed: 1, current: null, stoppedReason: null, finished: true });
-        expect(progress[0]).toMatchObject({ total: 3, done: 0 });
+        expect(queue.status()).toEqual({ label: 'Channel A', total: 3, done: 3, failed: 1, current: null, stoppedReason: null, finished: true });
+        expect(progress[0]).toMatchObject({ label: 'Channel A', total: 3, done: 0 });
     });
 
     it('stops a batch early when YouTube rate-limits', async () => {

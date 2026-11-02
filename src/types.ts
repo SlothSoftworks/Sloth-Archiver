@@ -75,6 +75,8 @@ export type Transcript = {
     source: TranscriptSource;
     fetchedEpoch: number;
     segments: TranscriptSegment[];
+    // Only on the default transcript: the languages the video offers.
+    availableLanguages?: { code: string; name: string; source: TranscriptSource }[];
 };
 
 export type LibraryVideoEpoch = {

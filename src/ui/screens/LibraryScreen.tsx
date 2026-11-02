@@ -64,6 +64,7 @@ import CreateSubLibraryDialog from '../components/CreateSubLibraryDialog';
 import AddLocalFileDialog, { type LocalFileFormFields } from '../components/AddLocalFileDialog';
 import MoveToSubLibraryDialog from '../components/MoveToSubLibraryDialog';
 import TagSelectedDialog from '../components/TagSelectedDialog';
+import ChannelTranscriptFetch from '../components/ChannelTranscriptFetch';
 import TagFilterPopover, { type SystemFilterKey } from '../components/TagFilterPopover';
 import { getPlatformIcon, getPlatformColor } from '../utils/platformIcons';
 import { useLibrarySearch } from '../hooks/useLibrarySearch.tsx';
@@ -1744,6 +1745,12 @@ function VideoGrid({ channel, thumbnailSize, selectedVideoDirs, onToggleSelect, 
             }
             label="Select all"
           />
+          {!(channel.isPlatformGroup && channel.platform === 'local') && (
+            <ChannelTranscriptFetch
+              channel={channel}
+              onFinished={async () => onChannelsUpdated((await window.electronAPI.getLibraryIndex()).channels)}
+            />
+          )}
           {!channel.isPlatformGroup && (
             <Tooltip title="Refresh channel icon">
               <span>

@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetchTranscripts: (payload) => ipcRenderer.invoke('transcripts:fetchMany', payload),
     getTranscriptBatchStatus: () => ipcRenderer.invoke('transcripts:status'),
     cancelTranscriptBatch: () => ipcRenderer.invoke('transcripts:cancel'),
+    copyTranscriptText: (payload) => ipcRenderer.invoke('transcripts:copyText', payload),
     saveTranscriptText: (payload) => ipcRenderer.invoke('transcripts:saveText', payload),
     onTranscriptUpdated: (callback) => ipcRenderer.on('transcripts:updated', (_event, data) => callback(data)),
     removeTranscriptUpdatedListener: () => ipcRenderer.removeAllListeners('transcripts:updated'),

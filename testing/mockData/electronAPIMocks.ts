@@ -125,6 +125,7 @@ export const electronAPIMock = {
     fetchTranscripts: async () => ({ success: true }),
     getTranscriptBatchStatus: async () => null,
     cancelTranscriptBatch: async () => ({ success: true }),
+    copyTranscriptText: async () => ({ success: true }),
     saveTranscriptText: async () => ({ success: false, canceled: true }),
     onTranscriptUpdated: noop,
     removeTranscriptUpdatedListener: noop,
