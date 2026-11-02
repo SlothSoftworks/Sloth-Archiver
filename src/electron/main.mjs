@@ -1527,7 +1527,6 @@ app.on("ready", async () => {
     });
 
     mainWindow.loadURL(`${rendererOrigin}/index.html`);
-    if (isDev) mainWindow.webContents.openDevTools();
 })
 
 ipcMain.handle('dialog:openFolder', async (e, options) => dialog.showOpenDialog({

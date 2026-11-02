@@ -2,13 +2,14 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import { Alert, Box, Button, CardMedia, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, IconButton, Snackbar, Tooltip, Typography } from '@mui/material';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
-import { MediaPlayer, MediaProvider, type MediaPlayerInstance } from '@vidstack/react';
+import { MEDIA_KEY_SHORTCUTS, MediaPlayer, MediaProvider, type MediaKeyShortcuts, type MediaPlayerInstance } from '@vidstack/react';
 import '@vidstack/react/player/styles/base.css';
 import type { LibraryVideoMetadata } from '../../types';
 import YouTubeEmbed from './YouTubeEmbed';
 import ResizableMediaContainer from './ResizableMediaContainer';
 import LibraryVideoPlayerControls from './LibraryVideoPlayerControls';
 import PlayerContextMenu from './PlayerContextMenu';
+import PlayerShortcutsDialog from './PlayerShortcutsDialog';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
 import { buildAppVideoUrl, safeRemoteImageUrl } from '../../utils/utils.ts';
 import { useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
@@ -88,6 +89,8 @@ function computeInitialState(filePath: string | null, confirmPreview: boolean): 
   return confirmPreview ? { kind: 'awaitingPreviewConsent' } : { kind: 'preparingPreview', percent: 0 };
 }
 
+const FRAME_STEP_SECONDS = 1 / 24;
+const SPEED_LABEL_MS = 1500;
 const containerSx = { borderRadius: 2 };
 const fillSx = { width: '100%', height: '100%', display: 'block' };
 
@@ -135,6 +138,10 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // playable file that failed at decode time (runtimeFailed) gets a copy.
   const [consentedPath, setConsentedPath] = useState<string | null>(null);
   const [consentDialogOpen, setConsentDialogOpen] = useState(false);
+  const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
+  const [speedLabel, setSpeedLabel] = useState<number | null>(null);
+  const lastRateRef = useRef(1);
+  const speedLabelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // One-time "you can start playback here" affordance -- gone for good once
   // playback has ever started (native controls take over from there).
   const [hasStartedPlayback, setHasStartedPlayback] = useState(false);
@@ -302,6 +309,64 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     setCopyFrameToastOpen(true);
   };
 
+  // No frame rate is stored, so frame step is a fixed nudge: 24 fps has the
+  // longest frames of common video, so every press shows a new frame.
+  // Reads and writes the native <video> because Vidstack's currentTime only
+  // catches up on the next media event, which a held key outruns.
+  // While playing, the seek waits for the 'pause' event: a seek drops
+  // readyState to 1, and Vidstack ignores a 'pause' that lands then, leaving
+  // its state stuck on "playing" so neither play nor pause works again.
+  const stepFrame = (direction: 1 | -1) => {
+    const videoEl = playerRef.current?.el?.querySelector('video');
+    if (!videoEl || !playerRef.current) return;
+    const seek = () => {
+      const target = videoEl.currentTime + direction * FRAME_STEP_SECONDS;
+      videoEl.currentTime = Math.max(0, Math.min(target, videoEl.duration || target));
+    };
+    if (playerRef.current.paused) {
+      seek();
+    } else if (!videoEl.paused) {
+      videoEl.addEventListener('pause', seek, { once: true });
+      videoEl.pause();
+    }
+  };
+
+  const seekToMarker = (seconds: number | null | undefined) => {
+    if (seconds != null && playerRef.current) playerRef.current.currentTime = seconds;
+  };
+
+  // Mostly for noticing the way back to 1x, since the controls show no speed.
+  const handleRateChange = (rate: number) => {
+    if (rate === lastRateRef.current) return;
+    lastRateRef.current = rate;
+    setSpeedLabel(rate);
+    if (speedLabelTimerRef.current) clearTimeout(speedLabelTimerRef.current);
+    speedLabelTimerRef.current = setTimeout(() => setSpeedLabel(null), SPEED_LABEL_MS);
+  };
+  useEffect(() => () => {
+    if (speedLabelTimerRef.current) clearTimeout(speedLabelTimerRef.current);
+  }, []);
+
+  // Added to Vidstack's defaults (all listed in PlayerShortcutsDialog), which
+  // only listen while focus is inside the player.
+  const keyShortcuts: MediaKeyShortcuts = {
+    ...MEDIA_KEY_SHORTCUTS,
+    stepFrameBackward: { keys: ',', onKeyDown: ({ event }) => { event.preventDefault(); stepFrame(-1); } },
+    stepFrameForward: { keys: '.', onKeyDown: ({ event }) => { event.preventDefault(); stepFrame(1); } },
+    markClipStart: { keys: ['Meta+j', 'Ctrl+j'], onKeyDown: ({ event }) => { event.preventDefault(); clipMarkers?.onSetStart(); } },
+    markClipEnd: { keys: ['Meta+l', 'Ctrl+l'], onKeyDown: ({ event }) => { event.preventDefault(); clipMarkers?.onSetEnd(); } },
+    jumpToClipStart: { keys: 'Shift+J', onKeyDown: ({ event }) => { event.preventDefault(); seekToMarker(clipMarkers?.startSeconds); } },
+    jumpToClipEnd: { keys: 'Shift+L', onKeyDown: ({ event }) => { event.preventDefault(); seekToMarker(clipMarkers?.endSeconds); } },
+    showShortcuts: { keys: 'Shift+I', onKeyDown: ({ event }) => { event.preventDefault(); setShortcutsDialogOpen(true); } },
+    copyFrame: {
+      keys: ['Meta+s', 'Ctrl+s'],
+      onKeyDown: ({ event }) => {
+        event.preventDefault();
+        if (!isAudioOnly) handleCopyFrame(playerRef.current ? playerRef.current.currentTime : null);
+      },
+    },
+  };
+
   const handleCanPlay = () => {
     // Reads the native <video> element directly rather than Vidstack's own
     // state.viewType/mediaWidth/mediaHeight -- viewType is derived from the
@@ -388,6 +453,8 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             src={{ src: buildAppVideoUrl(state.sourcePath, cacheBustKey), type: state.mimeType }}
             style={{ width: '100%', height: '100%', backgroundColor: 'black' }}
             loop={loopEnabled}
+            keyShortcuts={keyShortcuts}
+            onRateChange={handleRateChange}
             onTimeUpdate={handleLoopSequenceTimeUpdate}
             onCanPlay={handleCanPlay}
             onError={() => setState({ kind: 'runtimeFailed' })}
@@ -458,6 +525,16 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
                 <FormatListBulletedAddIcon fontSize="small" />
               </IconButton>
             </Tooltip>}
+            {speedLabel != null &&
+              <Box
+                sx={{
+                  position: 'absolute', top: 8, left: 8, zIndex: 1, pointerEvents: 'none',
+                  px: 1, py: 0.25, borderRadius: 1,
+                  backgroundColor: 'rgba(0, 0, 0, 0.6)', color: 'common.white',
+                }}
+              >
+                <Typography variant="body2">{speedLabel}×</Typography>
+              </Box>}
             <LibraryVideoPlayerControls clipMarkers={clipMarkers} />
           </MediaPlayer>
           <PlayerContextMenu
@@ -478,6 +555,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             onChangeThumbnail={onChangeThumbnail}
             currentTime={contextMenuCurrentTime}
           />
+          <PlayerShortcutsDialog open={shortcutsDialogOpen} onClose={() => setShortcutsDialogOpen(false)} />
           <Snackbar
             open={copyFrameToastOpen}
             autoHideDuration={copyFrameResult?.success ? 3000 : 6000}
