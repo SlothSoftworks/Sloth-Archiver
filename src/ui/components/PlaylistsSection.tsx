@@ -86,7 +86,12 @@ type IndexedVideo = { videoDir: string; latestEpoch: string | null; epochs: { me
 // tab's bottom, but the selection state and its confirm dialogs stay owned
 // here, where the playlist data already lives. null means "no bar" (list
 // view, or loading).
-export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate: (bar: PlaylistBulkBar | null) => void }) {
+// initialPlaylistId opens that playlist straight away (omni-search's
+// playlist results, via LibraryScreen's deep link).
+export default function PlaylistsSection({ onBulkBarUpdate, initialPlaylistId }: {
+  onBulkBarUpdate: (bar: PlaylistBulkBar | null) => void;
+  initialPlaylistId?: string | null;
+}) {
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
@@ -383,6 +388,9 @@ export default function PlaylistsSection({ onBulkBarUpdate }: { onBulkBarUpdate:
 
   useEffect(() => {
     loadList();
+    if (initialPlaylistId) handleSelectPlaylist(initialPlaylistId);
+    // Mount-only: LibraryScreen remounts this section for each deep link.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshVideoTags = async () => {

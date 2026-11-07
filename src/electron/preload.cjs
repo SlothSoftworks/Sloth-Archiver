@@ -99,6 +99,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeTranscriptBatchProgressListener: () => ipcRenderer.removeAllListeners('transcripts:progress'),
     getTranscriptSettings: () => ipcRenderer.invoke('settings:getTranscriptSettings'),
     setTranscriptSettings: (value) => ipcRenderer.invoke('settings:setTranscriptSettings', value),
+    searchLibrary: (payload) => ipcRenderer.invoke('search:query', payload),
+    cancelSearch: (searchId) => ipcRenderer.invoke('search:cancel', searchId),
+    getSearchStatus: () => ipcRenderer.invoke('search:status'),
+    // Returns its own listener, like onChannelScanProgress: quick and
+    // advanced search can both be listening.
+    onSearchProgress: (callback) => {
+        const listener = (_event, data) => callback(data);
+        ipcRenderer.on('search:progress', listener);
+        return listener;
+    },
+    removeSearchProgressListener: (listener) => ipcRenderer.removeListener('search:progress', listener),
     setClipNotes: (payload) => ipcRenderer.invoke('library:setClipNotes', payload),
     fetchPlaylistEntries: (playlistUrl) => ipcRenderer.invoke('library:fetchPlaylistEntries', playlistUrl),
     enrichPlaylistEntry: (payload) => ipcRenderer.invoke('library:enrichPlaylistEntry', payload),

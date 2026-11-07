@@ -53,7 +53,7 @@ const CURRENT_VIDEO_SCHEMA_VERSION = 5;
 
 export default function LibraryVideoDetail({
   video, onBack, onLibraryChanged, onDeleted, onVersionsChanged, videoTags, onVideoTagsChanged,
-  initialActiveView, initialClipId, initialClipStartSeconds, initialClipEndSeconds,
+  initialActiveView, initialClipId, initialClipStartSeconds, initialClipEndSeconds, initialTranscript,
 }: {
   video: LibraryVideo;
   onBack: () => void;
@@ -77,9 +77,14 @@ export default function LibraryVideoDetail({
   // resumeFromBackgroundSeconds/initialSeekSeconds already use below.
   initialClipStartSeconds?: number | null;
   initialClipEndSeconds?: number | null;
+  // Set by LibraryScreen.tsx's deep-link effect for an omni-search
+  // transcript result: opens that version on the Transcript tab, in that
+  // language, at that second.
+  initialTranscript?: { epoch: string; seconds: number; language: string | null } | null;
 }) {
-  const [selectedEpoch, setSelectedEpoch] = useState(video.latestEpoch);
-  const [metadata, setMetadata] = useState(video.metadata);
+  const initialEpoch = video.epochs.find((e) => e.epoch === initialTranscript?.epoch);
+  const [selectedEpoch, setSelectedEpoch] = useState(initialEpoch ? initialEpoch.epoch : video.latestEpoch);
+  const [metadata, setMetadata] = useState(initialEpoch ? initialEpoch.metadata : video.metadata);
   const backgroundPlayer = useBackgroundPlayer();
   // Captured once, the moment this guard below fires -- this screen's own
   // player picks up from here (see initialSeekSeconds passed to
@@ -151,8 +156,10 @@ export default function LibraryVideoDetail({
   const [cacheBustKey, setCacheBustKey] = useState(() => Date.now());
 
   const playerHandleRef = useRef<LibraryVideoPlayerHandle>(null);
-  const [sideTab, setSideTab] = useState<'tools' | 'transcript'>('tools');
-  const [embedStart, setEmbedStart] = useState<{ seconds: number; key: number } | null>(null);
+  const [sideTab, setSideTab] = useState<'tools' | 'transcript'>(initialTranscript ? 'transcript' : 'tools');
+  const [embedStart, setEmbedStart] = useState<{ seconds: number; key: number } | null>(
+    initialTranscript ? { seconds: initialTranscript.seconds, key: 1 } : null,
+  );
 
   // A local file seeks in place; the YouTube embed (not downloaded) can't be
   // seeked, so it's reloaded at that time instead.
@@ -921,7 +928,7 @@ export default function LibraryVideoDetail({
             epoch={selectedEpoch}
             existingClipTitles={clips.map((c) => c.title)}
             convertFormatOptions={convertFormatOptions}
-            initialSeekSeconds={resumeFromBackgroundSeconds}
+            initialSeekSeconds={initialTranscript?.seconds ?? resumeFromBackgroundSeconds}
             initialClipStartSeconds={initialClipStartSeconds}
             initialClipEndSeconds={initialClipEndSeconds}
             playerHandleRef={playerHandleRef}
@@ -1052,6 +1059,7 @@ export default function LibraryVideoDetail({
                   isLocal={metadata.platform === 'local'}
                   onSeek={handleTranscriptSeek}
                   getCurrentTime={getPlayerCurrentTime}
+                  initialLanguage={initialTranscript?.language ?? null}
                   onFetched={handleTranscriptFetched}
                 />
               </Box>

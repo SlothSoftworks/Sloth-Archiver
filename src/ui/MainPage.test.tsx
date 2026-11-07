@@ -37,6 +37,11 @@ beforeEach(() => {
   window.electronAPI = {
     ...window.electronAPI,
     getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
+    searchLibrary: vi.fn().mockResolvedValue({ success: true, results: { videos: { items: [], total: 0 }, clips: { items: [], total: 0 }, playlists: { items: [], total: 0 } }, transcriptsPending: false }),
+    cancelSearch: vi.fn().mockResolvedValue({ success: true }),
+    getSearchStatus: vi.fn().mockResolvedValue({ building: false }),
+    onSearchProgress: vi.fn(),
+    removeSearchProgressListener: vi.fn(),
     getFfmpegVersion: vi.fn().mockResolvedValue('7.0.2'),
     onYtdlpUpdateProgress: vi.fn(),
     removeYtdlpUpdateProgressListener: vi.fn(),

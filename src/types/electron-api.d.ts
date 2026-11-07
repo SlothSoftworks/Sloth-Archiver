@@ -21,6 +21,40 @@ export type TranscriptBatchStatus = {
 };
 type EpochRef = { videoDir: string; epoch: string };
 
+export type SearchQuery = { mode: 'text' | 'regex' | 'terms'; text?: string; terms?: { text: string; op?: 'and' | 'or' }[] };
+// tags: sublibrary folder names, null/absent for all. Titles and channel
+// names are always searched.
+export type SearchScope = { tags?: string[] | null; notes?: boolean; clips?: boolean; playlists?: boolean; transcripts?: boolean };
+export type SearchRange = [number, number];
+export type SearchMatch = { field: string; text: string; ranges: SearchRange[] };
+type SearchVideoBase = {
+    tag: string;
+    tagName: string;
+    videoDir: string;
+    videoId: string;
+    platform: string;
+    title: string;
+    channel: string;
+    thumbnailPath: string | null;
+};
+export type SearchVideoResult = SearchVideoBase & { kind: 'video'; matches: SearchMatch[] };
+export type SearchClipResult = SearchVideoBase & { kind: 'clip'; clipId: string; clipTitle: string; matches: SearchMatch[] };
+export type SearchPlaylistResult = { kind: 'playlist'; tag: string; tagName: string; playlistId: string; title: string; uploader: string; matches: SearchMatch[] };
+export type SearchTranscriptResult = SearchVideoBase & {
+    kind: 'transcript';
+    epoch: string;
+    isLatest: boolean;
+    language: string;
+    languageName: string;
+    lineCount: number;
+    lines: { start: number; text: string; ranges: SearchRange[] }[];
+};
+export type SearchResult = SearchVideoResult | SearchClipResult | SearchPlaylistResult | SearchTranscriptResult;
+export type SearchGroup<T> = { items: T[]; total: number };
+export type SearchResults = { videos: SearchGroup<SearchVideoResult>; clips: SearchGroup<SearchClipResult>; playlists: SearchGroup<SearchPlaylistResult> };
+export type SearchProgress = { searchId: string; items: SearchTranscriptResult[]; matched: number; scanned: number; total: number; done: boolean };
+export type SearchProgressListener = (...args: unknown[]) => void;
+
 type FolderPickerResult = {
     filePath: string;
     canceled: boolean;
@@ -306,6 +340,16 @@ declare global {
             onTranscriptBatchProgress: (callback: (status: TranscriptBatchStatus) => void) => void
             removeTranscriptBatchProgressListener: () => void
             getTranscriptSettings: () => Promise<{ fetchTranscriptOnDownload: boolean; transcriptLanguage: string }>
+            searchLibrary: (payload: { searchId: string; query: SearchQuery; scope?: SearchScope }) => Promise<
+                | { success: true; results: SearchResults; transcriptsPending: boolean }
+                | { success: false; message?: string; cancelled?: boolean }
+            >
+            cancelSearch: (searchId: string) => Promise<{ success: boolean }>
+            getSearchStatus: () => Promise<{ building: boolean }>
+            // Returns the listener it registered; pass it back to
+            // removeSearchProgressListener to remove just this one.
+            onSearchProgress: (callback: (data: SearchProgress) => void) => SearchProgressListener
+            removeSearchProgressListener: (listener: SearchProgressListener) => void
             setTranscriptSettings: (value: { fetchTranscriptOnDownload?: boolean; transcriptLanguage?: string }) => Promise<{ success: boolean; fetchTranscriptOnDownload: boolean; transcriptLanguage: string }>
             setClipNotes: (payload: { videoDir: string; clipId: string; notes: string }) => Promise<{ success: boolean; clip?: LibraryClip; message?: string }>
             fetchPlaylistEntries: (playlistUrl: string) => Promise<{ success: boolean; entries?: { id: string; title: string | null; url: string; thumbnailUrl: string; uploadDate: string | null }[]; playlistId?: string; message?: string }>

@@ -26,6 +26,7 @@ import DownloaderScreen from './screens/DownloaderScreen';
 import OptionsScreen from './screens/OptionsScreen';
 import LibraryScreen from './screens/LibraryScreen';
 import ChannelArchiveScreen from './screens/ChannelArchiveScreen';
+import OmniSearchField from './components/OmniSearchField';
 import VidToolsScreen from './screens/VidToolsScreen';
 import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
 import BulkAddSidePanel, { BulkAddToggleButton } from './components/BulkAddSidePanel';
@@ -219,6 +220,7 @@ export function BasicTabs() {
           <Tab label="Options" {...a11yProps(OPTIONS_TAB_INDEX)} />
         </Tabs>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mr: 1 }}>
+          <OmniSearchField />
           {appVersion &&
             <Chip size="small" variant="outlined" label={`v${appVersion}`} sx={{ fontFamily: 'monospace' }} />}
           <BulkAddToggleButton />

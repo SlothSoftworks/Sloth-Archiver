@@ -10,7 +10,7 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, setVideoNotes, setClipNotes, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, extractFrameToFile, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, setVideoNotes, setClipNotes, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, extractFrameToFile, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex, readClipsManifest, createScanYielder } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, clampTranscriptSettings, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
@@ -25,6 +25,8 @@ import {
     pickTranscriptTrack, findTranscriptTrackByCode, listTranscriptLanguages, mergeTranscriptLanguages, buildSubtitleDownloadArgs, parseVtt,
     readTranscript, readTranscriptForLanguage, listExtraTranscriptLanguages, writeTranscript, saveAvailableTranscriptLanguages, transcriptToText, createTranscriptQueue,
 } from './transcripts.mjs';
+import { compileQuery, searchCatalog, normalizeSearchRequest, createCatalogService } from './searchCatalog.mjs';
+import { createTranscriptCache, listTranscriptTargets, scanTranscripts } from './searchScan.mjs';
 import { createArchiveBacklogStore, summarizeBacklog, BACKLOG_MAX_ITEMS } from './archiveBacklog.mjs';
 import { parseYouTubeChannelUrl } from './utils/youtube.mjs';
 import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
@@ -491,6 +493,7 @@ ipcMain.handle('settings:setLibraryDir', async (e, dir) => {
     // Switching to a different library folder mid-session should reflect
     // immediately, not show whatever the previous folder's scan found.
     refreshLibraryIndex(validDir, DEFAULT_LIBRARY_DIR_NAME);
+    searchCatalogService.rebuild();
     return { success: true, libraryDir: validDir };
 });
 
@@ -515,6 +518,7 @@ ipcMain.handle('library:createTag', async (e, name) => {
         settings.activeLibraryTag = tag.folderName;
         writeSettings(settings);
         await refreshLibraryIndex(libraryDir, tag.folderName);
+        searchCatalogService.rebuildTags([tag.folderName]);
         return { success: true, tag };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
@@ -738,7 +742,9 @@ ipcMain.handle('library:getIndex', async () => {
 
 ipcMain.handle('library:refreshIndex', async () => {
     const { libraryDir, activeLibraryTag: libraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
-    return summarizeLibraryIndex(await refreshLibraryIndex(libraryDir, libraryTag));
+    const index = await refreshLibraryIndex(libraryDir, libraryTag);
+    searchCatalogService.rebuildTags([libraryTag]);
+    return summarizeLibraryIndex(index);
 });
 
 ipcMain.handle('library:getVideo', async (e, videoDir) => {
@@ -786,6 +792,7 @@ export function selectTagsToRefresh(libraryTags, activeLibraryTag, isCached) {
 }
 
 async function refreshIndexAfterWrite(libraryDir, libraryTags) {
+    searchCatalogService.rebuildTags(libraryTags);
     const { activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const tags = selectTagsToRefresh(libraryTags, activeLibraryTag, (tag) => isLibraryIndexCachedFor(libraryDir, tag));
     for (const tag of tags) {
@@ -800,6 +807,19 @@ function libraryTagOfVideoDir(libraryDir, videoDir) {
     return libraryTagForPath(libraryDir, videoDir) || readSettings().activeLibraryTag || DEFAULT_LIBRARY_DIR_NAME;
 }
 
+// Omni-search's catalog (searchCatalog.mjs). A sublibrary that's already in
+// the index cache is read from there; the others are scanned and dropped.
+const searchCatalogService = createCatalogService({
+    getLibraryDir: () => readSettings().libraryDir,
+    listTags: listLibraryTags,
+    loadTagIndex: (libraryDir, tag) => (isLibraryIndexCachedFor(libraryDir, tag) ? getLibraryIndex(libraryDir, tag) : scanLibrary(libraryDir, tag)),
+    readVideoEntry: readLibraryVideoEntry,
+    listPlaylists: (libraryDir, libraryTag) => listPlaylistSnapshots({ libraryDir, libraryTag }),
+    tagOfVideoDir: libraryTagOfVideoDir,
+    deps: { readClips: readClipsManifest, listExtraLanguages: (videoDir, epoch) => listExtraTranscriptLanguages(path.join(videoDir, epoch)) },
+    onError: (err) => log('[search] catalog update failed', err instanceof Error ? err.stack : String(err)),
+});
+
 // PERF-002/008: the per-video counterpart to refreshIndexAfterWrite, for
 // every write that knows which video folders it touched (nearly all of
 // them). Same choice of *which* sublibraries need updating, but a cached
@@ -808,6 +828,7 @@ function libraryTagOfVideoDir(libraryDir, videoDir) {
 // sublibrary that isn't the cached one still gets a full scan, since there's
 // no index to patch. Resolves true when the active sublibrary changed.
 async function updateIndexAfterVideoWrites(libraryDir, videoDirs) {
+    searchCatalogService.refreshVideoDirs(videoDirs);
     const { activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const dirsByTag = new Map();
     for (const videoDir of videoDirs.filter(Boolean)) {
@@ -1010,6 +1031,7 @@ ipcMain.handle('library:fetchPlaylistEntries', async (e, playlistUrl) => {
                 })),
                 index,
             });
+            searchCatalogService.refreshPlaylists(activeLibraryTag);
             // Fire-and-forget, same as the video/channel thumbnail caches.
             // Prefers result.metadata.entries (already dead-flagged by
             // writePlaylistSnapshot's own isDeadTitle check) over the raw
@@ -1092,6 +1114,7 @@ ipcMain.handle('library:refreshPlaylist', async (e, playlistId) => {
             freshUploader: fresh.uploader,
             index,
         });
+        searchCatalogService.refreshPlaylists(activeLibraryTag);
         const playlistDir = path.join(libraryTagDir(libraryDir, activeLibraryTag), PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
         ensurePlaylistThumbnail(playlistDir, resolvePlaylistThumbnailUrl({ entries: result.entries, manualThumbnailVideoId: result.manualThumbnailVideoId }));
         return result;
@@ -1129,7 +1152,9 @@ ipcMain.handle('library:undoPlaylistRefresh', async (e, playlistId) => {
         return { success: false, message: 'No library folder configured.' };
     }
     try {
-        return undoPlaylistRefresh({ libraryDir, libraryTag: activeLibraryTag, playlistId });
+        const result = undoPlaylistRefresh({ libraryDir, libraryTag: activeLibraryTag, playlistId });
+        searchCatalogService.refreshPlaylists(activeLibraryTag);
+        return result;
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
@@ -1144,7 +1169,9 @@ ipcMain.handle('library:deletePlaylist', async (e, playlistId) => {
         return { success: false, message: 'No library folder configured.' };
     }
     try {
-        return deletePlaylistSnapshot({ libraryDir, libraryTag: activeLibraryTag, playlistId });
+        const result = deletePlaylistSnapshot({ libraryDir, libraryTag: activeLibraryTag, playlistId });
+        searchCatalogService.refreshPlaylists(activeLibraryTag);
+        return result;
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
@@ -1407,7 +1434,7 @@ async function fetchImportedImages(libraryDir, touchedTags, followUps) {
 // getLibraryIndex reuses this same in-flight scan when the Library tab asks.
 {
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
-    getLibraryIndex(libraryDir, activeLibraryTag);
+    getLibraryIndex(libraryDir, activeLibraryTag).finally(() => searchCatalogService.rebuild());
 }
 
 // A literal fs.existsSync(filePath) isn't enough: postprocessors (MP3
@@ -2794,6 +2821,7 @@ async function fetchTranscriptForEpoch({ videoDir, epoch, language }) {
             availableLanguages: listTranscriptLanguages(subtitleTracks),
         }, { asDefault });
         if (asDefault) await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
+        else searchCatalogService.refreshVideoDirs([videoDir]);
         BrowserWindow.getAllWindows()[0]?.webContents.send('transcripts:updated', { videoDir, epoch, language: track.language });
         log(`[transcript] fetched ${track.key} (${track.source}, ${segments.length} lines) for ${videoDir}/${epoch}`);
         return { success: true, transcript, isDefault: asDefault };
@@ -2894,15 +2922,62 @@ ipcMain.handle('transcripts:saveText', async (e, { videoDir, epoch, language, wi
 });
 
 // No index update: clip notes aren't in the index, and ClipCollectionView
-// replaces the clip in its own list from the returned record.
+// replaces the clip in its own list from the returned record. The search
+// catalog does hold them, so it's refreshed.
 ipcMain.handle('library:setClipNotes', async (e, { videoDir, clipId, notes }) => {
     const { libraryDir } = readSettings();
     try {
-        return { success: true, clip: setClipNotes({ libraryDir, videoDir, clipId, notes }) };
+        const clip = setClipNotes({ libraryDir, videoDir, clipId, notes });
+        searchCatalogService.refreshVideoDirs([videoDir]);
+        return { success: true, clip };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
 });
+
+// Omni-search. One search runs at a time: a new one (e.g. the next
+// keystroke) cancels the transcript scan of the previous one. The catalog
+// part answers at once; transcripts stream in as search:progress.
+let activeSearch = null;
+const transcriptSearchCache = createTranscriptCache();
+
+ipcMain.handle('search:query', async (e, request) => {
+    if (activeSearch) activeSearch.cancelled = true;
+    const searchId = typeof request?.searchId === 'string' ? request.searchId : '';
+    const run = { searchId, cancelled: false };
+    activeSearch = run;
+    const { query, scope } = normalizeSearchRequest(request);
+    let compiled;
+    try {
+        compiled = compileQuery(query);
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+    await searchCatalogService.whenSettled();
+    if (run.cancelled) return { success: false, cancelled: true };
+    const { catalog } = searchCatalogService;
+    const results = searchCatalog(catalog, compiled, scope);
+    if (scope.transcripts) {
+        const sender = e.sender;
+        scanTranscripts({
+            catalog,
+            targets: listTranscriptTargets(catalog, scope),
+            query: compiled,
+            cache: transcriptSearchCache,
+            isCancelled: () => run.cancelled,
+            onBatch: (batch) => { if (!sender.isDestroyed()) sender.send('search:progress', { searchId, ...batch }); },
+            yieldIfDue: createScanYielder(),
+        }).catch((err) => log('[search] transcript scan failed', err instanceof Error ? err.stack : String(err)));
+    }
+    return { success: true, results, transcriptsPending: scope.transcripts };
+});
+
+ipcMain.handle('search:cancel', async (e, searchId) => {
+    if (activeSearch && activeSearch.searchId === searchId) activeSearch.cancelled = true;
+    return { success: true };
+});
+
+ipcMain.handle('search:status', async () => searchCatalogService.status());
 
 // Converts a saved clip to another format "in place" -- the clip keeps its
 // id/title/createdAt, only its underlying file (and clips.json's fileName/
