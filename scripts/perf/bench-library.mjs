@@ -32,7 +32,7 @@ import {
     readClipsManifest,
 } from '../../src/electron/library.mjs';
 import { createCatalog, compileQuery, searchCatalog } from '../../src/electron/searchCatalog.mjs';
-import { createTranscriptCache, listTranscriptTargets, scanTranscripts } from '../../src/electron/searchScan.mjs';
+import { createContentCache, listTranscriptTargets, scanTranscripts, scanDescriptions } from '../../src/electron/searchScan.mjs';
 import { generateLibraryFixture, generatePlaylistFixture, buildPlaylistEntries, fixtureVideoId, DISTRIBUTIONS } from './libraryFixture.mjs';
 
 function parseArgs(argv) {
@@ -227,8 +227,10 @@ function benchSearch(index) {
 }
 
 // Omni-search's in-memory catalog (searchCatalog.mjs): build time, rough
-// heap cost, and query times for each search type.
-function benchOmniSearch(index) {
+// heap cost, and query times for each search type; then the description
+// scan (searchScan.mjs), read from each video's metadata.json as it is for
+// every sublibrary but the active one -- first from disk, then cached.
+async function benchOmniSearch(index) {
     const heapBefore = process.memoryUsage().heapUsed;
     const catalog = createCatalog();
     const build = timeSync(() => catalog.replaceTag(DEFAULT_LIBRARY_DIR_NAME, index, [], { readClips: readClipsManifest, listExtraLanguages: () => [] }));
@@ -239,7 +241,15 @@ function benchOmniSearch(index) {
         for (let i = 0; i < 15; i++) runs.push(timeSync(() => searchCatalog(catalog, compiled)).ms);
         return round(median(runs), 2);
     };
+    const cache = createContentCache();
+    const scanDescriptionsFor = (text) => timeAsync(() => scanDescriptions({
+        catalog, query: compileQuery({ text }), cache, isCancelled: () => false, onBatch: () => {},
+    }));
+    const descriptionsFirst = await scanDescriptionsFor('zzqx');
+    const descriptionsCached = await scanDescriptionsFor('the');
     return {
+        descriptionScanMs: round(descriptionsFirst.ms),
+        descriptionCachedScanMs: round(descriptionsCached.ms),
         catalogBuildMs: round(build.ms),
         catalogHeapMb: round(heapMb),
         omniBroadMs: run({ text: 'e' }),
@@ -270,7 +280,7 @@ async function benchTranscriptSearch(baseDir, count) {
     }
     const catalog = createCatalog();
     catalog.replaceTag('Lib', { channels: [{ videos }] }, [], { readClips: () => [], listExtraLanguages: () => [] });
-    const cache = createTranscriptCache();
+    const cache = createContentCache();
     const scan = (text) => timeAsync(() => scanTranscripts({
         catalog, targets: listTranscriptTargets(catalog), query: compileQuery({ text }), cache, isCancelled: () => false, onBatch: () => {},
     }));
@@ -366,7 +376,7 @@ async function main() {
             Object.assign(row, await benchSingleMutation(libraryDir, index));
             Object.assign(row, benchFindVideo(index, summary.videoIdsCount));
             Object.assign(row, benchSearch(index));
-            Object.assign(row, benchOmniSearch(index));
+            Object.assign(row, await benchOmniSearch(index));
             if (distribution === 'archive') {
                 Object.assign(row, await benchBulkAdd(libraryDir, size >= 100000 ? 5 : size >= 20000 ? 15 : 50, false));
                 Object.assign(row, await benchBulkAdd(libraryDir, 200, true));

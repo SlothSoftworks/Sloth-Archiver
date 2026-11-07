@@ -26,7 +26,7 @@ import {
     readTranscript, readTranscriptForLanguage, listExtraTranscriptLanguages, writeTranscript, saveAvailableTranscriptLanguages, transcriptToText, createTranscriptQueue,
 } from './transcripts.mjs';
 import { compileQuery, searchCatalog, normalizeSearchRequest, createCatalogService } from './searchCatalog.mjs';
-import { createTranscriptCache, listTranscriptTargets, scanTranscripts } from './searchScan.mjs';
+import { createContentCache, listTranscriptTargets, scanTranscripts, scanDescriptions } from './searchScan.mjs';
 import { createArchiveBacklogStore, summarizeBacklog, BACKLOG_MAX_ITEMS } from './archiveBacklog.mjs';
 import { parseYouTubeChannelUrl } from './utils/youtube.mjs';
 import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
@@ -2936,10 +2936,37 @@ ipcMain.handle('library:setClipNotes', async (e, { videoDir, clipId, notes }) =>
 });
 
 // Omni-search. One search runs at a time: a new one (e.g. the next
-// keystroke) cancels the transcript scan of the previous one. The catalog
-// part answers at once; transcripts stream in as search:progress.
+// keystroke) cancels whatever the previous one was still reading. The
+// catalog part answers at once; descriptions, then transcripts, stream in
+// afterwards as search:progress, each batch tagged with its kind.
 let activeSearch = null;
-const transcriptSearchCache = createTranscriptCache();
+const searchContentCache = createContentCache();
+
+// The active sublibrary's descriptions are already in memory (its cached
+// full index), so only the other sublibraries' are read from disk.
+async function cachedDescriptionLookup() {
+    const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    if (!libraryDir || !isLibraryIndexCachedFor(libraryDir, activeLibraryTag)) return () => undefined;
+    const index = await getLibraryIndex(libraryDir, activeLibraryTag);
+    const descriptions = new Map();
+    for (const channel of index.channels) {
+        for (const video of channel.videos) descriptions.set(video.videoDir, video.metadata.description || '');
+    }
+    return (videoDir) => descriptions.get(videoDir);
+}
+
+async function streamSearchContent({ run, sender, catalog, query, scope }) {
+    const send = (kind) => (batch) => {
+        if (!sender.isDestroyed()) sender.send('search:progress', { searchId: run.searchId, kind, ...batch });
+    };
+    const common = { catalog, query, cache: searchContentCache, isCancelled: () => run.cancelled, yieldIfDue: createScanYielder() };
+    if (scope.descriptions) {
+        await scanDescriptions({ ...common, tags: scope.tags, descriptionFor: await cachedDescriptionLookup(), onBatch: send('descriptions') });
+    }
+    if (scope.transcripts && !run.cancelled) {
+        await scanTranscripts({ ...common, targets: listTranscriptTargets(catalog, scope), onBatch: send('transcripts') });
+    }
+}
 
 ipcMain.handle('search:query', async (e, request) => {
     if (activeSearch) activeSearch.cancelled = true;
@@ -2957,19 +2984,11 @@ ipcMain.handle('search:query', async (e, request) => {
     if (run.cancelled) return { success: false, cancelled: true };
     const { catalog } = searchCatalogService;
     const results = searchCatalog(catalog, compiled, scope);
-    if (scope.transcripts) {
-        const sender = e.sender;
-        scanTranscripts({
-            catalog,
-            targets: listTranscriptTargets(catalog, scope),
-            query: compiled,
-            cache: transcriptSearchCache,
-            isCancelled: () => run.cancelled,
-            onBatch: (batch) => { if (!sender.isDestroyed()) sender.send('search:progress', { searchId, ...batch }); },
-            yieldIfDue: createScanYielder(),
-        }).catch((err) => log('[search] transcript scan failed', err instanceof Error ? err.stack : String(err)));
+    if (scope.descriptions || scope.transcripts) {
+        streamSearchContent({ run, sender: e.sender, catalog, query: compiled, scope })
+            .catch((err) => log('[search] content scan failed', err instanceof Error ? err.stack : String(err)));
     }
-    return { success: true, results, transcriptsPending: scope.transcripts };
+    return { success: true, results, pending: { descriptions: scope.descriptions, transcripts: scope.transcripts } };
 });
 
 ipcMain.handle('search:cancel', async (e, searchId) => {

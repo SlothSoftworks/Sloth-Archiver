@@ -24,7 +24,7 @@ type EpochRef = { videoDir: string; epoch: string };
 export type SearchQuery = { mode: 'text' | 'regex' | 'terms'; text?: string; terms?: { text: string; op?: 'and' | 'or' }[] };
 // tags: sublibrary folder names, null/absent for all. Titles and channel
 // names are always searched.
-export type SearchScope = { tags?: string[] | null; notes?: boolean; clips?: boolean; playlists?: boolean; transcripts?: boolean };
+export type SearchScope = { tags?: string[] | null; notes?: boolean; clips?: boolean; playlists?: boolean; descriptions?: boolean; transcripts?: boolean };
 export type SearchRange = [number, number];
 export type SearchMatch = { field: string; text: string; ranges: SearchRange[] };
 type SearchVideoBase = {
@@ -39,6 +39,7 @@ type SearchVideoBase = {
 };
 export type SearchVideoResult = SearchVideoBase & { kind: 'video'; matches: SearchMatch[] };
 export type SearchClipResult = SearchVideoBase & { kind: 'clip'; clipId: string; clipTitle: string; matches: SearchMatch[] };
+export type SearchDescriptionResult = SearchVideoBase & { kind: 'description'; matches: SearchMatch[] };
 export type SearchPlaylistResult = { kind: 'playlist'; tag: string; tagName: string; playlistId: string; title: string; uploader: string; matches: SearchMatch[] };
 export type SearchTranscriptResult = SearchVideoBase & {
     kind: 'transcript';
@@ -49,10 +50,13 @@ export type SearchTranscriptResult = SearchVideoBase & {
     lineCount: number;
     lines: { start: number; text: string; ranges: SearchRange[] }[];
 };
-export type SearchResult = SearchVideoResult | SearchClipResult | SearchPlaylistResult | SearchTranscriptResult;
+export type SearchResult = SearchVideoResult | SearchClipResult | SearchPlaylistResult | SearchDescriptionResult | SearchTranscriptResult;
 export type SearchGroup<T> = { items: T[]; total: number };
 export type SearchResults = { videos: SearchGroup<SearchVideoResult>; clips: SearchGroup<SearchClipResult>; playlists: SearchGroup<SearchPlaylistResult> };
-export type SearchProgress = { searchId: string; items: SearchTranscriptResult[]; matched: number; scanned: number; total: number; done: boolean };
+type SearchProgressCounts = { searchId: string; matched: number; scanned: number; total: number; done: boolean };
+export type SearchProgress =
+    | (SearchProgressCounts & { kind: 'descriptions'; items: SearchDescriptionResult[] })
+    | (SearchProgressCounts & { kind: 'transcripts'; items: SearchTranscriptResult[] });
 export type SearchProgressListener = (...args: unknown[]) => void;
 
 type FolderPickerResult = {
@@ -341,7 +345,7 @@ declare global {
             removeTranscriptBatchProgressListener: () => void
             getTranscriptSettings: () => Promise<{ fetchTranscriptOnDownload: boolean; transcriptLanguage: string }>
             searchLibrary: (payload: { searchId: string; query: SearchQuery; scope?: SearchScope }) => Promise<
-                | { success: true; results: SearchResults; transcriptsPending: boolean }
+                | { success: true; results: SearchResults; pending: { descriptions: boolean; transcripts: boolean } }
                 | { success: false; message?: string; cancelled?: boolean }
             >
             cancelSearch: (searchId: string) => Promise<{ success: boolean }>

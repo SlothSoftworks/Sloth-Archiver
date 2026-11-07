@@ -1,44 +1,43 @@
-// The on-demand half of omni-search: transcripts are too big to keep in
-// the catalog (searchCatalog.mjs), so a search that includes them reads the
-// files here, a few at a time with the event loop yielded in between, and
-// reports results in batches as it goes. Parsed transcripts are kept in a
-// size-capped cache for the session, so searching again doesn't re-read
-// what fits.
+// The on-demand half of omni-search: transcripts and descriptions are too
+// big to keep in the catalog (searchCatalog.mjs), so a search that includes
+// them reads them here, with the event loop yielded in between, and reports
+// results in batches as it goes. What's read is kept in one size-capped
+// cache for the session, so searching again doesn't re-read what fits.
 import fsp from 'fs/promises';
 import path from 'path';
-import { fold, satisfiesGroups, mergeRanges, makeSnippet, RESULT_GROUP_LIMIT } from './searchCatalog.mjs';
+import { fold, satisfiesGroups, mergeRanges, makeSnippet, matchesQuery, matchFields, toMatches, textField, videoSummary, RESULT_GROUP_LIMIT } from './searchCatalog.mjs';
 import { transcriptPath } from './transcripts.mjs';
 
-export const TRANSCRIPT_CACHE_BUDGET_BYTES = 64 * 1024 * 1024;
+export const CONTENT_CACHE_BUDGET_BYTES = 128 * 1024 * 1024;
 export const LINES_PER_TRANSCRIPT = 5;
 const BATCH_INTERVAL_MS = 150;
+const READ_CONCURRENCY = 8;
 
-// Least recently used first out (a Map keeps insertion order; a hit
-// re-inserts). An entry whose file changed since (mtime) is a miss.
-export function createTranscriptCache({ budgetBytes = TRANSCRIPT_CACHE_BUDGET_BYTES } = {}) {
+// Once full, it stops taking new entries rather than evicting old ones: a
+// search reads files in the same order every time, and evicting the oldest
+// would throw out exactly what the next search needs first, so nothing would
+// ever hit. This way repeat searches always hit for whatever fits. An entry
+// whose file changed since (mtime) is a miss and is replaced.
+export function createContentCache({ budgetBytes = CONTENT_CACHE_BUDGET_BYTES } = {}) {
     const entries = new Map();
     let usedBytes = 0;
     return {
         get(filePath, mtimeMs) {
             const entry = entries.get(filePath);
-            if (!entry || entry.mtimeMs !== mtimeMs) return null;
-            entries.delete(filePath);
-            entries.set(filePath, entry);
-            return entry;
+            return entry && entry.mtimeMs === mtimeMs ? entry : null;
         },
         set(filePath, entry) {
             const previous = entries.get(filePath);
-            if (previous) {
-                usedBytes -= previous.bytes;
-                entries.delete(filePath);
+            const freed = previous ? previous.bytes : 0;
+            if (usedBytes - freed + entry.bytes > budgetBytes) {
+                if (previous) {
+                    entries.delete(filePath);
+                    usedBytes -= freed;
+                }
+                return;
             }
             entries.set(filePath, entry);
-            usedBytes += entry.bytes;
-            for (const [oldestPath, oldest] of entries) {
-                if (usedBytes <= budgetBytes || entries.size <= 1) break;
-                entries.delete(oldestPath);
-                usedBytes -= oldest.bytes;
-            }
+            usedBytes += entry.bytes - freed;
         },
         clear() {
             entries.clear();
@@ -105,6 +104,45 @@ async function loadTranscript(filePath, cache) {
     return entry;
 }
 
+// Reads READ_CONCURRENCY items at a time and hands each to visit in order,
+// with null for one that couldn't be read. Resolves false when cancelled.
+async function forEachLoaded(items, load, visit, { isCancelled, yieldIfDue }) {
+    for (let i = 0; i < items.length; i += READ_CONCURRENCY) {
+        if (isCancelled()) return false;
+        await yieldIfDue();
+        const chunk = items.slice(i, i + READ_CONCURRENCY);
+        const loaded = await Promise.all(chunk.map((item) => load(item).catch(() => null)));
+        chunk.forEach((item, j) => visit(item, loaded[j]));
+    }
+    return !isCancelled();
+}
+
+// Collects results and reports them through onBatch at most every
+// BATCH_INTERVAL_MS, plus once at the end.
+function createBatcher(onBatch, total, now) {
+    let pending = [];
+    let matched = 0;
+    let scanned = 0;
+    let lastFlush = now();
+    const flush = (done) => {
+        onBatch({ items: pending, matched, scanned, total, done });
+        pending = [];
+        lastFlush = now();
+    };
+    return {
+        scanned() {
+            scanned++;
+            if (now() - lastFlush >= BATCH_INTERVAL_MS) flush(false);
+        },
+        // Every match is counted; build() only runs for the shown ones.
+        matched(build) {
+            matched++;
+            if (matched <= RESULT_GROUP_LIMIT) pending.push(build());
+        },
+        finish: () => flush(true),
+    };
+}
+
 function lineAt(lineStarts, position) {
     let low = 0;
     let high = lineStarts.length - 1;
@@ -156,48 +194,53 @@ function matchingLines(query, entry, hitTerms) {
 // onBatch({ items, matched, scanned, total, done }) gets only the new items;
 // matched counts every matching transcript, past the result cap too.
 export async function scanTranscripts({ catalog, targets, query, cache, isCancelled, onBatch, yieldIfDue = async () => {}, now = () => Date.now() }) {
-    let pending = [];
-    let matchedCount = 0;
-    let scanned = 0;
-    let lastFlush = now();
-    const flush = (done) => {
-        onBatch({ items: pending, matched: matchedCount, scanned, total: targets.length, done });
-        pending = [];
-        lastFlush = now();
-    };
-    for (const target of targets) {
-        if (isCancelled()) return;
-        await yieldIfDue();
-        let transcript;
-        try {
-            transcript = await loadTranscript(target.filePath, cache);
-        } catch {
-            scanned++;
-            continue;
-        }
-        scanned++;
-        const hitTerms = matchesTranscript(query, transcript);
-        if (hitTerms) matchedCount++;
-        if (hitTerms && matchedCount <= RESULT_GROUP_LIMIT) {
+    const batcher = createBatcher(onBatch, targets.length, now);
+    const finished = await forEachLoaded(targets, (target) => loadTranscript(target.filePath, cache), (target, transcript) => {
+        const hitTerms = transcript && matchesTranscript(query, transcript);
+        if (hitTerms) {
             const { entry } = target;
-            pending.push({
+            batcher.matched(() => ({
                 kind: 'transcript',
-                tag: entry.tag,
-                tagName: catalog.tagNames.get(entry.tag) || entry.tag,
-                videoDir: entry.videoDir,
-                videoId: entry.videoId,
-                platform: entry.platform,
-                title: entry.title.text,
-                channel: entry.channel.text,
-                thumbnailPath: entry.thumbnailPath,
+                ...videoSummary(catalog, entry),
                 epoch: target.epoch,
                 isLatest: target.epoch === entry.latestEpoch,
                 language: transcript.language,
                 languageName: transcript.languageName,
                 ...matchingLines(query, transcript, hitTerms),
-            });
+            }));
         }
-        if (now() - lastFlush >= BATCH_INTERVAL_MS) flush(false);
-    }
-    if (!isCancelled()) flush(true);
+        batcher.scanned();
+    }, { isCancelled, yieldIfDue });
+    if (finished) batcher.finish();
+}
+
+// Each video's description, matched like a catalog field. descriptionFor
+// answers from the in-memory library index when it has the video (the
+// active sublibrary); anything else is read from the latest version's
+// metadata.json. onBatch gets the same shape as scanTranscripts'.
+export async function scanDescriptions({ catalog, tags = null, query, cache, descriptionFor = () => undefined, isCancelled, onBatch, yieldIfDue = async () => {}, now = () => Date.now() }) {
+    const entries = [...catalog.videos.values()].filter((entry) => !tags || tags.includes(entry.tag));
+    const batcher = createBatcher(onBatch, entries.length, now);
+    const load = async (entry) => {
+        const fromIndex = descriptionFor(entry.videoDir);
+        if (fromIndex !== undefined) return textField('description', fromIndex);
+        return loadDescription(path.join(entry.videoDir, entry.latestEpoch, 'metadata.json'), cache);
+    };
+    const finished = await forEachLoaded(entries, load, (entry, field) => {
+        if (field?.text && matchesQuery(query, [field])) {
+            batcher.matched(() => ({ kind: 'description', ...videoSummary(catalog, entry), matches: toMatches(matchFields(query, [field])) }));
+        }
+        batcher.scanned();
+    }, { isCancelled, yieldIfDue });
+    if (finished) batcher.finish();
+}
+
+async function loadDescription(filePath, cache) {
+    const { mtimeMs } = await fsp.stat(filePath);
+    const cached = cache.get(filePath, mtimeMs);
+    if (cached) return cached.field;
+    const metadata = JSON.parse(await fsp.readFile(filePath, 'utf-8'));
+    const field = textField('description', typeof metadata.description === 'string' ? metadata.description : '');
+    cache.set(filePath, { mtimeMs, field, bytes: (field.text.length + field.folded.length) * 2 + 64 });
+    return field;
 }

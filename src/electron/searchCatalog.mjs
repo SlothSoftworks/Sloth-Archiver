@@ -162,7 +162,7 @@ export function matchFields(query, fields) {
     return perField.filter(Boolean);
 }
 
-function textField(name, text) {
+export function textField(name, text) {
     return { name, text: text || '', folded: fold(text) };
 }
 
@@ -254,11 +254,11 @@ export function createCatalog() {
     };
 }
 
-function toMatches(matched) {
+export function toMatches(matched) {
     return matched.map(({ field, ranges }) => ({ field: field.name, ...makeSnippet(field.text, ranges) }));
 }
 
-function videoSummary(catalog, entry) {
+export function videoSummary(catalog, entry) {
     return {
         tag: entry.tag,
         tagName: catalog.tagNames.get(entry.tag) || entry.tag,
@@ -339,6 +339,7 @@ export function normalizeSearchRequest({ query, scope } = {}) {
             notes: flag(scope?.notes, true),
             clips: flag(scope?.clips, true),
             playlists: flag(scope?.playlists, true),
+            descriptions: flag(scope?.descriptions, false),
             transcripts: flag(scope?.transcripts, false),
         },
     };

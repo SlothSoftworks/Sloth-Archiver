@@ -1,6 +1,11 @@
 import { afterEach } from 'vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
+
+// waitFor/findBy give up after 1 s by default, which a debounced UI can
+// exceed when every test file runs in parallel (same reason as testTimeout
+// in vitest.config.ts). A passing wait still returns as soon as it passes.
+configure({ asyncUtilTimeout: 5000 });
 
 // Only matters for jsdom-environment (renderer) test files -- unmounts
 // whatever React Testing Library rendered after each test so components

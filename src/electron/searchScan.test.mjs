@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { createCatalog, compileQuery } from './searchCatalog.mjs';
-import { createTranscriptCache, listTranscriptTargets, scanTranscripts, LINES_PER_TRANSCRIPT } from './searchScan.mjs';
+import { createContentCache, listTranscriptTargets, scanTranscripts, scanDescriptions, LINES_PER_TRANSCRIPT } from './searchScan.mjs';
 
 let root;
 beforeEach(() => {
@@ -43,7 +43,7 @@ function setup(videos) {
     return catalog;
 }
 
-async function runScan(catalog, text, { cache = createTranscriptCache(), isCancelled = () => false } = {}) {
+async function runScan(catalog, text, { cache = createContentCache(), isCancelled = () => false } = {}) {
     const batches = [];
     await scanTranscripts({
         catalog,
@@ -104,7 +104,7 @@ describe('scanTranscripts', () => {
             catalog,
             targets: listTranscriptTargets(catalog),
             query: compileQuery({ mode: 'terms', terms: [{ text: 'alpha' }, { text: 'beta', op: 'and' }] }),
-            cache: createTranscriptCache(),
+            cache: createContentCache(),
             isCancelled: () => false,
             onBatch: (batch) => batches.push(batch),
         });
@@ -124,7 +124,7 @@ describe('scanTranscripts', () => {
             catalog,
             targets: listTranscriptTargets(catalog),
             query: compileQuery({ mode: 'regex', text: 'chapter \\d+' }),
-            cache: createTranscriptCache(),
+            cache: createContentCache(),
             isCancelled: () => false,
             onBatch: (batch) => batches.push(batch),
         });
@@ -149,7 +149,7 @@ describe('scanTranscripts', () => {
         const videoDir = path.join(root, 'v1');
         writeTranscript(videoDir, '200', 'en', ['first words']);
         const catalog = setup([{ name: 'v1', latestEpoch: '200', epochs: [{ epoch: '200', language: 'en' }] }]);
-        const cache = createTranscriptCache();
+        const cache = createContentCache();
         await runScan(catalog, 'first', { cache });
         expect(cache.size).toBe(1);
 
@@ -168,21 +168,82 @@ describe('scanTranscripts', () => {
     });
 });
 
-describe('createTranscriptCache', () => {
-    it('evicts the least recently used entries past the budget', () => {
-        const cache = createTranscriptCache({ budgetBytes: 250 });
+describe('createContentCache', () => {
+    it('stops taking new entries once full, keeping what it has', () => {
+        const cache = createContentCache({ budgetBytes: 250 });
         cache.set('a', { mtimeMs: 1, bytes: 100 });
         cache.set('b', { mtimeMs: 1, bytes: 100 });
-        cache.get('a', 1);
         cache.set('c', { mtimeMs: 1, bytes: 100 });
-        expect(cache.get('b', 1)).toBeNull();
         expect(cache.get('a', 1)).not.toBeNull();
+        expect(cache.get('b', 1)).not.toBeNull();
+        expect(cache.get('c', 1)).toBeNull();
         expect(cache.usedBytes).toBe(200);
     });
 
+    it('replaces a changed file\'s entry, or drops it when the new one no longer fits', () => {
+        const cache = createContentCache({ budgetBytes: 250 });
+        cache.set('a', { mtimeMs: 1, bytes: 100 });
+        cache.set('a', { mtimeMs: 2, bytes: 150 });
+        expect(cache.get('a', 2)).not.toBeNull();
+        cache.set('a', { mtimeMs: 3, bytes: 300 });
+        expect(cache.get('a', 3)).toBeNull();
+        expect(cache.usedBytes).toBe(0);
+    });
+
     it('treats a different mtime as a miss', () => {
-        const cache = createTranscriptCache();
+        const cache = createContentCache();
         cache.set('a', { mtimeMs: 1, bytes: 10 });
         expect(cache.get('a', 2)).toBeNull();
+    });
+});
+
+describe('scanDescriptions', () => {
+    function writeMetadata(name, epoch, description) {
+        const epochDir = path.join(root, name, epoch);
+        fs.mkdirSync(epochDir, { recursive: true });
+        fs.writeFileSync(path.join(epochDir, 'metadata.json'), JSON.stringify({ videoId: name, description }));
+    }
+
+    async function runDescriptions(catalog, text, options = {}) {
+        const batches = [];
+        await scanDescriptions({
+            catalog,
+            query: compileQuery({ text }),
+            cache: createContentCache(),
+            isCancelled: () => false,
+            onBatch: (batch) => batches.push(batch),
+            ...options,
+        });
+        return batches;
+    }
+
+    it('reads the latest version\'s description from disk and highlights the match', async () => {
+        writeMetadata('v1', '200', 'A long talk about compilers and more.');
+        writeMetadata('v2', '200', 'Cooking show.');
+        const catalog = setup([
+            { name: 'v1', latestEpoch: '200', epochs: [{ epoch: '200' }] },
+            { name: 'v2', latestEpoch: '200', epochs: [{ epoch: '200' }] },
+        ]);
+        const batches = await runDescriptions(catalog, 'compiler');
+        expect(batches[batches.length - 1]).toMatchObject({ matched: 1, scanned: 2, total: 2, done: true });
+        expect(batches.flatMap((b) => b.items)).toEqual([expect.objectContaining({
+            kind: 'description', videoId: 'v1', tagName: 'Library',
+            matches: [{ field: 'description', text: 'A long talk about compilers and more.', ranges: [[18, 26]] }],
+        })]);
+    });
+
+    it('uses the in-memory index instead of the file when it has the video', async () => {
+        writeMetadata('v1', '200', 'on disk');
+        const catalog = setup([{ name: 'v1', latestEpoch: '200', epochs: [{ epoch: '200' }] }]);
+        const descriptionFor = (videoDir) => (videoDir === path.join(root, 'v1') ? 'from the index' : undefined);
+        const items = (await runDescriptions(catalog, 'index', { descriptionFor })).flatMap((b) => b.items);
+        expect(items).toHaveLength(1);
+    });
+
+    it('only searches the chosen sublibraries', async () => {
+        writeMetadata('v1', '200', 'match');
+        const catalog = setup([{ name: 'v1', latestEpoch: '200', epochs: [{ epoch: '200' }] }]);
+        const batches = await runDescriptions(catalog, 'match', { tags: ['Other'] });
+        expect(batches[batches.length - 1]).toMatchObject({ matched: 0, total: 0, done: true });
     });
 });

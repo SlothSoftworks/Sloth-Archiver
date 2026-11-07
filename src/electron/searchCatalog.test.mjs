@@ -166,7 +166,7 @@ describe('normalizeSearchRequest', () => {
     it('fills in defaults and drops anything malformed', () => {
         expect(normalizeSearchRequest({ query: { mode: 'weird', text: 5, terms: 'x' }, scope: { notes: 'yes', tags: ['A', 3] } })).toEqual({
             query: { mode: 'text', text: '', terms: [] },
-            scope: { tags: ['A'], notes: true, clips: true, playlists: true, transcripts: false },
+            scope: { tags: ['A'], notes: true, clips: true, playlists: true, descriptions: false, transcripts: false },
         });
     });
 

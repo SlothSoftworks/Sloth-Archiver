@@ -133,7 +133,7 @@ export const electronAPIMock = {
     removeTranscriptBatchProgressListener: noop,
     getTranscriptSettings: async () => ({ fetchTranscriptOnDownload: false, transcriptLanguage: '' }),
     setTranscriptSettings: async () => ({ success: true, fetchTranscriptOnDownload: false, transcriptLanguage: '' }),
-    searchLibrary: async () => ({ success: true as const, results: { videos: { items: [], total: 0 }, clips: { items: [], total: 0 }, playlists: { items: [], total: 0 } }, transcriptsPending: false }),
+    searchLibrary: async () => ({ success: true as const, results: { videos: { items: [], total: 0 }, clips: { items: [], total: 0 }, playlists: { items: [], total: 0 } }, pending: { descriptions: false, transcripts: false } }),
     cancelSearch: async () => ({ success: true }),
     getSearchStatus: async () => ({ building: false }),
     onSearchProgress: () => noop,

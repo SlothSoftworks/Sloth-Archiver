@@ -37,11 +37,12 @@ beforeEach(() => {
   window.electronAPI = {
     ...window.electronAPI,
     getAppVersion: vi.fn().mockResolvedValue('0.0.0'),
-    searchLibrary: vi.fn().mockResolvedValue({ success: true, results: { videos: { items: [], total: 0 }, clips: { items: [], total: 0 }, playlists: { items: [], total: 0 } }, transcriptsPending: false }),
+    searchLibrary: vi.fn().mockResolvedValue({ success: true, results: { videos: { items: [], total: 0 }, clips: { items: [], total: 0 }, playlists: { items: [], total: 0 } }, pending: { descriptions: false, transcripts: false } }),
     cancelSearch: vi.fn().mockResolvedValue({ success: true }),
     getSearchStatus: vi.fn().mockResolvedValue({ building: false }),
     onSearchProgress: vi.fn(),
     removeSearchProgressListener: vi.fn(),
+    listLibraryTags: vi.fn().mockResolvedValue({ tags: [] }),
     getFfmpegVersion: vi.fn().mockResolvedValue('7.0.2'),
     onYtdlpUpdateProgress: vi.fn(),
     removeYtdlpUpdateProgressListener: vi.fn(),
@@ -155,6 +156,22 @@ describe('MainPage', () => {
     // and the badge hides) depends on.
     await user.click(screen.getByRole('tab', { name: /Library/ }));
     expect(document.querySelector('.MuiBadge-badge')).toHaveClass('MuiBadge-invisible');
+  });
+
+  it('opens the advanced search with Ctrl/Cmd+F, and from the quick search icon with its text', async () => {
+    const user = userEvent.setup();
+    renderMainPage();
+
+    await user.keyboard('{Control>}f{/Control}');
+    expect(await screen.findByRole('dialog', { name: 'Advanced search' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Close advanced search' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Search all libraries' }));
+    await user.type(screen.getByRole('textbox', { name: 'Search all libraries' }), 'from quick');
+    await user.click(screen.getByRole('button', { name: 'Advanced search' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Advanced search' });
+    expect(within(dialog).getByLabelText('Search for')).toHaveValue('from quick');
   });
 
   it('opens and closes the About dialog', async () => {

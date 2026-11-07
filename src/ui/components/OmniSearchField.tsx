@@ -18,7 +18,7 @@ const DEBOUNCE_MS = 200;
 // the advanced search. Titles, channels, notes, clips and playlists are
 // searched as you type; with "Also search transcripts" on, the search waits
 // for Enter, since that one reads files.
-export default function OmniSearchField({ onOpenAdvanced }: { onOpenAdvanced?: () => void }) {
+export default function OmniSearchField({ onOpenAdvanced }: { onOpenAdvanced?: (seedText: string) => void }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState('');
@@ -91,7 +91,12 @@ export default function OmniSearchField({ onOpenAdvanced }: { onOpenAdvanced?: (
         {open ? (
           <Tooltip title="Advanced search">
             <span>
-              <IconButton size="small" onClick={onOpenAdvanced} disabled={!onOpenAdvanced} aria-label="Advanced search">
+              <IconButton
+                size="small"
+                onClick={() => { setPopperOpen(false); onOpenAdvanced?.(value.trim()); }}
+                disabled={!onOpenAdvanced}
+                aria-label="Advanced search"
+              >
                 <ManageSearchIcon />
               </IconButton>
             </span>

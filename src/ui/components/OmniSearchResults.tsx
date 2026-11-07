@@ -6,7 +6,7 @@ import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import SubtitlesOutlinedIcon from '@mui/icons-material/SubtitlesOutlined';
 import { buildAppVideoUrl, formatDurationSeconds } from '../../utils/utils';
 import type { SearchMatch, SearchRange, SearchResults } from '../../types/electron-api';
-import type { TranscriptSearchState } from '../hooks/useOmniSearch';
+import type { DescriptionSearchState, StreamedSearchState, TranscriptSearchState } from '../hooks/useOmniSearch';
 import { searchResultPath } from '../utils/searchLinks';
 
 const FIELD_LABELS: Record<string, string> = {
@@ -17,6 +17,7 @@ const FIELD_LABELS: Record<string, string> = {
   clipNotes: 'Clip notes',
   playlistTitle: 'Playlist title',
   playlistUploader: 'Playlist by',
+  description: 'Description',
 };
 
 export function HighlightedRanges({ text, ranges }: { text: string; ranges: SearchRange[] }) {
@@ -82,10 +83,28 @@ function GroupHeader({ label, shown, total }: { label: string; shown: number; to
   );
 }
 
+// Progress while a streamed group is still being read, or its empty state.
+function StreamStatus({ stream, label, testId }: { stream: StreamedSearchState<unknown>; label: string; testId: string }) {
+  if (stream.done) {
+    return stream.matched === 0
+      ? <Typography variant="caption" color="text.secondary" component="div" sx={{ px: 2, pb: 1 }}>No {label} matches.</Typography>
+      : null;
+  }
+  return (
+    <Stack spacing={0.5} sx={{ px: 2, pb: 1 }} data-testid={testId}>
+      <Typography variant="caption" color="text.secondary">
+        Searching {label}s… {stream.scanned} / {stream.total}
+      </Typography>
+      <LinearProgress variant={stream.total ? 'determinate' : 'indeterminate'} value={stream.total ? (stream.scanned / stream.total) * 100 : 0} />
+    </Stack>
+  );
+}
+
 // The grouped results of one omni-search, shared by the header's quick
 // search and the advanced search dialog. onOpen gets the path to navigate to.
-export default function OmniSearchResults({ results, transcripts, onOpen }: {
+export default function OmniSearchResults({ results, descriptions = null, transcripts, onOpen }: {
   results: SearchResults | null;
+  descriptions?: DescriptionSearchState | null;
   transcripts: TranscriptSearchState | null;
   onOpen: (path: string) => void;
 }) {
@@ -145,19 +164,32 @@ export default function OmniSearchResults({ results, transcripts, onOpen }: {
         />
       ))}
 
+      {descriptions && (
+        <>
+          <GroupHeader label="Descriptions" shown={descriptions.items.length} total={descriptions.matched} />
+          <StreamStatus stream={descriptions} label="description" testId="description-search-progress" />
+          {descriptions.items.map((hit) => (
+            <Row
+              key={hit.videoDir}
+              onClick={() => onOpen(searchResultPath(hit))}
+              thumb={<Thumb path={hit.thumbnailPath} fallback={<OndemandVideoIcon fontSize="small" />} />}
+              primary={hit.title}
+              secondary={
+                <>
+                  <Typography variant="caption" color="text.secondary" component="div" noWrap>{hit.channel}</Typography>
+                  <OtherMatch matches={hit.matches} titleField="title" />
+                </>
+              }
+              tagName={hit.tagName}
+            />
+          ))}
+        </>
+      )}
+
       {transcripts && (
         <>
           <GroupHeader label="Transcripts" shown={transcripts.items.length} total={transcripts.matched} />
-          {!transcripts.done && (
-            <Stack spacing={0.5} sx={{ px: 2, pb: 1 }} data-testid="transcript-search-progress">
-              <Typography variant="caption" color="text.secondary">
-                Searching transcripts… {transcripts.scanned} / {transcripts.total}
-              </Typography>
-              <LinearProgress variant={transcripts.total ? 'determinate' : 'indeterminate'} value={transcripts.total ? (transcripts.scanned / transcripts.total) * 100 : 0} />
-            </Stack>
-          )}
-          {transcripts.done && transcripts.matched === 0 &&
-            <Typography variant="caption" color="text.secondary" component="div" sx={{ px: 2, pb: 1 }}>No transcript matches.</Typography>}
+          <StreamStatus stream={transcripts} label="transcript" testId="transcript-search-progress" />
           {transcripts.items.map((hit) => (
             <Box key={`${hit.videoDir}:${hit.epoch}:${hit.language}`} sx={{ px: 2, py: 0.75 }}>
               <Stack direction="row" spacing={1.5} alignItems="flex-start">

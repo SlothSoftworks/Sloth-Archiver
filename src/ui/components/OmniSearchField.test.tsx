@@ -21,7 +21,7 @@ beforeEach(() => {
   progressCallback = null;
   window.electronAPI = {
     ...window.electronAPI,
-    searchLibrary: vi.fn().mockResolvedValue({ success: true, results: RESULTS, transcriptsPending: false }),
+    searchLibrary: vi.fn().mockResolvedValue({ success: true, results: RESULTS, pending: { descriptions: false, transcripts: false } }),
     cancelSearch: vi.fn().mockResolvedValue({ success: true }),
     getSearchStatus: vi.fn().mockResolvedValue({ building: false }),
     onSearchProgress: vi.fn((cb) => { progressCallback = cb; return cb; }),
@@ -97,7 +97,7 @@ describe('OmniSearchField', () => {
   });
 
   it('says so when nothing matches', async () => {
-    window.electronAPI.searchLibrary = vi.fn().mockResolvedValue({ success: true, results: EMPTY, transcriptsPending: false });
+    window.electronAPI.searchLibrary = vi.fn().mockResolvedValue({ success: true, results: EMPTY, pending: { descriptions: false, transcripts: false } });
     const user = userEvent.setup();
     renderField();
     await openAndType(user, 'zebra');
@@ -105,7 +105,7 @@ describe('OmniSearchField', () => {
   });
 
   it('with transcripts on, searches only on Enter and streams transcript lines in', async () => {
-    window.electronAPI.searchLibrary = vi.fn().mockResolvedValue({ success: true, results: EMPTY, transcriptsPending: true });
+    window.electronAPI.searchLibrary = vi.fn().mockResolvedValue({ success: true, results: EMPTY, pending: { descriptions: false, transcripts: true } });
     const user = userEvent.setup();
     renderField();
     await openAndType(user, 'ru');
@@ -125,9 +125,10 @@ describe('OmniSearchField', () => {
     expect(await screen.findByTestId('transcript-search-progress')).toBeInTheDocument();
 
     await act(async () => {
-      progressCallback!({ searchId: 'stale', items: [], matched: 9, scanned: 9, total: 9, done: true });
+      progressCallback!({ searchId: 'stale', kind: 'transcripts', items: [], matched: 9, scanned: 9, total: 9, done: true });
       progressCallback!({
         searchId,
+        kind: 'transcripts',
         items: [{
           ...base, kind: 'transcript', epoch: '100', isLatest: false, language: 'ja', languageName: 'Japanese', lineCount: 1,
           lines: [{ start: 65.4, text: 'rust again', ranges: [[0, 4]] }],
