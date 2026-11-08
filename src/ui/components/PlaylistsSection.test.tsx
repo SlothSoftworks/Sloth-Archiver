@@ -267,7 +267,9 @@ describe('PlaylistsSection Add to queue', () => {
         ],
       }],
     });
-    (window.electronAPI.ensurePlayablePreview as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true, previewPath: '/cache/vidC-preview.mp4' });
+    (window.electronAPI.ensurePlayablePreview as ReturnType<typeof vi.fn>).mockImplementation(async ({ filePath }: { filePath: string }) => (filePath.endsWith('.mkv')
+      ? { success: true, previewPath: '/cache/vidC-preview.mp4' }
+      : { success: true, previewPath: filePath, direct: true }));
     const user = userEvent.setup();
     render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
     await user.click(await screen.findByText('My Playlist'));
@@ -292,6 +294,7 @@ describe('PlaylistsSection Add to queue', () => {
         videos: [makeLibraryVideo({ epochs: [{ epoch: '1', metadata: { downloadedFilePath: '/lib/Channel A/vidA/1/video.mp4', downloadedResolution: '1080', channel: 'Channel A' } }] })],
       }],
     });
+    (window.electronAPI.ensurePlayablePreview as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true, previewPath: '/lib/Channel A/vidA/1/video.mp4', direct: true });
     const user = userEvent.setup();
     render(<PlaylistsSection onBulkBarUpdate={vi.fn()} />);
     await user.click(await screen.findByText('My Playlist'));

@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Snackbar } from '@mui/material';
 import { buildAppVideoUrl, videoMimeTypeForPath, type VideoMimeType } from '../../utils/utils.ts';
+import { LiveTranscodeSource } from '../../utils/liveTranscodeSource.ts';
+import type { LiveStreamInfo } from '../../types/electron-api';
 
 export type BackgroundPlayerVideo = {
   videoId: string;
@@ -9,6 +11,9 @@ export type BackgroundPlayerVideo = {
   thumbnailPath: string | null;
   sourcePath: string;
   mimeType: string;
+  // Plays through a live conversion instead of sourcePath (see
+  // liveTranscodeSource.ts).
+  live?: LiveStreamInfo;
   // Set only when this entry came from the Clip Collection player -- lets
   // videoDetailPathFor (below) deep-link back into that video's Clip
   // Collection view instead of its plain detail view.
@@ -34,37 +39,21 @@ export function formatPlaybackTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-// Only mp4/webm play reliably in a plain <video> element -- same
-// reasoning/set as LibraryVideoPlayer.tsx's own (private) playability
-// check, duplicated in miniature here rather than shared across that
-// component and LibraryScreen.tsx's VideoCard. The synchronous fast path
-// resolvePlayableSource (below) always tries first -- this alone doesn't
-// know about the MKV-preview-generation fallback.
-export function nativelyPlayableSource(filePath: string | null | undefined): { sourcePath: string; mimeType: VideoMimeType } | null {
-  if (!filePath) return null;
-  const lastDot = filePath.lastIndexOf('.');
-  const ext = lastDot === -1 ? '' : filePath.slice(lastDot + 1).toLowerCase();
-  if (ext !== 'mp4' && ext !== 'webm') return null;
-  return { sourcePath: filePath, mimeType: ext === 'webm' ? 'video/webm' : 'video/mp4' };
-}
-
 // The "Add to queue" entry points that don't already have a live player
 // resolving a source for them (LibraryScreen.tsx's VideoCard,
 // PlaylistsSection.tsx's rows/"Play all") need this: LibraryVideoPlayer.tsx
 // itself never needed an equivalent, since its own state machine already
 // runs this exact fallback (ensurePlayablePreview) before it ever reaches
 // 'ready', so its own handleAddToQueue's state.sourcePath is already a
-// genuinely playable path regardless of the original container. A native
-// mp4/webm resolves instantly (no IPC round trip); anything else (most
-// commonly MKV, yt-dlp's own default merge container) asks the backend for
-// the same cached-or-freshly-generated playable derivative the video view
-// itself plays. Returns null only when neither path works (e.g. an
-// audio-only download, or the preview generation itself failed).
-export async function resolvePlayableSource(filePath: string | null | undefined): Promise<{ sourcePath: string; mimeType: VideoMimeType } | null> {
-  const native = nativelyPlayableSource(filePath);
-  if (native) return native;
+// genuinely playable path regardless of the original container. Every file
+// asks the backend, an mp4 too (it can hold audio Chromium plays silently):
+// the same as-is, live, or cached-or-freshly-generated copy answer the
+// video view itself plays. Returns null only when none of those works (e.g.
+// an audio-only download, or the preview generation itself failed).
+export async function resolvePlayableSource(filePath: string | null | undefined): Promise<{ sourcePath: string; mimeType: VideoMimeType; live?: LiveStreamInfo } | null> {
   if (!filePath) return null;
   const result = await window.electronAPI.ensurePlayablePreview({ filePath });
+  if (result.success && result.live) return { sourcePath: filePath, mimeType: 'video/mp4', live: result.live };
   if (!result.success || !result.previewPath) return null;
   return { sourcePath: result.previewPath, mimeType: result.direct ? videoMimeTypeForPath(filePath) : 'video/mp4' };
 }
@@ -80,6 +69,9 @@ export async function resolvePlayableSource(filePath: string | null | undefined)
 // below) that plays items back-to-back, no separate autoplay toggle.
 function useBackgroundPlayerState() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // The current entry's live conversion, if it has one, and the object URL
+  // the <video> plays it through.
+  const liveRef = useRef<{ source: LiveTranscodeSource; url: string } | null>(null);
   const [queue, setQueue] = useState<BackgroundPlayerVideo[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   // Mirrors queue/currentIndex, always updated in the very same statement as
@@ -136,12 +128,27 @@ function useBackgroundPlayerState() {
   // Points the hidden <video> at a queue entry and starts playback --
   // shared by enqueue (first item), next, and previous, all of which swap
   // the source and reset position/duration the same way.
+  const releaseLive = () => {
+    if (!liveRef.current) return;
+    liveRef.current.source.destroy();
+    URL.revokeObjectURL(liveRef.current.url);
+    liveRef.current = null;
+  };
+
   const loadAndPlay = (video: BackgroundPlayerVideo) => {
     setCurrentTime(0);
     setDuration(0);
     const el = videoRef.current;
     if (!el) return;
-    el.src = buildAppVideoUrl(video.sourcePath);
+    releaseLive();
+    if (video.live) {
+      const source = new LiveTranscodeSource(video.live, () => showToast(`Couldn't play "${video.title || video.videoId}"`));
+      source.attach(el);
+      liveRef.current = { source, url: URL.createObjectURL(source.mediaSource) };
+      el.src = liveRef.current.url;
+    } else {
+      el.src = buildAppVideoUrl(video.sourcePath);
+    }
     // Reapplied on every load even though it's the same persistent element
     // (see the module-level comment above) -- keeps a freshly-loaded source
     // from ever briefly starting at the browser's own default volume/muted
@@ -228,6 +235,7 @@ function useBackgroundPlayerState() {
   // whole queue) and removeAt() (when removing the last remaining item
   // leaves nothing to play).
   const haltPlayback = () => {
+    releaseLive();
     const el = videoRef.current;
     if (el) {
       el.pause();

@@ -8,17 +8,10 @@ import { resolveInsideLibrary } from './library.mjs';
 // which are all valid things to pick up as a local file to add).
 export const LOCAL_VIDEO_FILE_EXTENSIONS = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', 'm4v', '3gp', 'ts', 'mpg', 'mpeg'];
 
-// Mirrors LibraryVideoPlayer.tsx's PLAYABLE_VIDEO_EXTENSIONS.
-const NATIVE_PLAYABLE_EXTENSIONS = new Set(['mp4', 'webm']);
-
 const OPENED_FILES_LIMIT = 200;
 
 function extensionOf(filePath) {
     return path.extname(filePath).slice(1).toLowerCase();
-}
-
-export function isNativePlayableExtension(filePath) {
-    return NATIVE_PLAYABLE_EXTENSIONS.has(extensionOf(filePath));
 }
 
 // VidTools opens files from anywhere on disk, picked in a dialog or dropped

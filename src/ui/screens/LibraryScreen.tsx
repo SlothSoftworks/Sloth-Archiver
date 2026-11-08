@@ -1108,6 +1108,7 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
       thumbnailPath: video.thumbnailPath,
       sourcePath: source.sourcePath,
       mimeType: source.mimeType,
+      live: source.live,
     });
   };
   return (
@@ -1256,6 +1257,7 @@ function VideoListRow({ video, onSelect, channelLabel, selected, selectionActive
       thumbnailPath: video.thumbnailPath,
       sourcePath: source.sourcePath,
       mimeType: source.mimeType,
+      live: source.live,
     });
   };
   return (

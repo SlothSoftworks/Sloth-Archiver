@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { previewCachePathFor, ensurePlayablePreview, canPlayFileDirectly } from './previewCache.mjs';
+import { previewCachePathFor, ensurePlayablePreview, canPlayFileDirectly, planPlayback, createCachedProbe } from './previewCache.mjs';
 
 let workDir;
 
@@ -88,13 +88,11 @@ describe('ensurePlayablePreview', () => {
 
     const first = await ensurePlayablePreview({ filePath: sourcePath, ffmpegRunner: runner });
     expect(first.generated).toBe(true);
-    runner.probeMediaStreams.mockClear();
     runner.runFfmpegWithProgress.mockClear();
 
     const second = await ensurePlayablePreview({ filePath: sourcePath, ffmpegRunner: runner });
 
     expect(second).toEqual({ success: true, previewPath: first.previewPath, generated: false });
-    expect(runner.probeMediaStreams).not.toHaveBeenCalled();
     expect(runner.runFfmpegWithProgress).not.toHaveBeenCalled();
   });
 
@@ -137,7 +135,7 @@ describe('ensurePlayablePreview', () => {
   });
 });
 
-describe('playing MKV/MOV/M4V/3GP/OGV as they are', () => {
+describe('deciding how a file plays', () => {
   const streams = (video, audio) => [
     ...(video ? [{ codecType: 'video', codecName: video }] : []),
     ...(audio ? [{ codecType: 'audio', codecName: audio }] : []),
@@ -155,19 +153,86 @@ describe('playing MKV/MOV/M4V/3GP/OGV as they are', () => {
     expect(fs.existsSync(previewCachePathFor(sourcePath))).toBe(false);
   });
 
-  it('still makes a preview when the codecs inside don\'t play (e.g. Dolby audio, ProRes)', async () => {
-    const sourcePath = path.join(workDir, 'video.mov');
-    fs.writeFileSync(sourcePath, 'fake mov bytes');
-    const runner = fakeRunner({ probeMediaStreams: vi.fn().mockResolvedValue(streams('h264', 'ac3')) });
+  it('checks an mp4 too, and returns it as it is when its codecs play', async () => {
+    const sourcePath = path.join(workDir, 'video.mp4');
+    fs.writeFileSync(sourcePath, 'fake mp4 bytes');
+    const runner = fakeRunner();
+
+    const result = await ensurePlayablePreview({ filePath: sourcePath, ffmpegRunner: runner, startLive: vi.fn() });
+
+    expect(result).toEqual({ success: true, previewPath: sourcePath, generated: false, direct: true });
+    expect(runner.probeMediaStreams).toHaveBeenCalledWith(sourcePath);
+  });
+
+  it('leaves an mp4 ffprobe can\'t read to the browser', async () => {
+    const sourcePath = path.join(workDir, 'video.mp4');
+    fs.writeFileSync(sourcePath, 'fake mp4 bytes');
+    const runner = fakeRunner({ probeMediaStreams: vi.fn().mockRejectedValue(new Error('ffprobe exited with code 1')) });
 
     const result = await ensurePlayablePreview({ filePath: sourcePath, ffmpegRunner: runner });
 
-    expect(result).toMatchObject({ success: true, previewPath: previewCachePathFor(sourcePath), generated: true });
-    expect(runner.probeMediaStreams).toHaveBeenCalledTimes(1);
-    expect(runner.runFfmpegWithProgress).toHaveBeenCalledWith(expect.objectContaining({ codecArgs: ['-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart'] }));
+    expect(result).toEqual({ success: true, previewPath: sourcePath, generated: false, direct: true });
+  });
+
+  it('reports why when another file can\'t be probed', async () => {
+    const sourcePath = path.join(workDir, 'video.mkv');
+    fs.writeFileSync(sourcePath, 'fake mkv bytes');
+    const runner = fakeRunner({ probeMediaStreams: vi.fn().mockRejectedValue(new Error('ffprobe exited with code 1')) });
+
+    const result = await ensurePlayablePreview({ filePath: sourcePath, ffmpegRunner: runner });
+
+    expect(result).toEqual({ success: false, message: 'ffprobe exited with code 1' });
   });
 
   it.each([
+    ['video.mp4', 'h264', 'ac3'],
+    ['video.mkv', 'h264', 'dts'],
+    ['video.avi', 'h264', 'mp3'],
+  ])('plays %s with %s video and %s audio through a live conversion', async (fileName, video, audio) => {
+    const sourcePath = path.join(workDir, fileName);
+    fs.writeFileSync(sourcePath, 'fake bytes');
+    const probed = streams(video, audio);
+    const runner = fakeRunner({ probeMediaStreams: vi.fn().mockResolvedValue(probed) });
+    const live = { url: 'app-live://stream/t1', mimeType: 'video/mp4; codecs="avc1.640028,mp4a.40.2"', duration: 120 };
+    const startLive = vi.fn().mockResolvedValue(live);
+
+    const result = await ensurePlayablePreview({ filePath: sourcePath, ffmpegRunner: runner, startLive });
+
+    expect(result).toEqual({ success: true, live });
+    expect(startLive).toHaveBeenCalledWith(sourcePath, probed);
+    expect(runner.runFfmpegWithProgress).not.toHaveBeenCalled();
+  });
+
+  it('still makes a copy when the video itself doesn\'t play (e.g. ProRes)', async () => {
+    const sourcePath = path.join(workDir, 'video.mov');
+    fs.writeFileSync(sourcePath, 'fake mov bytes');
+    const runner = fakeRunner({ probeMediaStreams: vi.fn().mockResolvedValue(streams('prores', 'aac')) });
+    const startLive = vi.fn();
+
+    const result = await ensurePlayablePreview({ filePath: sourcePath, ffmpegRunner: runner, startLive });
+
+    expect(result).toMatchObject({ success: true, previewPath: previewCachePathFor(sourcePath), generated: true });
+    expect(startLive).not.toHaveBeenCalled();
+    expect(runner.runFfmpegWithProgress).toHaveBeenCalledWith(expect.objectContaining({ codecArgs: ['-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart'] }));
+  });
+
+  it('makes a copy anyway with forcePreview, keeping video that plays and converting only the audio', async () => {
+    const sourcePath = path.join(workDir, 'video.mkv');
+    fs.writeFileSync(sourcePath, 'fake mkv bytes');
+    const runner = fakeRunner({ probeMediaStreams: vi.fn().mockResolvedValue(streams('h264', 'ac3')) });
+    const startLive = vi.fn();
+
+    const result = await ensurePlayablePreview({ filePath: sourcePath, ffmpegRunner: runner, startLive, forcePreview: true });
+
+    expect(result).toMatchObject({ success: true, previewPath: previewCachePathFor(sourcePath), generated: true });
+    expect(startLive).not.toHaveBeenCalled();
+    expect(runner.runFfmpegWithProgress).toHaveBeenCalledWith(expect.objectContaining({ codecArgs: ['-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart'] }));
+  });
+
+  it.each([
+    ['video.mp4', streams('h264', 'aac'), true],
+    ['video.webm', streams('vp9', 'opus'), true],
+    ['video.mp4', streams('h264', 'ac3'), false],
     ['video.mkv', streams('h264', 'aac'), true],
     ['video.MOV', streams('h264', 'pcm_s16le'), true],
     ['video.m4v', streams('av1', 'flac'), true],
@@ -190,5 +255,54 @@ describe('playing MKV/MOV/M4V/3GP/OGV as they are', () => {
     expect(canPlayFileDirectly('/x/video.mkv', streams('hevc', 'aac'), 'darwin')).toBe(true);
     expect(canPlayFileDirectly('/x/video.mkv', streams('hevc', 'aac'), 'win32')).toBe(false);
     expect(canPlayFileDirectly('/x/video.mkv', streams('hevc', 'aac'), 'linux')).toBe(false);
+  });
+});
+
+describe('planPlayback', () => {
+  const streams = (video, audio) => [
+    ...(video ? [{ codecType: 'video', codecName: video }] : []),
+    ...(audio ? [{ codecType: 'audio', codecName: audio }] : []),
+  ];
+
+  it.each([
+    ['video.mp4', streams('h264', 'aac'), 'linux', 'direct'],
+    ['video.mp4', streams('h264', 'eac3'), 'linux', 'live'],
+    ['video.mkv', streams('vp9', 'truehd'), 'linux', 'live'],
+    ['video.mkv', streams('av1', 'dts'), 'linux', 'live'],
+    ['video.avi', streams('h264', 'mp3'), 'linux', 'live'],
+    ['video.mkv', streams('hevc', 'ac3'), 'darwin', 'live'],
+    ['video.mkv', streams('hevc', 'ac3'), 'win32', 'preview'],
+    ['video.mkv', streams('vp8', 'ac3'), 'linux', 'preview'],
+    ['video.avi', streams('mpeg4', 'mp3'), 'linux', 'preview'],
+    ['video.mkv', streams(null, 'ac3'), 'linux', 'preview'],
+  ])('%s with %j on %s: %s', (fileName, probed, platform, expected) => {
+    expect(planPlayback(`/x/${fileName}`, probed, platform)).toBe(expected);
+  });
+});
+
+describe('createCachedProbe', () => {
+  it('probes an unchanged file once, and again after it changes', async () => {
+    const filePath = path.join(workDir, 'video.mp4');
+    fs.writeFileSync(filePath, 'v1');
+    const probe = vi.fn().mockResolvedValue([{ codecType: 'video', codecName: 'h264' }]);
+    const cachedProbe = createCachedProbe(probe);
+
+    await cachedProbe(filePath);
+    expect(await cachedProbe(filePath)).toEqual([{ codecType: 'video', codecName: 'h264' }]);
+    expect(probe).toHaveBeenCalledTimes(1);
+
+    fs.writeFileSync(filePath, 'version 2');
+    await cachedProbe(filePath);
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it('doesn\'t keep a failed probe', async () => {
+    const filePath = path.join(workDir, 'video.mp4');
+    fs.writeFileSync(filePath, 'v1');
+    const probe = vi.fn().mockRejectedValueOnce(new Error('busy')).mockResolvedValue([]);
+    const cachedProbe = createCachedProbe(probe);
+
+    await expect(cachedProbe(filePath)).rejects.toThrow('busy');
+    expect(await cachedProbe(filePath)).toEqual([]);
   });
 });

@@ -212,6 +212,7 @@ export default function PlaylistsSection({ onBulkBarUpdate, initialPlaylistId }:
       thumbnailPath: downloaded.thumbnailPath,
       sourcePath: source.sourcePath,
       mimeType: source.mimeType,
+      live: source.live,
     });
   };
 

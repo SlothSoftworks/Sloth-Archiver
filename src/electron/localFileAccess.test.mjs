@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { createLocalFileAccess, validateOpenablePath, isSameFile, isNativePlayableExtension } from './localFileAccess.mjs';
+import { createLocalFileAccess, validateOpenablePath, isSameFile } from './localFileAccess.mjs';
 
 let workDir;
 let libraryDir;
@@ -59,14 +59,6 @@ describe('validateOpenablePath', () => {
   it('rejects a non-video extension', () => {
     const filePath = writeFile(path.join(outsideDir, 'notes.txt'));
     expect(validateOpenablePath(filePath)).toEqual({ success: false, message: 'Not a supported video file.' });
-  });
-});
-
-describe('isNativePlayableExtension', () => {
-  it('is true only for mp4 and webm', () => {
-    expect(isNativePlayableExtension('/a/b.mp4')).toBe(true);
-    expect(isNativePlayableExtension('/a/b.WEBM')).toBe(true);
-    expect(isNativePlayableExtension('/a/b.mkv')).toBe(false);
   });
 });
 

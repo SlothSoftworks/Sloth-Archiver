@@ -10,13 +10,13 @@ import type { VidToolsFile } from '../../types/electron-api';
 // The real player (Vidstack, preview consent) has its own tests; this fake
 // only exposes the props VidTools hands down.
 vi.mock('../components/LibraryVideoPlayerWithTools', () => ({
-  default: (props: { overrideFilePath?: string; standaloneClipping?: boolean; hideAddToQueue?: boolean; confirmPreview?: { kind: string } }) => (
+  default: (props: { overrideFilePath?: string; standaloneClipping?: boolean; hideAddToQueue?: boolean; confirmPreview?: { kind: string; required: boolean } }) => (
     <div
       data-testid="fake-player"
       data-path={props.overrideFilePath}
       data-standalone={String(!!props.standaloneClipping)}
       data-hide-queue={String(!!props.hideAddToQueue)}
-      data-confirm={props.confirmPreview?.kind ?? 'none'}
+      data-confirm={props.confirmPreview?.required ? props.confirmPreview.kind : 'none'}
     />
   ),
 }));

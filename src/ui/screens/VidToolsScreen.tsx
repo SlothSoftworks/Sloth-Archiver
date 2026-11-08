@@ -199,7 +199,7 @@ export default function VidToolsScreen({ file, onFileChange }: {
             overrideFilePath={file.filePath}
             convertFormatOptions={convertFormatOptions}
             standaloneClipping
-            confirmPreview={file.needsPreview ? { kind: file.previewKind } : undefined}
+            confirmPreview={{ kind: file.previewKind, required: file.needsPreview }}
             hideAddToQueue
           />
         </Stack>

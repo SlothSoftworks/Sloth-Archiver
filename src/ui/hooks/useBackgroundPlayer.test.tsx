@@ -2,7 +2,7 @@
 import { StrictMode, type ReactNode } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { act, render, renderHook, waitFor } from '@testing-library/react';
-import { BackgroundPlayerProvider, useBackgroundPlayer, videoDetailPathFor, nativelyPlayableSource, resolvePlayableSource, type BackgroundPlayerVideo } from './useBackgroundPlayer';
+import { BackgroundPlayerProvider, useBackgroundPlayer, videoDetailPathFor, resolvePlayableSource, type BackgroundPlayerVideo } from './useBackgroundPlayer';
 
 function makeVideo(overrides: Partial<BackgroundPlayerVideo> = {}): BackgroundPlayerVideo {
   return {
@@ -33,18 +33,18 @@ describe('resolvePlayableSource', () => {
     window.electronAPI = { ...window.electronAPI, ensurePlayablePreview: vi.fn().mockResolvedValue({ success: true, previewPath: '/lib/c/v1/1/.preview/video.mp4', generated: true }) };
     expect(await resolvePlayableSource('/lib/c/v1/1/video.mkv')).toEqual({ sourcePath: '/lib/c/v1/1/.preview/video.mp4', mimeType: 'video/mp4' });
   });
-});
 
-describe('nativelyPlayableSource', () => {
-  it('returns null for a missing or non-native file', () => {
-    expect(nativelyPlayableSource(null)).toBeNull();
-    expect(nativelyPlayableSource(undefined)).toBeNull();
-    expect(nativelyPlayableSource('/lib/c/v1/1/video.mkv')).toBeNull();
+  it('asks main about an mp4 too, which can come back as a live conversion', async () => {
+    const live = { url: 'app-live://stream/t1', mimeType: 'video/mp4; codecs="avc1.640028,mp4a.40.2"', duration: 58 };
+    window.electronAPI = { ...window.electronAPI, ensurePlayablePreview: vi.fn().mockResolvedValue({ success: true, live }) };
+    expect(await resolvePlayableSource('/lib/c/v1/1/video.mp4')).toEqual({ sourcePath: '/lib/c/v1/1/video.mp4', mimeType: 'video/mp4', live });
+    expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/c/v1/1/video.mp4' });
   });
 
-  it('resolves mp4/webm to their source path and mime type', () => {
-    expect(nativelyPlayableSource('/lib/c/v1/1/video.mp4')).toEqual({ sourcePath: '/lib/c/v1/1/video.mp4', mimeType: 'video/mp4' });
-    expect(nativelyPlayableSource('/lib/c/v1/1/video.webm')).toEqual({ sourcePath: '/lib/c/v1/1/video.webm', mimeType: 'video/webm' });
+  it('returns null with no file, or when main can\'t make it playable', async () => {
+    window.electronAPI = { ...window.electronAPI, ensurePlayablePreview: vi.fn().mockResolvedValue({ success: false }) };
+    expect(await resolvePlayableSource(null)).toBeNull();
+    expect(await resolvePlayableSource('/lib/c/v1/1/video.avi')).toBeNull();
   });
 });
 

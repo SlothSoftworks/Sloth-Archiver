@@ -97,6 +97,10 @@ type LibrarySortDirection = 'asc' | 'desc';
 // equal to folderName, since sublibrary names aren't renamable separately
 // from their folder). Exported so useLibraryTags.tsx and its consumers share
 // this one declaration instead of each keeping their own local copy.
+// A live conversion's stream (livePlayback.mjs): url takes a ?start= in
+// seconds, mimeType is what MediaSource is told to expect.
+export type LiveStreamInfo = { url: string; mimeType: string; duration: number };
+
 export type VidToolsFile = {
     filePath: string;
     name: string;
@@ -380,7 +384,9 @@ declare global {
             extractMp3FromFile: (payload: { inputPath: string; outputPath: string }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
             convertFileFormat: (payload: { inputPath: string; outputPath: string; format: string; forceReencode?: boolean }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
             // direct: the file plays as it is, and previewPath is the file itself.
-            ensurePlayablePreview: (payload: { filePath: string }) => Promise<{ success: boolean; previewPath?: string; generated?: boolean; direct?: boolean; message?: string }>
+            // live: it plays through a live conversion instead (no previewPath).
+            // forcePreview: make a playable copy even when it could play either way.
+            ensurePlayablePreview: (payload: { filePath: string; forcePreview?: boolean }) => Promise<{ success: boolean; previewPath?: string; generated?: boolean; direct?: boolean; live?: LiveStreamInfo; message?: string }>
             onPreviewGenerationProgress: (callback: (data: { percent: number }) => void) => void
             removePreviewGenerationProgressListener: () => void
             extractClipFromFile: (payload: { inputPath: string; outputPath: string; start: string; end: string; format?: string; forceReencode?: boolean }) => Promise<{ success: boolean; outputPath?: string; message?: string }>

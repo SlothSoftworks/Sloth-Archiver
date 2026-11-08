@@ -17,8 +17,9 @@ import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
 import { createRotatingLogWriter, redactHomeDir } from './logFile.mjs';
 import { buildLibraryExport, parseLibraryExport, importLibraryExport, summarizeExport, IMPORT_MAX_BYTES } from './libraryExport.mjs';
-import { ensurePlayablePreview, isChromiumCompatible, canPlayFileDirectly } from './previewCache.mjs';
-import { createLocalFileAccess, validateOpenablePath, isSameFile, isNativePlayableExtension, LOCAL_VIDEO_FILE_EXTENSIONS } from './localFileAccess.mjs';
+import { ensurePlayablePreview, isChromiumCompatible, planPlayback, createCachedProbe } from './previewCache.mjs';
+import { createLivePlayback, liveMimeType } from './livePlayback.mjs';
+import { createLocalFileAccess, validateOpenablePath, isSameFile, LOCAL_VIDEO_FILE_EXTENSIONS } from './localFileAccess.mjs';
 import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
 import { createChannelScanner, createChannelScanSession } from './channelScan.mjs';
 import {
@@ -231,6 +232,9 @@ const channelScans = createChannelScanSession({
 app.on('before-quit', () => channelScans.killAll());
 const backlogStore = createArchiveBacklogStore(path.join(app.getPath('userData'), 'backlog.json'));
 const ffmpegRunner = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog: log, isDev });
+const playbackRunner = { ...ffmpegRunner, probeMediaStreams: createCachedProbe(ffmpegRunner.probeMediaStreams) };
+const livePlayback = createLivePlayback({ ffmpegBinaryPath, onLog: log });
+app.on('before-quit', () => livePlayback.killAll());
 
 const localFileAccess = createLocalFileAccess({ previewDir: path.join(app.getPath('temp'), 'SlothArchiver-vidtools') });
 app.on('before-quit', () => localFileAccess.clearPreviews());
@@ -246,8 +250,11 @@ const { getMediaDurationSeconds, getFfmpegVersion, runFfmpegWithProgress, conver
 // app is ready. `stream`+`supportFetchAPI` are required for the net.fetch
 // delegation in handleAppVideoRequest below; this app has no CSP today so
 // `bypassCSP` is currently a no-op -- revisit if one is ever added.
+// app-live:// streams a file being converted while it plays
+// (livePlayback.mjs), which the renderer reads with fetch.
 protocol.registerSchemesAsPrivileged([
     { scheme: 'app-video', privileges: { standard: true, secure: true, stream: true, bypassCSP: true, corsEnabled: true, supportFetchAPI: true } },
+    { scheme: 'app-live', privileges: { standard: true, secure: true, stream: true, corsEnabled: true, supportFetchAPI: true } },
 ]);
 
 export function mimeTypeForPath(filePath) {
@@ -272,20 +279,22 @@ export function mimeTypeForPath(filePath) {
 //   - img-src allows any https host (plus the local app-video:// scheme)
 //     because thumbnails come from whichever platform a video was fetched
 //     from (YouTube, SoundCloud, TikTok, Instagram, ...), not one fixed CDN.
-//   - media-src is scoped to this origin and app-video:// -- video playback
-//     never loads from a remote URL directly.
+//   - media-src is scoped to this origin, app-video:// and blob: (the
+//     MediaSource a live conversion plays through) -- video playback never
+//     loads from a remote URL directly.
 //   - frame-src only allows the one iframe embed this app ever creates.
-//   - connect-src 'self' because the renderer never calls fetch/XHR itself;
-//     every network request goes through the main process over IPC.
+//   - connect-src 'self' plus app-live://, the one fetch the renderer makes
+//     itself (a live conversion's stream, served by main); every network
+//     request goes through the main process over IPC.
 const CONTENT_SECURITY_POLICY = [
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https: app-video:",
-    "media-src 'self' app-video:",
+    "media-src 'self' app-video: blob:",
     "font-src 'self'",
     "frame-src https://www.youtube-nocookie.com",
-    "connect-src 'self'",
+    "connect-src 'self' app-live:",
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
@@ -1521,6 +1530,7 @@ ipcMain.handle('cookies:setConfig', async (e, { cookiesMode, cookiesBrowser }) =
 
 app.on("ready", async () => {
     protocol.handle('app-video', handleAppVideoRequest);
+    protocol.handle('app-live', livePlayback.handleRequest);
 
     const rendererServer = await startRendererServer();
     const { port } = rendererServer.address();
@@ -1874,8 +1884,8 @@ export function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteM
         args.push('-f', resolution === 'best' ? 'bestvideo*+bestaudio/best' : `bestvideo[height<=${resolution}]+bestaudio/best`);
         // Without this, yt-dlp's merge step picks MKV whenever the chosen
         // pair isn't natively MP4-safe (e.g. Opus audio). MKV plays too
-        // once its codecs are checked (canPlayFileDirectly, previewCache.mjs),
-        // but an MP4 starts at once with no check. This only picks the stream-copy
+        // when its codecs do (canPlayFileDirectly, previewCache.mjs), but
+        // MP4 is the safer container to hand Chromium. This only picks the stream-copy
         // container, it doesn't transcode, and modern ffmpeg's MP4 muxer
         // already supports every codec this selector can produce, so it's a
         // free fix. Only applies to this default path -- an explicit format
@@ -2499,18 +2509,25 @@ ipcMain.handle('library:extractMp3', async (e, { inputPath, outputPath }) => {
     }
 });
 
-// Backs LibraryVideoPlayer's preview-compatibility layer: for a local file
-// whose container/codecs Chromium can't play natively (MKV and friends),
-// generates (or reuses a cached) playback-only .mp4 derivative -- see
-// previewCache.mjs for the remux-vs-reencode decision and cache/invalidation
-// rules. Never touches filePath itself. Progress goes over its own dedicated
+// Backs every local playback (LibraryVideoPlayer, the background player):
+// decides whether a file plays as it is, plays through a live conversion
+// (startLivePlayback), or needs a generated (or cached) playback-only .mp4
+// derivative -- see previewCache.mjs for that decision and the cache rules.
+// Never touches filePath itself. Progress goes over its own dedicated
 // channel (sendPreviewGenerationProgress above), not ffmpegUtilityProgress --
 // see that function's own comment for why sharing it isn't safe here.
-ipcMain.handle('library:ensurePlayablePreview', async (e, { filePath }) => {
+async function startLivePlayback(filePath, streams) {
+    const duration = await ffmpegRunner.getMediaDurationSeconds(filePath).catch(() => 0);
+    const token = livePlayback.register(filePath, streams);
+    return { url: `app-live://stream/${token}`, mimeType: liveMimeType(streams), duration };
+}
+
+ipcMain.handle('library:ensurePlayablePreview', async (e, { filePath, forcePreview = false }) => {
+    const options = { ffmpegRunner: playbackRunner, onProgress: sendPreviewGenerationProgress, startLive: startLivePlayback, forcePreview };
     const { libraryDir } = readSettings();
     const insideLibrary = resolveInsideLibrary(libraryDir, filePath);
     if (insideLibrary) {
-        return ensurePlayablePreview({ filePath: insideLibrary, ffmpegRunner, onProgress: sendPreviewGenerationProgress });
+        return ensurePlayablePreview({ filePath: insideLibrary, ...options });
     }
     if (!localFileAccess.isOpened(filePath)) {
         return { success: false, message: 'Refusing to read outside the configured library folder.' };
@@ -2518,7 +2535,7 @@ ipcMain.handle('library:ensurePlayablePreview', async (e, { filePath }) => {
     const resolved = path.resolve(filePath);
     const previewPath = localFileAccess.previewPathFor(resolved);
     localFileAccess.rememberReadable(previewPath);
-    return ensurePlayablePreview({ filePath: resolved, previewPath, ffmpegRunner, onProgress: sendPreviewGenerationProgress });
+    return ensurePlayablePreview({ filePath: resolved, previewPath, ...options });
 });
 
 // VidTools' file picker and drop zone both land here. Re-called with the
@@ -2531,7 +2548,7 @@ ipcMain.handle('vidtools:openFile', async (e, filePath) => {
     localFileAccess.clearPreviews({ keep: localFileAccess.previewPathFor(resolved) });
     localFileAccess.rememberReadable(resolved);
     const [streams, duration] = await Promise.all([
-        ffmpegRunner.probeMediaStreams(resolved).catch(() => []),
+        playbackRunner.probeMediaStreams(resolved).catch(() => []),
         ffmpegRunner.getMediaDurationSeconds(resolved).catch(() => 0),
     ]);
     const videoStream = streams.find((s) => s.codecType === 'video');
@@ -2547,7 +2564,7 @@ ipcMain.handle('vidtools:openFile', async (e, filePath) => {
         height: videoStream?.height || null,
         videoCodec: videoStream?.codecName || null,
         audioCodec: audioStream?.codecName || null,
-        needsPreview: !isNativePlayableExtension(resolved) && !canPlayFileDirectly(resolved, streams),
+        needsPreview: planPlayback(resolved, streams) === 'preview',
         previewKind: isChromiumCompatible(streams) ? 'remux' : 'reencode',
     };
 });

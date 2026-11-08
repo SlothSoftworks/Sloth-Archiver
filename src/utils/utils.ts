@@ -190,7 +190,7 @@ function buildAppVideoUrl(filePath: string, cacheBustKey = 0): string {
 // actual video file downloaded (an MP3-only capture doesn't count here --
 // see getBestDownloadedQuality's own MP3 fallback branch below, which is a
 // display-only concern the queue button doesn't share, since an mp3 isn't a
-// nativelyPlayableSource).
+// video to queue).
 function getBestDownloadedEpoch(epochs: { metadata: LibraryVideoMetadata }[]): { metadata: LibraryVideoMetadata } | null {
   const downloaded = epochs.filter((e) => e.metadata.downloadedFilePath);
   if (downloaded.length === 0) return null;
