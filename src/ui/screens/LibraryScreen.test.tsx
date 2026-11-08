@@ -159,6 +159,7 @@ beforeEach(() => {
     // calls this -- stubbed so bulk-select's download tests don't hit an
     // unmocked IPC call, even though they don't assert on its result.
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
+    ensurePlayablePreview: vi.fn(async ({ filePath }: { filePath: string }) => ({ success: true, previewPath: filePath, generated: false, direct: true })),
   };
   // BulkAddProvider (now wrapping every render() call, see the helper above)
   // mounts one useDownloadVideo() instance per download slot, each of which
@@ -442,6 +443,7 @@ describe('LibraryScreen', () => {
       expect(screen.getByText('1 item selected')).toBeInTheDocument();
 
       await user.click(screen.getByRole('button', { name: 'Add to queue' }));
+      await waitFor(() => expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/Channel A/vidA/1/video.mp4' }));
       expect(screen.queryByText('Detail: vidA')).not.toBeInTheDocument();
     });
 
@@ -711,6 +713,8 @@ describe('LibraryScreen', () => {
 
       await user.click(screen.getByRole('button', { name: 'Add to queue' }));
 
+      await waitFor(() => expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/Channel A/vidA/1/video.mp4' }));
+      expect(screen.queryByText(/Couldn't prepare/)).not.toBeInTheDocument();
       expect(screen.queryByText('Detail: vidA')).not.toBeInTheDocument();
     });
 
