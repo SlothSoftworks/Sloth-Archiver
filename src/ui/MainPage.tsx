@@ -26,6 +26,8 @@ import DownloaderScreen from './screens/DownloaderScreen';
 import OptionsScreen from './screens/OptionsScreen';
 import LibraryScreen from './screens/LibraryScreen';
 import ChannelArchiveScreen from './screens/ChannelArchiveScreen';
+import OmniSearchField from './components/OmniSearchField';
+import AdvancedSearchDialog from './components/AdvancedSearchDialog';
 import VidToolsScreen from './screens/VidToolsScreen';
 import YtdlpUpdateDialog from './components/YtdlpUpdateDialog';
 import BulkAddSidePanel, { BulkAddToggleButton } from './components/BulkAddSidePanel';
@@ -118,6 +120,20 @@ export function BasicTabs() {
   const navigate = useNavigate();
   const value = pathToTabIndex(location.pathname);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [advancedSearch, setAdvancedSearch] = useState<{ open: boolean; seedText: string }>({ open: false, seedText: '' });
+
+  // Ctrl/Cmd+F opens the advanced search from anywhere. A plain F stays the
+  // player's fullscreen key.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setAdvancedSearch({ open: true, seedText: '' });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
   const [appVersion, setAppVersion] = useState('');
   useEffect(() => {
     window.electronAPI.getAppVersion().then(setAppVersion);
@@ -219,6 +235,7 @@ export function BasicTabs() {
           <Tab label="Options" {...a11yProps(OPTIONS_TAB_INDEX)} />
         </Tabs>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mr: 1 }}>
+          <OmniSearchField onOpenAdvanced={(seedText) => setAdvancedSearch({ open: true, seedText })} />
           {appVersion &&
             <Chip size="small" variant="outlined" label={`v${appVersion}`} sx={{ fontFamily: 'monospace' }} />}
           <BulkAddToggleButton />
@@ -275,6 +292,11 @@ export function BasicTabs() {
 
       <BulkAddSidePanel />
       <MiniPlayerBar />
+      <AdvancedSearchDialog
+        open={advancedSearch.open}
+        seedText={advancedSearch.seedText}
+        onClose={() => setAdvancedSearch((prev) => ({ ...prev, open: false }))}
+      />
 
       <Dialog open={infoOpen} onClose={() => setInfoOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>

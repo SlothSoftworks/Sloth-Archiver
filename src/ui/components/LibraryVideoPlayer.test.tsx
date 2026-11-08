@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render as rtlRender, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import userEvent from '@testing-library/user-event';
 import LibraryVideoPlayer, { type ClipMarkersControl } from './LibraryVideoPlayer';
 import { BackgroundPlayerProvider, useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 import type { LibraryVideoMetadata } from '../../types';
+import { FakeMediaSource } from '../../utils/__fixtures__/fakeMediaSource';
 
 // LibraryVideoPlayer always calls useBackgroundPlayer() (for its context
 // menu's "Add to queue" item), so every render in this file needs a
@@ -111,7 +112,11 @@ function findClickOverlay(container: HTMLElement): HTMLElement {
 beforeEach(() => {
   window.electronAPI = {
     ...window.electronAPI,
-    ensurePlayablePreview: vi.fn().mockResolvedValue({ success: true, previewPath: '/mock/preview.mp4', generated: false }),
+    // What main answers for a file that plays as it is, or for an agreed-to
+    // copy (forcePreview).
+    ensurePlayablePreview: vi.fn(async ({ filePath, forcePreview }: { filePath: string; forcePreview?: boolean }) => (forcePreview
+      ? { success: true, previewPath: '/mock/preview.mp4', generated: true }
+      : { success: true, previewPath: filePath, generated: false, direct: true })),
     onPreviewGenerationProgress: vi.fn(),
     removePreviewGenerationProgressListener: vi.fn(),
   };
@@ -158,8 +163,8 @@ describe('LibraryVideoPlayer', () => {
     const source = await findSourceEl(container);
     expect(source).toHaveAttribute('src', 'app-video://local/%2Flib%2Fc%2Fv1%2F1%2Fvideo.mp4?v=0');
     expect(source).toHaveAttribute('type', 'video/mp4');
-    // No backend call for an already-native-playable extension.
-    expect(window.electronAPI.ensurePlayablePreview).not.toHaveBeenCalled();
+    // An mp4 is checked too: it can hold audio Chromium plays silently.
+    expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/c/v1/1/video.mp4' });
   });
 
   it('shows a play overlay that starts playback and then disappears', async () => {
@@ -175,6 +180,7 @@ describe('LibraryVideoPlayer', () => {
     expect(overlayButton).toBeInTheDocument();
 
     await user.click(overlayButton!);
+    await findSourceEl(container);
     const video = container.querySelector('video') as HTMLVideoElement;
     fireReadinessCascade(video);
     fireEvent.play(video);
@@ -191,6 +197,7 @@ describe('LibraryVideoPlayer', () => {
     const overlayButton = container.querySelector('[data-testid="PlayCircleOutlineIcon"]')?.closest('button');
     await user.click(overlayButton!);
 
+    await findSourceEl(container);
     const video = container.querySelector('video') as HTMLVideoElement;
     // Real browsers report the decoded frame size here once loadedmetadata
     // fires; jsdom never decodes anything, so this has to be stubbed the
@@ -213,6 +220,7 @@ describe('LibraryVideoPlayer', () => {
     const overlayButton = container.querySelector('[data-testid="PlayCircleOutlineIcon"]')?.closest('button');
     await user.click(overlayButton!);
 
+    await findSourceEl(container);
     const video = container.querySelector('video') as HTMLVideoElement;
     // jsdom's videoWidth/videoHeight already default to 0 (no real decode
     // pipeline), matching a genuine audio-only source's own dimensions in a
@@ -241,6 +249,7 @@ describe('LibraryVideoPlayer', () => {
     await findSourceEl(container);
     const overlayButton = container.querySelector('[data-testid="PlayCircleOutlineIcon"]')?.closest('button');
     await user.click(overlayButton!);
+    await findSourceEl(container);
     const video = container.querySelector('video') as HTMLVideoElement;
     fireReadinessCascade(video);
     fireEvent.play(video);
@@ -260,16 +269,41 @@ describe('LibraryVideoPlayer', () => {
   });
 
   it('asks the backend for a playable preview for a non-native extension, and plays the generated preview once ready', async () => {
+    window.electronAPI.ensurePlayablePreview = vi.fn().mockResolvedValue({ success: true, previewPath: '/mock/preview.mp4', generated: true });
     const { container } = render(
-      <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mkv' })} />,
+      <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.avi' })} />,
     );
-    expect(screen.getByText('Preparing preview...')).toBeInTheDocument();
-    expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/c/v1/1/video.mkv' });
+    expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/c/v1/1/video.avi' });
 
     const source = await findSourceEl(container);
     expect(source).toHaveAttribute('src', 'app-video://local/%2Fmock%2Fpreview.mp4?v=0');
     expect(source).toHaveAttribute('type', 'video/mp4');
     expect(screen.queryByText('Preparing preview...')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['/lib/c/v1/1/video.mkv', 'video/mp4'],
+    ['/lib/c/v1/1/video.mov', 'video/mp4'],
+    ['/lib/c/v1/1/video.ogv', 'video/ogg'],
+  ])('plays %s as it is when main says its codecs play, with no preview step shown', async (filePath, type) => {
+    window.electronAPI.ensurePlayablePreview = vi.fn().mockResolvedValue({ success: true, previewPath: filePath, generated: false, direct: true });
+    const { container } = render(<LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: filePath })} />);
+    expect(screen.queryByText('Preparing preview...')).not.toBeInTheDocument();
+
+    const source = await findSourceEl(container);
+    expect(source).toHaveAttribute('src', `app-video://local/${encodeURIComponent(filePath)}?v=0`);
+    expect(source).toHaveAttribute('type', type);
+  });
+
+  it('switches from checking to "Preparing preview" once main starts making one for an MKV', async () => {
+    let progress: ((data: { percent: number }) => void) | null = null;
+    window.electronAPI.onPreviewGenerationProgress = vi.fn((cb) => { progress = cb; });
+    window.electronAPI.ensurePlayablePreview = vi.fn(() => new Promise<never>(() => {}));
+    render(<LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mkv' })} />);
+    expect(screen.queryByText('Preparing preview...')).not.toBeInTheDocument();
+
+    act(() => progress!({ percent: 12 }));
+    expect(screen.getByText('Preparing preview...')).toBeInTheDocument();
   });
 
   it('shows an explanatory caption when preview generation itself fails', async () => {
@@ -283,9 +317,8 @@ describe('LibraryVideoPlayer', () => {
     const { container } = render(
       <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} />,
     );
-    const video = container.querySelector('video') as HTMLVideoElement;
     await findSourceEl(container);
-    fireDecodeError(video);
+    fireDecodeError(container.querySelector('video') as HTMLVideoElement);
 
     expect(await screen.findByText(/This \.mp4 file couldn't be played here/)).toBeInTheDocument();
   });
@@ -603,6 +636,7 @@ describe('LibraryVideoPlayer', () => {
       const { container, getBg } = renderWithBgProbe(
         <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} thumbnailPath="/lib/c/v1/thumb.jpg" />,
       );
+      await findSourceEl(container);
       const video = container.querySelector('video') as HTMLVideoElement;
       fireReadinessCascade(video);
       await user.click(video); // start this player's own playback first
@@ -623,6 +657,7 @@ describe('LibraryVideoPlayer', () => {
       const { container, getBg } = renderWithBgProbe(
         <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mp4' })} />,
       );
+      await findSourceEl(container);
       const video = container.querySelector('video') as HTMLVideoElement;
       fireReadinessCascade(video);
 
@@ -639,6 +674,7 @@ describe('LibraryVideoPlayer', () => {
           overrideFilePath="/lib/c/v1/clips/My Clip.mp4"
         />,
       );
+      await findSourceEl(container);
       const video = container.querySelector('video') as HTMLVideoElement;
       fireReadinessCascade(video);
 
@@ -658,6 +694,7 @@ describe('LibraryVideoPlayer', () => {
           }}
         />,
       );
+      await findSourceEl(container);
       const video = container.querySelector('video') as HTMLVideoElement;
       fireReadinessCascade(video);
 
@@ -736,6 +773,7 @@ describe('LibraryVideoPlayer', () => {
       const { container } = render(<LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: filePath })} clipMarkers={clipMarkers} />);
       await findSourceEl(container);
       const player = container.querySelector('[data-media-player]') as HTMLElement;
+      await findSourceEl(container);
       const video = container.querySelector('video') as HTMLVideoElement;
       fireEvent.focusIn(player);
       return { player, video };
@@ -876,13 +914,72 @@ describe('LibraryVideoPlayer', () => {
     });
   });
 
+  describe('live conversion', () => {
+    const mp4 = '/lib/c/v1/1/video.mp4';
+    const live = { url: 'app-live://stream/t1', mimeType: 'video/mp4; codecs="avc1.640028,mp4a.40.2"', duration: 58 };
+
+    beforeEach(() => {
+      vi.stubGlobal('MediaSource', FakeMediaSource);
+      vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:live-stream');
+      window.electronAPI.ensurePlayablePreview = vi.fn(async ({ forcePreview }: { forcePreview?: boolean }) => (forcePreview
+        ? { success: true, previewPath: '/mock/preview.mp4', generated: true }
+        : { success: true, live }));
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    async function findLiveVideo(container: HTMLElement) {
+      return waitFor(() => {
+        const video = container.querySelector('video:not([data-testid="background-player-video"])') as HTMLVideoElement | null;
+        if (video?.getAttribute('src') !== 'blob:live-stream') throw new Error('live source not attached yet');
+        return video;
+      });
+    }
+
+    it('plays through a MediaSource when main says the file needs a live conversion', async () => {
+      const { container } = render(<LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: mp4 })} />);
+      await findLiveVideo(container);
+      expect(URL.createObjectURL).toHaveBeenCalledWith(FakeMediaSource.last);
+    });
+
+    it('queues the live conversion, not the silent file', async () => {
+      const user = userEvent.setup();
+      const { container, getBg } = renderWithBgProbe(<LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: mp4 })} />);
+      await findLiveVideo(container);
+      await user.click(screen.getByRole('button', { name: 'Add to queue' }));
+      expect(getBg().current).toMatchObject({ sourcePath: mp4, live });
+    });
+
+    it('falls back to a playable copy in the library when the live conversion fails', async () => {
+      const { container } = render(<LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: mp4 })} />);
+      fireDecodeError(await findLiveVideo(container));
+
+      await waitFor(() => expect(window.electronAPI.ensurePlayablePreview).toHaveBeenLastCalledWith({ filePath: mp4, forcePreview: true }));
+      const source = await findSourceEl(container);
+      expect(source).toHaveAttribute('src', 'app-video://local/%2Fmock%2Fpreview.mp4?v=0');
+    });
+
+    it('asks first in VidTools when the live conversion fails', async () => {
+      const { container } = render(
+        <LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mp4} confirmPreview={{ kind: 'remux', required: false }} />,
+      );
+      fireDecodeError(await findLiveVideo(container));
+
+      expect(await screen.findByRole('button', { name: 'Create playable copy' })).toBeInTheDocument();
+      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('confirmPreview (VidTools)', () => {
     const mkv = '/elsewhere/movie.mkv';
 
     it('asks before making a copy, and makes it once the user agrees', async () => {
       const user = userEvent.setup();
       const { container } = render(
-        <LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux' }} />,
+        <LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux', required: true }} />,
       );
 
       expect(await screen.findByRole('dialog', { name: 'Create a playable copy?' })).toBeInTheDocument();
@@ -891,19 +988,19 @@ describe('LibraryVideoPlayer', () => {
 
       await user.click(screen.getByRole('button', { name: 'Create copy' }));
 
-      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: mkv });
+      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: mkv, forcePreview: true });
       const source = await findSourceEl(container);
       expect(source).toHaveAttribute('src', 'app-video://local/%2Fmock%2Fpreview.mp4?v=0');
     });
 
     it('warns that a re-encode is slow', async () => {
-      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'reencode' }} />);
+      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'reencode', required: true }} />);
       expect(await screen.findByText(/full re-encode, which can take a while/)).toBeInTheDocument();
     });
 
     it('declining leaves a button that makes the copy later', async () => {
       const user = userEvent.setup();
-      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux' }} />);
+      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux', required: true }} />);
 
       await user.click(await screen.findByRole('button', { name: 'Not now' }));
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
@@ -911,14 +1008,14 @@ describe('LibraryVideoPlayer', () => {
       expect(window.electronAPI.ensurePlayablePreview).not.toHaveBeenCalled();
 
       await user.click(screen.getByRole('button', { name: 'Create playable copy' }));
-      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: mkv });
+      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: mkv, forcePreview: true });
     });
 
     it('plays a native file straight away, and offers a copy if it fails to decode', async () => {
       const user = userEvent.setup();
       const mp4 = '/elsewhere/hevc.mp4';
       const { container } = render(
-        <LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mp4} confirmPreview={{ kind: 'reencode' }} />,
+        <LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mp4} confirmPreview={{ kind: 'reencode', required: false }} />,
       );
       const source = await findSourceEl(container);
       expect(source).toHaveAttribute('src', 'app-video://local/%2Felsewhere%2Fhevc.mp4?v=0');
@@ -927,13 +1024,13 @@ describe('LibraryVideoPlayer', () => {
       fireDecodeError(container.querySelector('video') as HTMLVideoElement);
       await user.click(await screen.findByRole('button', { name: 'Create playable copy' }));
 
-      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: mp4 });
+      expect(window.electronAPI.ensurePlayablePreview).toHaveBeenLastCalledWith({ filePath: mp4, forcePreview: true });
     });
 
     it('shows the failure message instead of the library caption', async () => {
       const user = userEvent.setup();
       window.electronAPI.ensurePlayablePreview = vi.fn().mockResolvedValue({ success: false, message: 'ffmpeg exploded' });
-      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux' }} />);
+      render(<LibraryVideoPlayer metadata={baseMetadata()} overrideFilePath={mkv} confirmPreview={{ kind: 'remux', required: true }} />);
 
       await user.click(await screen.findByRole('button', { name: 'Create copy' }));
 

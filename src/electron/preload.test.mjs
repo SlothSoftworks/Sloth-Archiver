@@ -119,6 +119,9 @@ const invokeTable = [
   ['saveTranscriptText', [{ videoDir: '/v', epoch: '1', withTimestamps: true }], ['transcripts:saveText', { videoDir: '/v', epoch: '1', withTimestamps: true }]],
   ['getTranscriptSettings', [], ['settings:getTranscriptSettings']],
   ['setTranscriptSettings', [{ fetchTranscriptOnDownload: true }], ['settings:setTranscriptSettings', { fetchTranscriptOnDownload: true }]],
+  ['searchLibrary', [{ searchId: 's1', query: { mode: 'text', text: 'x' } }], ['search:query', { searchId: 's1', query: { mode: 'text', text: 'x' } }]],
+  ['cancelSearch', ['s1'], ['search:cancel', 's1']],
+  ['getSearchStatus', [], ['search:status']],
   ['fetchPlaylistEntries', ['url'], ['library:fetchPlaylistEntries', 'url']],
   ['enrichPlaylistEntry', [{ e: 1 }], ['library:enrichPlaylistEntry', { e: 1 }]],
   ['recordLibraryDownload', [{ r: 1 }], ['library:recordDownload', { r: 1 }]],
@@ -237,6 +240,21 @@ describe('electronAPI channel scan progress', () => {
     removeAllListeners.mockClear();
     electronAPI.removeChannelScanProgressListener(listener);
     expect(removeListener).toHaveBeenCalledWith('channelArchive:scanProgress', listener);
+    expect(removeAllListeners).not.toHaveBeenCalled();
+  });
+
+  it('onSearchProgress returns its own listener, which removeSearchProgressListener removes alone', () => {
+    on.mockClear();
+    const callback = vi.fn();
+    const listener = electronAPI.onSearchProgress(callback);
+    expect(on).toHaveBeenCalledWith('search:progress', listener);
+    listener({}, { searchId: 's1', items: [], done: true });
+    expect(callback).toHaveBeenCalledWith({ searchId: 's1', items: [], done: true });
+
+    removeListener.mockClear();
+    removeAllListeners.mockClear();
+    electronAPI.removeSearchProgressListener(listener);
+    expect(removeListener).toHaveBeenCalledWith('search:progress', listener);
     expect(removeAllListeners).not.toHaveBeenCalled();
   });
 });

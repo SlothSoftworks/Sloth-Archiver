@@ -52,7 +52,7 @@ function sourceLabel(transcript: Transcript): string {
 // after a download finishing while the view is open). With getCurrentTime
 // it follows playback: the current line is highlighted and kept in view
 // until the user scrolls the list themselves.
-export default function TranscriptPanel({ videoDir, epoch, isLocal, onSeek, onFetched, getCurrentTime }: {
+export default function TranscriptPanel({ videoDir, epoch, isLocal, onSeek, onFetched, getCurrentTime, initialLanguage = null }: {
   videoDir: string;
   epoch: string;
   isLocal: boolean;
@@ -61,6 +61,9 @@ export default function TranscriptPanel({ videoDir, epoch, isLocal, onSeek, onFe
   // null while nothing local is playing (e.g. the YouTube embed), which
   // turns following off.
   getCurrentTime?: () => number | null;
+  // Opens on this language instead of the default (omni-search's transcript
+  // results).
+  initialLanguage?: string | null;
 }) {
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,7 +71,7 @@ export default function TranscriptPanel({ videoDir, epoch, isLocal, onSeek, onFe
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   // null shows the version's default transcript.
-  const [language, setLanguage] = useState<string | null>(null);
+  const [language, setLanguage] = useState<string | null>(initialLanguage);
   const [languagesOpen, setLanguagesOpen] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(-1);
   const [following, setFollowing] = useState(true);

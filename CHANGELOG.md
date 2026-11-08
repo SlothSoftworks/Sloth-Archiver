@@ -4,6 +4,44 @@ This is the first documented entry — a snapshot of what SlothArchiver could
 do as of this release, not a history of every change that got it here.
 Future releases will log what actually changed from the previous one.
 
+## [1.8.0] — 2026-11-08
+- **Search all your libraries at once.** A new search button in the top
+  bar, next to the version, searches every sublibrary as you type: video
+  titles, channel names, your notes on videos and clips, clip titles and
+  saved playlist names. Results are grouped into videos, clips and
+  playlists with the matching text highlighted, and clicking one opens it,
+  switching sublibrary when needed. Accents and letter case don't matter,
+  so "cafe" finds "Café".
+  - Tick "Also search transcripts" to search inside every saved transcript
+    as well. Since that reads files from disk, it runs when you press Enter
+    and its results arrive as they're found. Clicking a transcript line
+    opens that version of the video at that moment.
+  - **Advanced search** opens with Cmd/Ctrl+F from anywhere, or with the
+    button beside the open search field. Choose which sublibraries to
+    search and what to search in (video descriptions too), and how: plain
+    text, a regex pattern, or up to five terms joined with AND / OR. Your
+    search and its results are still there when you close it and come back.
+  - The search index is built in the background when the app starts and
+    stays current as you add, edit or delete things. Changes made to the
+    library folder outside the app show up after a restart or the Library's
+    Refresh button.
+- **Fixed videos that played without sound.** Some videos, often films and
+  TV episodes, carry audio in formats like AC-3, E-AC-3, DTS or TrueHD,
+  which the player can't decode, so they played silently with no error. The
+  app now checks every file before playing it and plays these right away,
+  converting just the audio while it plays: nothing is written to disk, and
+  seeking anywhere takes a moment at most. This works in the library, the
+  background queue and VidTools. The sound comes from the file's first
+  audio track, in stereo.
+- **More videos play right away, without making a copy first.** MKV, MOV,
+  M4V, 3GP and OGV files now play directly when the player can handle what's
+  inside them, and AVI, MPEG-TS and FLV files with common video (H.264, VP9,
+  AV1, or HEVC on Mac) play through the same live conversion. A playable
+  copy is now made only when the video itself can't be played (MPEG-2,
+  Xvid or ProRes, for example), and when only the audio was the problem the
+  copy keeps the video as it is, so it's much quicker to make. VidTools now
+  asks before making a copy only when one is really needed.
+
 ## [1.7.0] — 2026-11-01
 - **Transcripts for your library videos.** A video's detail view now has a
   Transcript tab next to its tools. Fetch a version's transcript and it's

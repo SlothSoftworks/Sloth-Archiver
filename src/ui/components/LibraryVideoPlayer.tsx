@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Alert, Box, Button, CardMedia, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, IconButton, Snackbar, Tooltip, Typography } from '@mui/material';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import FormatListBulletedAddIcon from '@mui/icons-material/FormatListBulletedAdd';
@@ -11,7 +11,9 @@ import LibraryVideoPlayerControls from './LibraryVideoPlayerControls';
 import PlayerContextMenu from './PlayerContextMenu';
 import PlayerShortcutsDialog from './PlayerShortcutsDialog';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
-import { buildAppVideoUrl, safeRemoteImageUrl } from '../../utils/utils.ts';
+import { buildAppVideoUrl, safeRemoteImageUrl, videoMimeTypeForPath, type VideoMimeType } from '../../utils/utils.ts';
+import { LiveTranscodeSource } from '../../utils/liveTranscodeSource.ts';
+import type { LiveStreamInfo } from '../../types/electron-api';
 import { useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 
 // getCurrentTime/getDuration return null (not a misleading 0) when no local
@@ -39,54 +41,38 @@ export type ClipMarkersControl = {
   clearDisabled: boolean;
 };
 
-// Only mp4/webm play reliably in Chromium's <video> element -- other
-// containers (e.g. MKV) are a parsing limitation no delivery mechanism can
-// work around. This component quietly falls back to the static thumbnail
-// rather than attempting a player known to fail; "open in default player"
-// exists in LibraryVideoDetail for exactly this case. Mirrored in
-// localFileAccess.mjs (main), which tells VidTools whether to ask first.
-const PLAYABLE_VIDEO_EXTENSIONS = new Set(['mp4', 'webm']);
-
 function getExtension(filePath: string): string {
   const lastDot = filePath.lastIndexOf('.');
   return lastDot === -1 ? '' : filePath.slice(lastDot + 1).toLowerCase();
 }
 
-// Vidstack's own src-type auto-detection doesn't recognize the app's custom
-// app-video:// scheme and silently falls back to treating it as a YouTube
-// embed (an empty iframe, no error) -- an explicit type sidesteps that
-// detection entirely.
-function mimeTypeForExtension(ext: string): 'video/webm' | 'video/mp4' {
-  return ext === 'webm' ? 'video/webm' : 'video/mp4';
-}
-
-// A native-playable extension goes straight to 'ready'. A non-native
-// extension (e.g. MKV) starts in 'preparingPreview' while a playable
-// derivative is generated, landing on 'ready' or 'previewFailed'. With
-// confirmPreview set it waits in 'awaitingPreviewConsent' instead, until the
+// Every file starts in 'checkingPlayback' (just the poster) while main
+// checks its codecs (planPlayback, previewCache.mjs), then goes to 'ready'
+// with the file itself, or with `live` set when it plays through a live
+// conversion, or on to 'preparingPreview' once a playable copy starts being
+// made, landing on 'ready' or 'previewFailed'. When confirmPreview says a
+// copy is required, it waits in 'awaitingPreviewConsent' instead, until the
 // user agrees to the copy being made.
 // 'runtimeFailed' is reachable from either path -- a file that *should* play
 // can still fail at actual decode time. computeInitialState below always
-// resolves synchronously to preparingPreview/ready on the very first render,
+// resolves synchronously to a starting state on the very first render,
 // so there's never a frame where the wrong fallback caption flashes before
 // the mount effect corrects it.
 type PlaybackState =
+  | { kind: 'checkingPlayback' }
   | { kind: 'preparingPreview'; percent: number }
   | { kind: 'previewFailed'; message?: string }
-  | { kind: 'ready'; sourcePath: string; mimeType: 'video/mp4' | 'video/webm' }
+  | { kind: 'ready'; sourcePath: string; mimeType: VideoMimeType; live?: LiveStreamInfo }
   | { kind: 'runtimeFailed' }
   | { kind: 'awaitingPreviewConsent' };
 
 export type PreviewKind = 'remux' | 'reencode';
+// required: main already said the file only plays from a copy (VidTools
+// asks when opening it), so there's no point trying it first.
+export type PreviewConsent = { kind: PreviewKind; required: boolean };
 
-function computeInitialState(filePath: string | null, confirmPreview: boolean): PlaybackState {
-  if (filePath) {
-    const ext = getExtension(filePath);
-    if (PLAYABLE_VIDEO_EXTENSIONS.has(ext)) {
-      return { kind: 'ready', sourcePath: filePath, mimeType: mimeTypeForExtension(ext) };
-    }
-  }
-  return confirmPreview ? { kind: 'awaitingPreviewConsent' } : { kind: 'preparingPreview', percent: 0 };
+function computeInitialState(copyRequired: boolean): PlaybackState {
+  return copyRequired ? { kind: 'awaitingPreviewConsent' } : { kind: 'checkingPlayback' };
 }
 
 const FRAME_STEP_SECONDS = 1 / 24;
@@ -124,10 +110,11 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   // having no context menu item) never happens in practice; the caller
   // (LibraryVideoPlayerWithTools) always has a videoDir to write into.
   onChangeThumbnail?: (currentTime: number | null) => void;
-  // VidTools: ask before making a playable copy of a file Chromium can't
-  // play, instead of starting the conversion straight away. kind only
-  // changes the dialog's wording (a quick repackage vs a slow re-encode).
-  confirmPreview?: { kind: PreviewKind };
+  // VidTools: ask before making a playable copy, instead of starting the
+  // conversion straight away -- up front when one is required, or as the
+  // way out when a file that should play fails to. kind only changes the
+  // dialog's wording (a quick repackage vs a slow re-encode).
+  confirmPreview?: PreviewConsent;
   // VidTools files aren't library videos, which every queue entry links to.
   hideAddToQueue?: boolean;
   // Where the YouTube embed (not-downloaded video) starts; a new key reloads
@@ -136,9 +123,10 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
 }>(function LibraryVideoPlayer({ metadata, thumbnailPath, cacheBustKey = 0, overrideFilePath, clipMarkers, onPlaybackStateChange, initialSeekSeconds, backgroundPlayOverride, onChangeThumbnail, confirmPreview, hideAddToQueue = false, embedStart }, ref) {
   const { thumbnail, videoId } = metadata;
   const filePath = overrideFilePath ?? metadata.downloadedFilePath;
-  const [state, setState] = useState<PlaybackState>(() => computeInitialState(filePath, !!confirmPreview));
+  const [state, setState] = useState<PlaybackState>(() => computeInitialState(!!confirmPreview?.required));
   // The file the user agreed to make a playable copy of. Also how a natively
-  // playable file that failed at decode time (runtimeFailed) gets a copy.
+  // playable file that failed at decode time (runtimeFailed) gets a copy,
+  // and where a failed live conversion falls back to outside VidTools.
   const [consentedPath, setConsentedPath] = useState<string | null>(null);
   const [consentDialogOpen, setConsentDialogOpen] = useState(false);
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
@@ -172,42 +160,37 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   const appliedInitialSeekRef = useRef(false);
 
   const ext = filePath ? getExtension(filePath) : '';
-  const isNativePlayable = filePath ? PLAYABLE_VIDEO_EXTENSIONS.has(ext) : false;
 
-  // Extension alone says Chromium's demuxer can attempt this container, not
-  // that this exact file will decode -- an unusual codec or a truncated file
-  // can still fail at runtime. Caught via the player's error event, degrading
-  // to the same fallback as a known-unplayable extension instead of a
-  // silently-broken black player.
+  // Codecs that check out can still fail at runtime -- a truncated file, say.
+  // Caught via the player's error event, degrading to the same fallback as
+  // a file that can't be prepared instead of a silently-broken black player.
   useEffect(() => {
     setHasStartedPlayback(false);
     setIsAudioOnly(false);
     if (!filePath) return;
 
     const consented = consentedPath === filePath;
-    if (isNativePlayable && !consented) {
-      setState({ kind: 'ready', sourcePath: filePath, mimeType: mimeTypeForExtension(ext) });
-      return;
-    }
-    if (confirmPreview && !consented) {
+    if (confirmPreview?.required && !consented) {
       setState({ kind: 'awaitingPreviewConsent' });
       setConsentDialogOpen(true);
       return;
     }
 
-    // Non-native extension (e.g. MKV): ask the backend for a cached or
-    // freshly-generated playback-only derivative before giving up on this
-    // file entirely.
+    // Ask the backend whether it plays as it is or live, or for a cached or
+    // freshly-generated playback-only derivative (always that, once the
+    // user agreed to a copy), before giving up on this file entirely.
     let cancelled = false;
-    setState({ kind: 'preparingPreview', percent: 0 });
+    setState(consented ? { kind: 'preparingPreview', percent: 0 } : { kind: 'checkingPlayback' });
     window.electronAPI.onPreviewGenerationProgress(({ percent }) => {
       if (cancelled) return;
-      setState((prev) => (prev.kind === 'preparingPreview' ? { kind: 'preparingPreview', percent } : prev));
+      setState((prev) => (prev.kind === 'preparingPreview' || prev.kind === 'checkingPlayback' ? { kind: 'preparingPreview', percent } : prev));
     });
-    window.electronAPI.ensurePlayablePreview({ filePath }).then((result) => {
+    window.electronAPI.ensurePlayablePreview(consented ? { filePath, forcePreview: true } : { filePath }).then((result) => {
       if (cancelled) return;
-      if (result.success && result.previewPath) {
-        setState({ kind: 'ready', sourcePath: result.previewPath, mimeType: 'video/mp4' });
+      if (result.success && result.live) {
+        setState({ kind: 'ready', sourcePath: filePath, mimeType: 'video/mp4', live: result.live });
+      } else if (result.success && result.previewPath) {
+        setState({ kind: 'ready', sourcePath: result.previewPath, mimeType: result.direct ? videoMimeTypeForPath(filePath) : 'video/mp4' });
       } else {
         setState({ kind: 'previewFailed', message: result.message });
       }
@@ -216,8 +199,36 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
       cancelled = true;
       window.electronAPI.removePreviewGenerationProgressListener();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- ext/isNativePlayable are pure derivations of filePath, not independent inputs; confirmPreview is a new object each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- confirmPreview is a new object each render.
   }, [filePath, cacheBustKey, consentedPath]);
+
+  // A live conversion plays through a MediaSource made per 'ready' state. If
+  // it fails, the library falls back to a playable copy (as it always did
+  // for files it couldn't play); VidTools offers one instead, as it does for
+  // any file it can't play.
+  const live = state.kind === 'ready' ? state.live : undefined;
+  const fallBackToCopy = !confirmPreview;
+  const [liveSource, setLiveSource] = useState<{ info: LiveStreamInfo; source: LiveTranscodeSource } | null>(null);
+  const failLive = useCallback(() => {
+    if (fallBackToCopy && filePath) setConsentedPath(filePath);
+    else setState({ kind: 'runtimeFailed' });
+  }, [fallBackToCopy, filePath]);
+  const failPlayback = () => (live ? failLive() : setState({ kind: 'runtimeFailed' }));
+  useEffect(() => {
+    if (!live) return;
+    const source = new LiveTranscodeSource(live, failLive);
+    setLiveSource({ info: live, source });
+    return () => {
+      source.destroy();
+      setLiveSource(null);
+    };
+  }, [live, failLive]);
+
+  const playerSrc = useMemo(() => {
+    if (state.kind !== 'ready') return null;
+    if (state.live) return liveSource?.info === state.live ? { src: liveSource.source.mediaSource, type: 'video/object' as const } : null;
+    return { src: buildAppVideoUrl(state.sourcePath, cacheBustKey), type: state.mimeType };
+  }, [state, liveSource, cacheBustKey]);
 
   const handleCreatePlayableCopy = () => {
     setConsentDialogOpen(false);
@@ -291,6 +302,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
       thumbnailPath: backgroundPlayOverride.thumbnailPath,
       sourcePath: state.sourcePath,
       mimeType: state.mimeType,
+      live: state.live,
       clipId: backgroundPlayOverride.clipId,
     } : {
       videoId,
@@ -299,6 +311,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
       thumbnailPath: thumbnailPath ?? null,
       sourcePath: state.sourcePath,
       mimeType: state.mimeType,
+      live: state.live,
     });
     if (wasEmpty) safePause();
   };
@@ -373,9 +386,9 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
   const handleCanPlay = () => {
     // Reads the native <video> element directly rather than Vidstack's own
     // state.viewType/mediaWidth/mediaHeight -- viewType is derived from the
-    // declared src `type` (always 'video/mp4'/'video/webm' here, see
-    // mimeTypeForExtension, since this app never has a real "this is audio"
-    // MIME hint to give it), not the actual decoded content, so it never
+    // declared src `type` (always a video type here, since this app never
+    // has a real "this is audio" MIME hint to give it), not the actual
+    // decoded content, so it never
     // reflects whether the file secretly has no video track; Vidstack's own
     // mediaWidth/mediaHeight need a 'resize' event this app never fires. A
     // real browser reports videoWidth/videoHeight as 0 directly on the
@@ -383,6 +396,8 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     // type, immediately once 'loadedmetadata' fires -- no extra event needed.
     const videoEl = playerRef.current?.el?.querySelector('video');
     if (videoEl) setIsAudioOnly(videoEl.videoWidth === 0 && videoEl.videoHeight === 0);
+    // Before the initial seek below, so a live stream follows it.
+    if (videoEl && liveSource) liveSource.source.attach(videoEl);
     if (initialSeekSeconds == null || appliedInitialSeekRef.current || !playerRef.current) return;
     appliedInitialSeekRef.current = true;
     playerRef.current.currentTime = initialSeekSeconds;
@@ -441,7 +456,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
     );
   }
 
-  if (state.kind === 'ready') {
+  if (state.kind === 'ready' && playerSrc) {
     return (
       <ResizableMediaContainer sx={containerSx}>
         <Box
@@ -453,14 +468,14 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
           <MediaPlayer
             ref={playerRef}
             title={metadata.fullTitle || metadata.title || undefined}
-            src={{ src: buildAppVideoUrl(state.sourcePath, cacheBustKey), type: state.mimeType }}
+            src={playerSrc}
             style={{ width: '100%', height: '100%', backgroundColor: 'black' }}
             loop={loopEnabled}
             keyShortcuts={keyShortcuts}
             onRateChange={handleRateChange}
             onTimeUpdate={handleLoopSequenceTimeUpdate}
             onCanPlay={handleCanPlay}
-            onError={() => setState({ kind: 'runtimeFailed' })}
+            onError={failPlayback}
             onPlay={() => { setHasStartedPlayback(true); onPlaybackStateChange?.(true); }}
             onPause={() => onPlaybackStateChange?.(false)}
           >
@@ -602,7 +617,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             <Typography variant="caption" sx={{ color: 'common.white' }}>Preparing preview...</Typography>
             <LinearProgressWithLabel value={state.percent} valueBuffer={state.percent} />
           </Box>}
-        {state.kind !== 'preparingPreview' && !confirmPreview &&
+        {(state.kind === 'runtimeFailed' || state.kind === 'previewFailed') && !confirmPreview &&
           <Typography
             variant="caption"
             sx={{
@@ -614,7 +629,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             {state.kind === 'runtimeFailed' && `This .${ext} file couldn't be played here -- use the "Open externally" option.`}
             {state.kind === 'previewFailed' && `Couldn't prepare a playable preview for this .${ext} file -- use the "Open externally" option.`}
           </Typography>}
-        {state.kind !== 'preparingPreview' && confirmPreview &&
+        {(state.kind === 'awaitingPreviewConsent' || state.kind === 'runtimeFailed' || state.kind === 'previewFailed') && confirmPreview &&
           <Box
             sx={{
               position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',

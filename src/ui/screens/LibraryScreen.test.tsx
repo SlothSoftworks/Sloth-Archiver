@@ -40,14 +40,16 @@ function renderAt(path: string, ui: ReactElement) {
 // stay scoped to its own navigation/state logic, and to confirm the props it
 // wires through (video, onBack, onDeleted, onVersionsChanged) are correct.
 vi.mock('./LibraryVideoDetail', () => ({
-  default: ({ video, onBack, onDeleted, onVersionsChanged }: {
+  default: ({ video, onBack, onDeleted, onVersionsChanged, initialTranscript }: {
     video: { videoFolderName: string; metadata?: { description?: string | null } };
     onBack: () => void;
     onDeleted: () => void;
     onVersionsChanged: () => void;
+    initialTranscript?: unknown;
   }) => (
     <div>
       <div>Detail: {video.videoFolderName}</div>
+      {!!initialTranscript && <div>Transcript target: {JSON.stringify(initialTranscript)}</div>}
       {video.metadata?.description && <div>Description: {video.metadata.description}</div>}
       <button onClick={onBack}>mock-back</button>
       <button onClick={onDeleted}>mock-deleted</button>
@@ -60,7 +62,12 @@ vi.mock('./LibraryVideoDetail', () => ({
 // trivial marker so the "scrollbar hiding stays off in playlist view" test
 // below doesn't also need to stub out its full electronAPI surface.
 vi.mock('../components/PlaylistsSection', () => ({
-  default: () => <div>Playlists section</div>,
+  default: ({ initialPlaylistId }: { initialPlaylistId?: string | null }) => (
+    <div>
+      <div>Playlists section</div>
+      {initialPlaylistId && <div>Opening playlist {initialPlaylistId}</div>}
+    </div>
+  ),
 }));
 
 function makeVideo(overrides: Record<string, unknown> = {}) {
@@ -152,6 +159,7 @@ beforeEach(() => {
     // calls this -- stubbed so bulk-select's download tests don't hit an
     // unmocked IPC call, even though they don't assert on its result.
     getMaxSimultaneousDownloads: vi.fn().mockResolvedValue({ maxSimultaneousDownloads: 1 }),
+    ensurePlayablePreview: vi.fn(async ({ filePath }: { filePath: string }) => ({ success: true, previewPath: filePath, generated: false, direct: true })),
   };
   // BulkAddProvider (now wrapping every render() call, see the helper above)
   // mounts one useDownloadVideo() instance per download slot, each of which
@@ -435,6 +443,7 @@ describe('LibraryScreen', () => {
       expect(screen.getByText('1 item selected')).toBeInTheDocument();
 
       await user.click(screen.getByRole('button', { name: 'Add to queue' }));
+      await waitFor(() => expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/Channel A/vidA/1/video.mp4' }));
       expect(screen.queryByText('Detail: vidA')).not.toBeInTheDocument();
     });
 
@@ -704,6 +713,8 @@ describe('LibraryScreen', () => {
 
       await user.click(screen.getByRole('button', { name: 'Add to queue' }));
 
+      await waitFor(() => expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/Channel A/vidA/1/video.mp4' }));
+      expect(screen.queryByText(/Couldn't prepare/)).not.toBeInTheDocument();
       expect(screen.queryByText('Detail: vidA')).not.toBeInTheDocument();
     });
 
@@ -1577,6 +1588,30 @@ describe('LibraryScreen', () => {
 
       expect(await screen.findByText('Detail: vidA')).toBeInTheDocument();
       expect(window.electronAPI.setActiveLibraryTag).not.toHaveBeenCalled();
+    });
+
+    it('hands an omni-search transcript line to the detail view as version, second and language', async () => {
+      (window.electronAPI.findLibraryVideo as ReturnType<typeof vi.fn>).mockResolvedValue({
+        found: true, videoDir: '/lib/Channel A/vidA',
+      });
+
+      renderAt('/library/video/vidA?tag=DefaultLibrary&epoch=1&t=42&lang=ja', <LibraryScreen />);
+
+      expect(await screen.findByText('Transcript target: {"epoch":"1","seconds":42,"language":"ja"}')).toBeInTheDocument();
+    });
+
+    it('opens a saved playlist from an omni-search result, switching sublibrary first', async () => {
+      (window.electronAPI.listLibraryTags as ReturnType<typeof vi.fn>).mockResolvedValue({
+        tags: [
+          { tagName: 'DefaultLibrary', folderName: 'DefaultLibrary', createdEpoch: 1 },
+          { tagName: 'Music', folderName: 'Music', createdEpoch: 2 },
+        ],
+      });
+
+      renderAt('/library?tag=Music&section=playlists&playlist=PL123', <LibraryScreen />);
+
+      await waitFor(() => expect(window.electronAPI.setActiveLibraryTag).toHaveBeenCalledWith('Music'));
+      expect(await screen.findByText('Opening playlist PL123')).toBeInTheDocument();
     });
   });
 });

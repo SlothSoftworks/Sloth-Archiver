@@ -10,21 +10,24 @@ import os from 'node:os';
 import { getSupportedVideoFilters, allVideoFilter } from './utils/constants.mjs';
 import { getCurrentYtdlpVersion, isNewerVersion, performYtdlpUpdate } from './updater.mjs';
 import { resolveLatestRelease, YTDLP_VERIFICATION_ERROR_CODE } from './ytdlpRelease.mjs';
-import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, setVideoNotes, setClipNotes, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, extractFrameToFile, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex } from './library.mjs';
+import { writeLibraryEntry, overrideLibraryEntry, addLibraryVersion, addLocalFileEntry, nonYoutubeVideoHash, refreshLibraryEntryMetadata, getLibraryIndex, refreshLibraryIndex, findVideoInIndex, recordLibraryDownload, swapLibraryDownload, savePlaybackPosition, findVideoThumbnailPath, deleteLibraryEntry, deleteLocalFiles, moveLibraryEntry, writePlaylistSnapshot, enrichPlaylistEntry, listPlaylistSnapshots, getPlaylistSnapshot, reconcilePlaylistSnapshot, setPlaylistManualThumbnail, undoPlaylistRefresh, deletePlaylistSnapshot, sanitizeForFilesystem, resolveInsideLibrary, libraryTagDir, DEFAULT_LIBRARY_DIR_NAME, listLibraryTags, createLibraryTag, listVideoTags, setVideoTag, addTagToVideos, removeVideosFromTags, transferVideoTags, checkAndRepairEpochFiles, PLAYLISTS_DIR_NAME, CLIPS_DIR_NAME, buildClipFilePath, recordClip, listClips, deleteClip, updateClipFile, setVideoNotes, setClipNotes, firstAvailablePlaylistThumbnail, resolvePlaylistThumbnailUrl, findPlaylistThumbnailPath, replaceLibraryThumbnail, extractFrameToFile, isLibraryIndexCachedFor, libraryTagForPath, updateLibraryIndexForVideoDirs, summarizeLibraryIndex, readLibraryVideoEntry, scanLibrary, lookupVideosInIndex, readClipsManifest, createScanYielder } from './library.mjs';
 import { createSettingsStore, clampMaxSimultaneousDownloads, clampThumbnailSize, THUMBNAIL_SIZE_DEFAULT, clampLibrarySortField, clampLibrarySortDirection, clampLibraryDisplayMode, clampLibraryListColumns, clampThemeName, clampResumeTrackingMode, RESUME_TRACKING_MODE_DEFAULT, clampResumeMinDurationSeconds, RESUME_MIN_DURATION_SECONDS_DEFAULT, clampEmbedMetadataByDefault, EMBED_METADATA_BY_DEFAULT_DEFAULT, clampTranscriptSettings, validateDirectorySetting, normalizeCustomConvertFormats, pickFolderDialogOptions } from './settings.mjs';
 import { makeCookiesArgs, looksLikeNetscapeFormat, convertHeaderCookiesToNetscape, validateNetscapeLines, SUPPORTED_COOKIE_BROWSERS, reapStaleCookieCopies } from './cookies.mjs';
 import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
 import { createRotatingLogWriter, redactHomeDir } from './logFile.mjs';
 import { buildLibraryExport, parseLibraryExport, importLibraryExport, summarizeExport, IMPORT_MAX_BYTES } from './libraryExport.mjs';
-import { ensurePlayablePreview, isChromiumCompatible } from './previewCache.mjs';
-import { createLocalFileAccess, validateOpenablePath, isSameFile, isNativePlayableExtension, LOCAL_VIDEO_FILE_EXTENSIONS } from './localFileAccess.mjs';
+import { ensurePlayablePreview, isChromiumCompatible, planPlayback, createCachedProbe } from './previewCache.mjs';
+import { createLivePlayback, liveMimeType } from './livePlayback.mjs';
+import { createLocalFileAccess, validateOpenablePath, isSameFile, LOCAL_VIDEO_FILE_EXTENSIONS } from './localFileAccess.mjs';
 import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
 import { createChannelScanner, createChannelScanSession } from './channelScan.mjs';
 import {
     pickTranscriptTrack, findTranscriptTrackByCode, listTranscriptLanguages, mergeTranscriptLanguages, buildSubtitleDownloadArgs, parseVtt,
     readTranscript, readTranscriptForLanguage, listExtraTranscriptLanguages, writeTranscript, saveAvailableTranscriptLanguages, transcriptToText, createTranscriptQueue,
 } from './transcripts.mjs';
+import { compileQuery, searchCatalog, normalizeSearchRequest, createCatalogService } from './searchCatalog.mjs';
+import { createContentCache, listTranscriptTargets, scanTranscripts, scanDescriptions } from './searchScan.mjs';
 import { createArchiveBacklogStore, summarizeBacklog, BACKLOG_MAX_ITEMS } from './archiveBacklog.mjs';
 import { parseYouTubeChannelUrl } from './utils/youtube.mjs';
 import { ERROR_KINDS, classifyDownloadError, isAutoRetryable, getBackoffMs, MAX_AUTO_RETRIES, recheckDiskSpaceIfAmbiguous } from './downloadErrors.mjs';
@@ -229,6 +232,9 @@ const channelScans = createChannelScanSession({
 app.on('before-quit', () => channelScans.killAll());
 const backlogStore = createArchiveBacklogStore(path.join(app.getPath('userData'), 'backlog.json'));
 const ffmpegRunner = createFfmpegRunner({ ffmpegBinaryPath, ffprobeBinaryPath, onLog: log, isDev });
+const playbackRunner = { ...ffmpegRunner, probeMediaStreams: createCachedProbe(ffmpegRunner.probeMediaStreams) };
+const livePlayback = createLivePlayback({ ffmpegBinaryPath, onLog: log });
+app.on('before-quit', () => livePlayback.killAll());
 
 const localFileAccess = createLocalFileAccess({ previewDir: path.join(app.getPath('temp'), 'SlothArchiver-vidtools') });
 app.on('before-quit', () => localFileAccess.clearPreviews());
@@ -244,8 +250,11 @@ const { getMediaDurationSeconds, getFfmpegVersion, runFfmpegWithProgress, conver
 // app is ready. `stream`+`supportFetchAPI` are required for the net.fetch
 // delegation in handleAppVideoRequest below; this app has no CSP today so
 // `bypassCSP` is currently a no-op -- revisit if one is ever added.
+// app-live:// streams a file being converted while it plays
+// (livePlayback.mjs), which the renderer reads with fetch.
 protocol.registerSchemesAsPrivileged([
     { scheme: 'app-video', privileges: { standard: true, secure: true, stream: true, bypassCSP: true, corsEnabled: true, supportFetchAPI: true } },
+    { scheme: 'app-live', privileges: { standard: true, secure: true, stream: true, corsEnabled: true, supportFetchAPI: true } },
 ]);
 
 export function mimeTypeForPath(filePath) {
@@ -270,20 +279,22 @@ export function mimeTypeForPath(filePath) {
 //   - img-src allows any https host (plus the local app-video:// scheme)
 //     because thumbnails come from whichever platform a video was fetched
 //     from (YouTube, SoundCloud, TikTok, Instagram, ...), not one fixed CDN.
-//   - media-src is scoped to this origin and app-video:// -- video playback
-//     never loads from a remote URL directly.
+//   - media-src is scoped to this origin, app-video:// and blob: (the
+//     MediaSource a live conversion plays through) -- video playback never
+//     loads from a remote URL directly.
 //   - frame-src only allows the one iframe embed this app ever creates.
-//   - connect-src 'self' because the renderer never calls fetch/XHR itself;
-//     every network request goes through the main process over IPC.
+//   - connect-src 'self' plus app-live://, the one fetch the renderer makes
+//     itself (a live conversion's stream, served by main); every network
+//     request goes through the main process over IPC.
 const CONTENT_SECURITY_POLICY = [
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https: app-video:",
-    "media-src 'self' app-video:",
+    "media-src 'self' app-video: blob:",
     "font-src 'self'",
     "frame-src https://www.youtube-nocookie.com",
-    "connect-src 'self'",
+    "connect-src 'self' app-live:",
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
@@ -491,6 +502,7 @@ ipcMain.handle('settings:setLibraryDir', async (e, dir) => {
     // Switching to a different library folder mid-session should reflect
     // immediately, not show whatever the previous folder's scan found.
     refreshLibraryIndex(validDir, DEFAULT_LIBRARY_DIR_NAME);
+    searchCatalogService.rebuild();
     return { success: true, libraryDir: validDir };
 });
 
@@ -515,6 +527,7 @@ ipcMain.handle('library:createTag', async (e, name) => {
         settings.activeLibraryTag = tag.folderName;
         writeSettings(settings);
         await refreshLibraryIndex(libraryDir, tag.folderName);
+        searchCatalogService.rebuildTags([tag.folderName]);
         return { success: true, tag };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
@@ -738,7 +751,9 @@ ipcMain.handle('library:getIndex', async () => {
 
 ipcMain.handle('library:refreshIndex', async () => {
     const { libraryDir, activeLibraryTag: libraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
-    return summarizeLibraryIndex(await refreshLibraryIndex(libraryDir, libraryTag));
+    const index = await refreshLibraryIndex(libraryDir, libraryTag);
+    searchCatalogService.rebuildTags([libraryTag]);
+    return summarizeLibraryIndex(index);
 });
 
 ipcMain.handle('library:getVideo', async (e, videoDir) => {
@@ -786,6 +801,7 @@ export function selectTagsToRefresh(libraryTags, activeLibraryTag, isCached) {
 }
 
 async function refreshIndexAfterWrite(libraryDir, libraryTags) {
+    searchCatalogService.rebuildTags(libraryTags);
     const { activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const tags = selectTagsToRefresh(libraryTags, activeLibraryTag, (tag) => isLibraryIndexCachedFor(libraryDir, tag));
     for (const tag of tags) {
@@ -800,6 +816,19 @@ function libraryTagOfVideoDir(libraryDir, videoDir) {
     return libraryTagForPath(libraryDir, videoDir) || readSettings().activeLibraryTag || DEFAULT_LIBRARY_DIR_NAME;
 }
 
+// Omni-search's catalog (searchCatalog.mjs). A sublibrary that's already in
+// the index cache is read from there; the others are scanned and dropped.
+const searchCatalogService = createCatalogService({
+    getLibraryDir: () => readSettings().libraryDir,
+    listTags: listLibraryTags,
+    loadTagIndex: (libraryDir, tag) => (isLibraryIndexCachedFor(libraryDir, tag) ? getLibraryIndex(libraryDir, tag) : scanLibrary(libraryDir, tag)),
+    readVideoEntry: readLibraryVideoEntry,
+    listPlaylists: (libraryDir, libraryTag) => listPlaylistSnapshots({ libraryDir, libraryTag }),
+    tagOfVideoDir: libraryTagOfVideoDir,
+    deps: { readClips: readClipsManifest, listExtraLanguages: (videoDir, epoch) => listExtraTranscriptLanguages(path.join(videoDir, epoch)) },
+    onError: (err) => log('[search] catalog update failed', err instanceof Error ? err.stack : String(err)),
+});
+
 // PERF-002/008: the per-video counterpart to refreshIndexAfterWrite, for
 // every write that knows which video folders it touched (nearly all of
 // them). Same choice of *which* sublibraries need updating, but a cached
@@ -808,6 +837,7 @@ function libraryTagOfVideoDir(libraryDir, videoDir) {
 // sublibrary that isn't the cached one still gets a full scan, since there's
 // no index to patch. Resolves true when the active sublibrary changed.
 async function updateIndexAfterVideoWrites(libraryDir, videoDirs) {
+    searchCatalogService.refreshVideoDirs(videoDirs);
     const { activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
     const dirsByTag = new Map();
     for (const videoDir of videoDirs.filter(Boolean)) {
@@ -1010,6 +1040,7 @@ ipcMain.handle('library:fetchPlaylistEntries', async (e, playlistUrl) => {
                 })),
                 index,
             });
+            searchCatalogService.refreshPlaylists(activeLibraryTag);
             // Fire-and-forget, same as the video/channel thumbnail caches.
             // Prefers result.metadata.entries (already dead-flagged by
             // writePlaylistSnapshot's own isDeadTitle check) over the raw
@@ -1092,6 +1123,7 @@ ipcMain.handle('library:refreshPlaylist', async (e, playlistId) => {
             freshUploader: fresh.uploader,
             index,
         });
+        searchCatalogService.refreshPlaylists(activeLibraryTag);
         const playlistDir = path.join(libraryTagDir(libraryDir, activeLibraryTag), PLAYLISTS_DIR_NAME, sanitizeForFilesystem(playlistId));
         ensurePlaylistThumbnail(playlistDir, resolvePlaylistThumbnailUrl({ entries: result.entries, manualThumbnailVideoId: result.manualThumbnailVideoId }));
         return result;
@@ -1129,7 +1161,9 @@ ipcMain.handle('library:undoPlaylistRefresh', async (e, playlistId) => {
         return { success: false, message: 'No library folder configured.' };
     }
     try {
-        return undoPlaylistRefresh({ libraryDir, libraryTag: activeLibraryTag, playlistId });
+        const result = undoPlaylistRefresh({ libraryDir, libraryTag: activeLibraryTag, playlistId });
+        searchCatalogService.refreshPlaylists(activeLibraryTag);
+        return result;
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
@@ -1144,7 +1178,9 @@ ipcMain.handle('library:deletePlaylist', async (e, playlistId) => {
         return { success: false, message: 'No library folder configured.' };
     }
     try {
-        return deletePlaylistSnapshot({ libraryDir, libraryTag: activeLibraryTag, playlistId });
+        const result = deletePlaylistSnapshot({ libraryDir, libraryTag: activeLibraryTag, playlistId });
+        searchCatalogService.refreshPlaylists(activeLibraryTag);
+        return result;
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
@@ -1407,7 +1443,7 @@ async function fetchImportedImages(libraryDir, touchedTags, followUps) {
 // getLibraryIndex reuses this same in-flight scan when the Library tab asks.
 {
     const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
-    getLibraryIndex(libraryDir, activeLibraryTag);
+    getLibraryIndex(libraryDir, activeLibraryTag).finally(() => searchCatalogService.rebuild());
 }
 
 // A literal fs.existsSync(filePath) isn't enough: postprocessors (MP3
@@ -1494,6 +1530,7 @@ ipcMain.handle('cookies:setConfig', async (e, { cookiesMode, cookiesBrowser }) =
 
 app.on("ready", async () => {
     protocol.handle('app-video', handleAppVideoRequest);
+    protocol.handle('app-live', livePlayback.handleRequest);
 
     const rendererServer = await startRendererServer();
     const { port } = rendererServer.address();
@@ -1846,9 +1883,9 @@ export function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteM
         // constrain against.
         args.push('-f', resolution === 'best' ? 'bestvideo*+bestaudio/best' : `bestvideo[height<=${resolution}]+bestaudio/best`);
         // Without this, yt-dlp's merge step picks MKV whenever the chosen
-        // pair isn't natively MP4-safe (e.g. Opus audio) -- which Chromium's
-        // <video> element can't play at all (see LibraryVideoPlayer.tsx's
-        // PLAYABLE_VIDEO_EXTENSIONS). This only picks the stream-copy
+        // pair isn't natively MP4-safe (e.g. Opus audio). MKV plays too
+        // when its codecs do (canPlayFileDirectly, previewCache.mjs), but
+        // MP4 is the safer container to hand Chromium. This only picks the stream-copy
         // container, it doesn't transcode, and modern ffmpeg's MP4 muxer
         // already supports every codec this selector can produce, so it's a
         // free fix. Only applies to this default path -- an explicit format
@@ -2472,18 +2509,25 @@ ipcMain.handle('library:extractMp3', async (e, { inputPath, outputPath }) => {
     }
 });
 
-// Backs LibraryVideoPlayer's preview-compatibility layer: for a local file
-// whose container/codecs Chromium can't play natively (MKV and friends),
-// generates (or reuses a cached) playback-only .mp4 derivative -- see
-// previewCache.mjs for the remux-vs-reencode decision and cache/invalidation
-// rules. Never touches filePath itself. Progress goes over its own dedicated
+// Backs every local playback (LibraryVideoPlayer, the background player):
+// decides whether a file plays as it is, plays through a live conversion
+// (startLivePlayback), or needs a generated (or cached) playback-only .mp4
+// derivative -- see previewCache.mjs for that decision and the cache rules.
+// Never touches filePath itself. Progress goes over its own dedicated
 // channel (sendPreviewGenerationProgress above), not ffmpegUtilityProgress --
 // see that function's own comment for why sharing it isn't safe here.
-ipcMain.handle('library:ensurePlayablePreview', async (e, { filePath }) => {
+async function startLivePlayback(filePath, streams) {
+    const duration = await ffmpegRunner.getMediaDurationSeconds(filePath).catch(() => 0);
+    const token = livePlayback.register(filePath, streams);
+    return { url: `app-live://stream/${token}`, mimeType: liveMimeType(streams), duration };
+}
+
+ipcMain.handle('library:ensurePlayablePreview', async (e, { filePath, forcePreview = false }) => {
+    const options = { ffmpegRunner: playbackRunner, onProgress: sendPreviewGenerationProgress, startLive: startLivePlayback, forcePreview };
     const { libraryDir } = readSettings();
     const insideLibrary = resolveInsideLibrary(libraryDir, filePath);
     if (insideLibrary) {
-        return ensurePlayablePreview({ filePath: insideLibrary, ffmpegRunner, onProgress: sendPreviewGenerationProgress });
+        return ensurePlayablePreview({ filePath: insideLibrary, ...options });
     }
     if (!localFileAccess.isOpened(filePath)) {
         return { success: false, message: 'Refusing to read outside the configured library folder.' };
@@ -2491,7 +2535,7 @@ ipcMain.handle('library:ensurePlayablePreview', async (e, { filePath }) => {
     const resolved = path.resolve(filePath);
     const previewPath = localFileAccess.previewPathFor(resolved);
     localFileAccess.rememberReadable(previewPath);
-    return ensurePlayablePreview({ filePath: resolved, previewPath, ffmpegRunner, onProgress: sendPreviewGenerationProgress });
+    return ensurePlayablePreview({ filePath: resolved, previewPath, ...options });
 });
 
 // VidTools' file picker and drop zone both land here. Re-called with the
@@ -2504,7 +2548,7 @@ ipcMain.handle('vidtools:openFile', async (e, filePath) => {
     localFileAccess.clearPreviews({ keep: localFileAccess.previewPathFor(resolved) });
     localFileAccess.rememberReadable(resolved);
     const [streams, duration] = await Promise.all([
-        ffmpegRunner.probeMediaStreams(resolved).catch(() => []),
+        playbackRunner.probeMediaStreams(resolved).catch(() => []),
         ffmpegRunner.getMediaDurationSeconds(resolved).catch(() => 0),
     ]);
     const videoStream = streams.find((s) => s.codecType === 'video');
@@ -2520,7 +2564,7 @@ ipcMain.handle('vidtools:openFile', async (e, filePath) => {
         height: videoStream?.height || null,
         videoCodec: videoStream?.codecName || null,
         audioCodec: audioStream?.codecName || null,
-        needsPreview: !isNativePlayableExtension(resolved),
+        needsPreview: planPlayback(resolved, streams) === 'preview',
         previewKind: isChromiumCompatible(streams) ? 'remux' : 'reencode',
     };
 });
@@ -2794,6 +2838,7 @@ async function fetchTranscriptForEpoch({ videoDir, epoch, language }) {
             availableLanguages: listTranscriptLanguages(subtitleTracks),
         }, { asDefault });
         if (asDefault) await updateIndexAfterVideoWrites(libraryDir, [videoDir]);
+        else searchCatalogService.refreshVideoDirs([videoDir]);
         BrowserWindow.getAllWindows()[0]?.webContents.send('transcripts:updated', { videoDir, epoch, language: track.language });
         log(`[transcript] fetched ${track.key} (${track.source}, ${segments.length} lines) for ${videoDir}/${epoch}`);
         return { success: true, transcript, isDefault: asDefault };
@@ -2894,15 +2939,81 @@ ipcMain.handle('transcripts:saveText', async (e, { videoDir, epoch, language, wi
 });
 
 // No index update: clip notes aren't in the index, and ClipCollectionView
-// replaces the clip in its own list from the returned record.
+// replaces the clip in its own list from the returned record. The search
+// catalog does hold them, so it's refreshed.
 ipcMain.handle('library:setClipNotes', async (e, { videoDir, clipId, notes }) => {
     const { libraryDir } = readSettings();
     try {
-        return { success: true, clip: setClipNotes({ libraryDir, videoDir, clipId, notes }) };
+        const clip = setClipNotes({ libraryDir, videoDir, clipId, notes });
+        searchCatalogService.refreshVideoDirs([videoDir]);
+        return { success: true, clip };
     } catch (err) {
         return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
 });
+
+// Omni-search. One search runs at a time: a new one (e.g. the next
+// keystroke) cancels whatever the previous one was still reading. The
+// catalog part answers at once; descriptions, then transcripts, stream in
+// afterwards as search:progress, each batch tagged with its kind.
+let activeSearch = null;
+const searchContentCache = createContentCache();
+
+// The active sublibrary's descriptions are already in memory (its cached
+// full index), so only the other sublibraries' are read from disk.
+async function cachedDescriptionLookup() {
+    const { libraryDir, activeLibraryTag = DEFAULT_LIBRARY_DIR_NAME } = readSettings();
+    if (!libraryDir || !isLibraryIndexCachedFor(libraryDir, activeLibraryTag)) return () => undefined;
+    const index = await getLibraryIndex(libraryDir, activeLibraryTag);
+    const descriptions = new Map();
+    for (const channel of index.channels) {
+        for (const video of channel.videos) descriptions.set(video.videoDir, video.metadata.description || '');
+    }
+    return (videoDir) => descriptions.get(videoDir);
+}
+
+async function streamSearchContent({ run, sender, catalog, query, scope }) {
+    const send = (kind) => (batch) => {
+        if (!sender.isDestroyed()) sender.send('search:progress', { searchId: run.searchId, kind, ...batch });
+    };
+    const common = { catalog, query, cache: searchContentCache, isCancelled: () => run.cancelled, yieldIfDue: createScanYielder() };
+    if (scope.descriptions) {
+        await scanDescriptions({ ...common, tags: scope.tags, descriptionFor: await cachedDescriptionLookup(), onBatch: send('descriptions') });
+    }
+    if (scope.transcripts && !run.cancelled) {
+        await scanTranscripts({ ...common, targets: listTranscriptTargets(catalog, scope), onBatch: send('transcripts') });
+    }
+}
+
+ipcMain.handle('search:query', async (e, request) => {
+    if (activeSearch) activeSearch.cancelled = true;
+    const searchId = typeof request?.searchId === 'string' ? request.searchId : '';
+    const run = { searchId, cancelled: false };
+    activeSearch = run;
+    const { query, scope } = normalizeSearchRequest(request);
+    let compiled;
+    try {
+        compiled = compileQuery(query);
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+    await searchCatalogService.whenSettled();
+    if (run.cancelled) return { success: false, cancelled: true };
+    const { catalog } = searchCatalogService;
+    const results = searchCatalog(catalog, compiled, scope);
+    if (scope.descriptions || scope.transcripts) {
+        streamSearchContent({ run, sender: e.sender, catalog, query: compiled, scope })
+            .catch((err) => log('[search] content scan failed', err instanceof Error ? err.stack : String(err)));
+    }
+    return { success: true, results, pending: { descriptions: scope.descriptions, transcripts: scope.transcripts } };
+});
+
+ipcMain.handle('search:cancel', async (e, searchId) => {
+    if (activeSearch && activeSearch.searchId === searchId) activeSearch.cancelled = true;
+    return { success: true };
+});
+
+ipcMain.handle('search:status', async () => searchCatalogService.status());
 
 // Converts a saved clip to another format "in place" -- the clip keeps its
 // id/title/createdAt, only its underlying file (and clips.json's fileName/

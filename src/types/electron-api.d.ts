@@ -21,6 +21,44 @@ export type TranscriptBatchStatus = {
 };
 type EpochRef = { videoDir: string; epoch: string };
 
+export type SearchQuery = { mode: 'text' | 'regex' | 'terms'; text?: string; terms?: { text: string; op?: 'and' | 'or' }[] };
+// tags: sublibrary folder names, null/absent for all. Titles and channel
+// names are always searched.
+export type SearchScope = { tags?: string[] | null; notes?: boolean; clips?: boolean; playlists?: boolean; descriptions?: boolean; transcripts?: boolean };
+export type SearchRange = [number, number];
+export type SearchMatch = { field: string; text: string; ranges: SearchRange[] };
+type SearchVideoBase = {
+    tag: string;
+    tagName: string;
+    videoDir: string;
+    videoId: string;
+    platform: string;
+    title: string;
+    channel: string;
+    thumbnailPath: string | null;
+};
+export type SearchVideoResult = SearchVideoBase & { kind: 'video'; matches: SearchMatch[] };
+export type SearchClipResult = SearchVideoBase & { kind: 'clip'; clipId: string; clipTitle: string; matches: SearchMatch[] };
+export type SearchDescriptionResult = SearchVideoBase & { kind: 'description'; matches: SearchMatch[] };
+export type SearchPlaylistResult = { kind: 'playlist'; tag: string; tagName: string; playlistId: string; title: string; uploader: string; matches: SearchMatch[] };
+export type SearchTranscriptResult = SearchVideoBase & {
+    kind: 'transcript';
+    epoch: string;
+    isLatest: boolean;
+    language: string;
+    languageName: string;
+    lineCount: number;
+    lines: { start: number; text: string; ranges: SearchRange[] }[];
+};
+export type SearchResult = SearchVideoResult | SearchClipResult | SearchPlaylistResult | SearchDescriptionResult | SearchTranscriptResult;
+export type SearchGroup<T> = { items: T[]; total: number };
+export type SearchResults = { videos: SearchGroup<SearchVideoResult>; clips: SearchGroup<SearchClipResult>; playlists: SearchGroup<SearchPlaylistResult> };
+type SearchProgressCounts = { searchId: string; matched: number; scanned: number; total: number; done: boolean };
+export type SearchProgress =
+    | (SearchProgressCounts & { kind: 'descriptions'; items: SearchDescriptionResult[] })
+    | (SearchProgressCounts & { kind: 'transcripts'; items: SearchTranscriptResult[] });
+export type SearchProgressListener = (...args: unknown[]) => void;
+
 type FolderPickerResult = {
     filePath: string;
     canceled: boolean;
@@ -59,6 +97,10 @@ type LibrarySortDirection = 'asc' | 'desc';
 // equal to folderName, since sublibrary names aren't renamable separately
 // from their folder). Exported so useLibraryTags.tsx and its consumers share
 // this one declaration instead of each keeping their own local copy.
+// A live conversion's stream (livePlayback.mjs): url takes a ?start= in
+// seconds, mimeType is what MediaSource is told to expect.
+export type LiveStreamInfo = { url: string; mimeType: string; duration: number };
+
 export type VidToolsFile = {
     filePath: string;
     name: string;
@@ -306,6 +348,16 @@ declare global {
             onTranscriptBatchProgress: (callback: (status: TranscriptBatchStatus) => void) => void
             removeTranscriptBatchProgressListener: () => void
             getTranscriptSettings: () => Promise<{ fetchTranscriptOnDownload: boolean; transcriptLanguage: string }>
+            searchLibrary: (payload: { searchId: string; query: SearchQuery; scope?: SearchScope }) => Promise<
+                | { success: true; results: SearchResults; pending: { descriptions: boolean; transcripts: boolean } }
+                | { success: false; message?: string; cancelled?: boolean }
+            >
+            cancelSearch: (searchId: string) => Promise<{ success: boolean }>
+            getSearchStatus: () => Promise<{ building: boolean }>
+            // Returns the listener it registered; pass it back to
+            // removeSearchProgressListener to remove just this one.
+            onSearchProgress: (callback: (data: SearchProgress) => void) => SearchProgressListener
+            removeSearchProgressListener: (listener: SearchProgressListener) => void
             setTranscriptSettings: (value: { fetchTranscriptOnDownload?: boolean; transcriptLanguage?: string }) => Promise<{ success: boolean; fetchTranscriptOnDownload: boolean; transcriptLanguage: string }>
             setClipNotes: (payload: { videoDir: string; clipId: string; notes: string }) => Promise<{ success: boolean; clip?: LibraryClip; message?: string }>
             fetchPlaylistEntries: (playlistUrl: string) => Promise<{ success: boolean; entries?: { id: string; title: string | null; url: string; thumbnailUrl: string; uploadDate: string | null }[]; playlistId?: string; message?: string }>
@@ -331,7 +383,10 @@ declare global {
             saveExportedFile: (payload: { defaultName: string; extensions: string[]; inputPath?: string }) => Promise<{ filePath?: string; canceled: boolean }>
             extractMp3FromFile: (payload: { inputPath: string; outputPath: string }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
             convertFileFormat: (payload: { inputPath: string; outputPath: string; format: string; forceReencode?: boolean }) => Promise<{ success: boolean; outputPath?: string; message?: string }>
-            ensurePlayablePreview: (payload: { filePath: string }) => Promise<{ success: boolean; previewPath?: string; generated?: boolean; message?: string }>
+            // direct: the file plays as it is, and previewPath is the file itself.
+            // live: it plays through a live conversion instead (no previewPath).
+            // forcePreview: make a playable copy even when it could play either way.
+            ensurePlayablePreview: (payload: { filePath: string; forcePreview?: boolean }) => Promise<{ success: boolean; previewPath?: string; generated?: boolean; direct?: boolean; live?: LiveStreamInfo; message?: string }>
             onPreviewGenerationProgress: (callback: (data: { percent: number }) => void) => void
             removePreviewGenerationProgressListener: () => void
             extractClipFromFile: (payload: { inputPath: string; outputPath: string; start: string; end: string; format?: string; forceReencode?: boolean }) => Promise<{ success: boolean; outputPath?: string; message?: string }>

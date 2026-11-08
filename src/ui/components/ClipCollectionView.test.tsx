@@ -117,7 +117,7 @@ beforeEach(() => {
   window.electronAPI = {
     ...window.electronAPI,
     deleteClip: vi.fn().mockResolvedValue({ success: true }),
-    ensurePlayablePreview: vi.fn().mockResolvedValue({ success: true, previewPath: '/mock/preview.mp4', generated: false }),
+    ensurePlayablePreview: vi.fn(async ({ filePath }: { filePath: string }) => ({ success: true, previewPath: filePath, generated: false, direct: true })),
     onPreviewGenerationProgress: vi.fn(),
     removePreviewGenerationProgressListener: vi.fn(),
   };
@@ -276,10 +276,8 @@ describe('ClipCollectionView', () => {
     it('gives it the parent video\'s thumbnail and a "<video> - <clip>" title, not a blank/clip-only one', async () => {
       const user = userEvent.setup();
       const { container, getBg } = renderWithBgProbe();
-      const video = container.querySelector('video') as HTMLVideoElement;
-      fireReadinessCascade(video);
-
-      await user.click(screen.getByRole('button', { name: 'Add to queue' }));
+      await user.click(await screen.findByRole('button', { name: 'Add to queue' }));
+      fireReadinessCascade(container.querySelector('video') as HTMLVideoElement);
 
       expect(getBg().current).toEqual(expect.objectContaining({
         videoId: 'video1',

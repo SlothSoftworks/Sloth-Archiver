@@ -1,6 +1,11 @@
 import { afterEach } from 'vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
+
+// waitFor/findBy give up after 1 s by default, which a debounced UI can
+// exceed when every test file runs in parallel (same reason as testTimeout
+// in vitest.config.ts). A passing wait still returns as soon as it passes.
+configure({ asyncUtilTimeout: 5000 });
 
 // Only matters for jsdom-environment (renderer) test files -- unmounts
 // whatever React Testing Library rendered after each test so components
@@ -26,10 +31,10 @@ if (typeof HTMLMediaElement !== 'undefined') {
   // Vidstack's native-provider loader treats as "this browser can't play
   // mp4/webm at all" and refuses to mount a <video> element -- a jsdom gap,
   // not a real compatibility question, since every test file exercising the
-  // player already assumes mp4/webm are playable (same assumption the real
-  // browser confirms in production).
+  // player already assumes mp4/webm/ogg are playable (same assumption the
+  // real browser confirms in production).
   HTMLMediaElement.prototype.canPlayType = (type: string) => (
-    type.startsWith('video/mp4') || type.startsWith('video/webm') ? 'probably' : ''
+    type.startsWith('video/mp4') || type.startsWith('video/webm') || type.startsWith('video/ogg') ? 'probably' : ''
   );
 }
 

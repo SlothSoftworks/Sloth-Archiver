@@ -192,6 +192,13 @@ export default function LibraryScreen() {
   // points already marked, as a base to adjust or re-clip from.
   const [deepLinkClipStartSeconds, setDeepLinkClipStartSeconds] = useState<number | null>(null);
   const [deepLinkClipEndSeconds, setDeepLinkClipEndSeconds] = useState<number | null>(null);
+  // From omni-search's ?epoch=&t=&lang= (a transcript line) and
+  // ?section=playlists&playlist= (a saved playlist). deepLinkKey remounts
+  // the detail view / playlists section for each deep link, so one aimed at
+  // what's already open still applies.
+  const [deepLinkTranscript, setDeepLinkTranscript] = useState<{ epoch: string; seconds: number; language: string | null } | null>(null);
+  const [deepLinkPlaylistId, setDeepLinkPlaylistId] = useState<string | null>(null);
+  const [deepLinkKey, setDeepLinkKey] = useState(0);
   // A normal (non-deep-link) video selection -- clears any stale
   // deepLinkView/deepLinkClipId/deepLinkClipStartSeconds/deepLinkClipEndSeconds
   // left over from a previous deep link, so picking a different video
@@ -202,6 +209,7 @@ export default function LibraryScreen() {
     setDeepLinkClipId(null);
     setDeepLinkClipStartSeconds(null);
     setDeepLinkClipEndSeconds(null);
+    setDeepLinkTranscript(null);
     setSelectedVideo(video);
   };
   const [selectedVideoDirs, setSelectedVideoDirs] = useState<Set<string>>(new Set());
@@ -675,6 +683,10 @@ export default function LibraryScreen() {
   // LibraryVideoDetail.
   const clipStartToOpen = searchParams.get('clipStart');
   const clipEndToOpen = searchParams.get('clipEnd');
+  const epochToOpen = searchParams.get('epoch');
+  const secondsToOpen = searchParams.get('t');
+  const languageToOpen = searchParams.get('lang');
+  const playlistToOpen = searchParams.get('section') === 'playlists' ? searchParams.get('playlist') : null;
   useEffect(() => {
     if (!videoIdToOpen) return;
     (async () => {
@@ -710,6 +722,10 @@ export default function LibraryScreen() {
         setDeepLinkClipId(clipIdToOpen);
         setDeepLinkClipStartSeconds(clipStartToOpen ? parseClipTimestampSeconds(clipStartToOpen) : null);
         setDeepLinkClipEndSeconds(clipEndToOpen ? parseClipTimestampSeconds(clipEndToOpen) : null);
+        setDeepLinkTranscript(epochToOpen
+          ? { epoch: epochToOpen, seconds: Math.max(0, Number(secondsToOpen) || 0), language: languageToOpen }
+          : null);
+        setDeepLinkKey((prev) => prev + 1);
       } else {
         setDeepLinkError('This video is no longer in your library.');
       }
@@ -717,6 +733,23 @@ export default function LibraryScreen() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoIdToOpen]);
+
+  useEffect(() => {
+    if (!playlistToOpen) return;
+    (async () => {
+      if (libraryTagToOpen) {
+        const { activeLibraryTag: currentActiveTag } = await window.electronAPI.getActiveLibraryTag();
+        if (libraryTagToOpen !== currentActiveTag) await switchLibraryTag(libraryTagToOpen);
+      }
+      setSelectedVideo(null);
+      setSelectedChannel(null);
+      setLibrarySection('playlists');
+      setDeepLinkPlaylistId(playlistToOpen);
+      setDeepLinkKey((prev) => prev + 1);
+      navigate('/library', { replace: true });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playlistToOpen]);
 
   // Fire-and-forget channel-icon/video-thumbnail fetches (main.mjs) only get
   // picked up on the *next* index refresh -- without this, an already-
@@ -753,7 +786,7 @@ export default function LibraryScreen() {
       </Typography>
     </Box>
   ) : librarySection === 'playlists' ? (
-    <PlaylistsSection onBulkBarUpdate={setPlaylistBulkBar} />
+    <PlaylistsSection key={deepLinkKey} onBulkBarUpdate={setPlaylistBulkBar} initialPlaylistId={deepLinkPlaylistId} />
   ) : selectedVideo ? (
     !fullSelectedVideo ? (
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 6 }}>
@@ -761,6 +794,7 @@ export default function LibraryScreen() {
       </Box>
     ) : (
     <LibraryVideoDetail
+      key={deepLinkKey}
       video={fullSelectedVideo}
       onBack={() => setSelectedVideo(null)}
       onLibraryChanged={refreshChannelsSilently}
@@ -772,6 +806,7 @@ export default function LibraryScreen() {
       initialClipId={deepLinkClipId}
       initialClipStartSeconds={deepLinkClipStartSeconds}
       initialClipEndSeconds={deepLinkClipEndSeconds}
+      initialTranscript={deepLinkTranscript}
     />
     )
   ) : selectedChannel ? (
@@ -838,7 +873,7 @@ export default function LibraryScreen() {
               value={librarySection}
               exclusive
               size="small"
-              onChange={(_e, value: LibrarySection | null) => { if (value) setLibrarySection(value); clearSelection(); }}
+              onChange={(_e, value: LibrarySection | null) => { if (value) setLibrarySection(value); setDeepLinkPlaylistId(null); clearSelection(); }}
             >
               <ToggleButton value="videos">
                 <VideoLibraryIcon fontSize="small" sx={{ mr: 0.5 }} />
@@ -1073,6 +1108,7 @@ function VideoCard({ video, onSelect, channelLabel, selected, selectionActive, o
       thumbnailPath: video.thumbnailPath,
       sourcePath: source.sourcePath,
       mimeType: source.mimeType,
+      live: source.live,
     });
   };
   return (
@@ -1221,6 +1257,7 @@ function VideoListRow({ video, onSelect, channelLabel, selected, selectionActive
       thumbnailPath: video.thumbnailPath,
       sourcePath: source.sourcePath,
       mimeType: source.mimeType,
+      live: source.live,
     });
   };
   return (

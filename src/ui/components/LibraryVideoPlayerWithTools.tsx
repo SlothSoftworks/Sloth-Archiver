@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Alert, Link, Snackbar } from '@mui/material';
-import LibraryVideoPlayer, { type LibraryVideoPlayerHandle, type PreviewKind } from './LibraryVideoPlayer';
+import LibraryVideoPlayer, { type LibraryVideoPlayerHandle, type PreviewConsent } from './LibraryVideoPlayer';
 import SaveClipDialog from './SaveClipDialog';
 import ChangeThumbnailDialog from './ChangeThumbnailDialog';
 import { formatSecondsAsClipTimestamp } from '../screens/FfmpegUtilitiesPanel';
@@ -57,7 +57,7 @@ export type LibraryVideoPlayerWithToolsProps = {
   // same name.
   backgroundPlayOverride?: { videoId: string; title: string; thumbnailPath: string | null; clipId: string };
   // Passed straight through to LibraryVideoPlayer.
-  confirmPreview?: { kind: PreviewKind };
+  confirmPreview?: PreviewConsent;
   embedStart?: { seconds: number; key: number } | null;
   // Lets the caller drive the player too (the transcript seeks and follows
   // it); falls back to a private ref.

@@ -20,9 +20,10 @@ import type { LibraryClip, DownloadProgressMessage } from '../../types';
 // player and exercises exactly that, via a single button that fires
 // onClipCreated with a canned clip.
 vi.mock('../components/LibraryVideoPlayerWithTools', () => ({
-  default: ({ onClipCreated, overrideFilePath, embedStart }: { onClipCreated?: (clip: LibraryClip) => void; overrideFilePath?: string; embedStart?: { seconds: number; key: number } | null }) => (
+  default: ({ onClipCreated, overrideFilePath, embedStart, initialSeekSeconds }: { onClipCreated?: (clip: LibraryClip) => void; overrideFilePath?: string; embedStart?: { seconds: number; key: number } | null; initialSeekSeconds?: number | null }) => (
     <>
       {embedStart && <div data-testid="fake-player-embed-start" data-seconds={embedStart.seconds} data-key={embedStart.key} />}
+      {initialSeekSeconds != null && <div data-testid="fake-player-initial-seek" data-seconds={initialSeekSeconds} />}
       <button
         onClick={() => onClipCreated?.({ id: 'clip1', fileName: 'My Clip.mp4', title: 'My Clip', createdAt: 0, durationSeconds: 10 })}
       >
@@ -136,7 +137,11 @@ beforeEach(() => {
 function renderDetail(
   video: ReturnType<typeof makeVideo>,
   videoTags: Record<string, string[]> = {},
-  deepLinkOverrides: { initialActiveView?: 'video' | 'clips'; initialClipId?: string | null } = {},
+  deepLinkOverrides: {
+    initialActiveView?: 'video' | 'clips';
+    initialClipId?: string | null;
+    initialTranscript?: { epoch: string; seconds: number; language: string | null } | null;
+  } = {},
 ) {
   const onBack = vi.fn();
   const onLibraryChanged = vi.fn().mockResolvedValue(undefined);
@@ -201,6 +206,20 @@ describe('LibraryVideoDetail', () => {
 
       await user.click(screen.getByText('A line worth jumping to'));
       expect(screen.getByTestId('fake-player-embed-start')).toHaveAttribute('data-key', '2');
+    });
+
+    it('opens an omni-search transcript line on that version, language and second', async () => {
+      window.electronAPI.getTranscript = vi.fn().mockResolvedValue({ success: true, transcript: { ...transcript, language: 'ja', languageName: 'Japanese' } });
+      window.electronAPI.onTranscriptUpdated = vi.fn();
+      window.electronAPI.removeTranscriptUpdatedListener = vi.fn();
+      const older = baseMetadata({ title: 'Older title' });
+      const video = makeVideo({}, { epochs: [{ epoch: '100', metadata: baseMetadata() }, { epoch: '50', metadata: older }] });
+      renderDetail(video, {}, { initialTranscript: { epoch: '50', seconds: 42, language: 'ja' } });
+
+      expect(screen.getByRole('tab', { name: 'Transcript' })).toHaveAttribute('aria-selected', 'true');
+      await waitFor(() => expect(window.electronAPI.getTranscript).toHaveBeenCalledWith({ videoDir: video.videoDir, epoch: '50', language: 'ja' }));
+      expect(screen.getByTestId('fake-player-embed-start')).toHaveAttribute('data-seconds', '42');
+      expect(screen.getByTestId('fake-player-initial-seek')).toHaveAttribute('data-seconds', '42');
     });
 
     it('keeps the quality and tags row visible on the Transcript tab', async () => {

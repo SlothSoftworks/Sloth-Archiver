@@ -411,7 +411,7 @@ function clipsManifestPath(videoDir) {
     return path.join(videoDir, CLIPS_DIR_NAME, 'clips.json');
 }
 
-function readClipsManifest(videoDir) {
+export function readClipsManifest(videoDir) {
     try {
         const parsed = JSON.parse(fs.readFileSync(clipsManifestPath(videoDir), 'utf-8'));
         return Array.isArray(parsed) ? parsed : [];

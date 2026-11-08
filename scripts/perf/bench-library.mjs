@@ -29,11 +29,14 @@ import {
     reconcilePlaylistSnapshot,
     libraryTagDir,
     DEFAULT_LIBRARY_DIR_NAME,
+    readClipsManifest,
 } from '../../src/electron/library.mjs';
+import { createCatalog, compileQuery, searchCatalog } from '../../src/electron/searchCatalog.mjs';
+import { createContentCache, listTranscriptTargets, scanTranscripts, scanDescriptions } from '../../src/electron/searchScan.mjs';
 import { generateLibraryFixture, generatePlaylistFixture, buildPlaylistEntries, fixtureVideoId, DISTRIBUTIONS } from './libraryFixture.mjs';
 
 function parseArgs(argv) {
-    const args = { sizes: [100, 1000, 5000, 20000, 100000], distributions: ['archive', 'scattered'], cold: true, out: null, dir: null, playlistSizes: [10000, 50000] };
+    const args = { sizes: [100, 1000, 5000, 20000, 100000], distributions: ['archive', 'scattered'], cold: true, out: null, dir: null, playlistSizes: [10000, 50000], transcriptCounts: [200, 1000] };
     for (let i = 0; i < argv.length; i++) {
         const flag = argv[i];
         if (flag === '--dir') args.dir = argv[++i];
@@ -42,6 +45,7 @@ function parseArgs(argv) {
         else if (flag === '--playlist-sizes') args.playlistSizes = argv[++i].split(',').map(Number);
         else if (flag === '--out') args.out = argv[++i];
         else if (flag === '--no-cold') args.cold = false;
+        else if (flag === '--transcripts') args.transcriptCounts = argv[++i].split(',').map(Number);
         else throw new Error(`Unknown flag ${flag}`);
     }
     if (!args.dir) throw new Error('--dir <scratch directory> is required');
@@ -222,6 +226,69 @@ function benchSearch(index) {
     return { searchBroadMs: run('e'), searchNoMatchMs: run('zzqx'), searchNoMatchPrecomputedMs: runPre('zzqx') };
 }
 
+// Omni-search's in-memory catalog (searchCatalog.mjs): build time, rough
+// heap cost, and query times for each search type; then the description
+// scan (searchScan.mjs), read from each video's metadata.json as it is for
+// every sublibrary but the active one -- first from disk, then cached.
+async function benchOmniSearch(index) {
+    const heapBefore = process.memoryUsage().heapUsed;
+    const catalog = createCatalog();
+    const build = timeSync(() => catalog.replaceTag(DEFAULT_LIBRARY_DIR_NAME, index, [], { readClips: readClipsManifest, listExtraLanguages: () => [] }));
+    const heapMb = (process.memoryUsage().heapUsed - heapBefore) / 1024 ** 2;
+    const run = (query) => {
+        const compiled = compileQuery(query);
+        const runs = [];
+        for (let i = 0; i < 15; i++) runs.push(timeSync(() => searchCatalog(catalog, compiled)).ms);
+        return round(median(runs), 2);
+    };
+    const cache = createContentCache();
+    const scanDescriptionsFor = (text) => timeAsync(() => scanDescriptions({
+        catalog, query: compileQuery({ text }), cache, isCancelled: () => false, onBatch: () => {},
+    }));
+    const descriptionsFirst = await scanDescriptionsFor('zzqx');
+    const descriptionsCached = await scanDescriptionsFor('the');
+    return {
+        descriptionScanMs: round(descriptionsFirst.ms),
+        descriptionCachedScanMs: round(descriptionsCached.ms),
+        catalogBuildMs: round(build.ms),
+        catalogHeapMb: round(heapMb),
+        omniBroadMs: run({ text: 'e' }),
+        omniNoMatchMs: run({ text: 'zzqx' }),
+        omniRegexMs: run({ mode: 'regex', text: 'e\\w+a' }),
+        omniTermsMs: run({ mode: 'terms', terms: [{ text: 'the' }, { text: 'zzqx', op: 'or' }, { text: 'and', op: 'and' }] }),
+    };
+}
+
+// Omni-search's transcript scan (searchScan.mjs) over synthetic one-hour
+// transcripts (~900 lines each): the first search reads every file, the
+// second is served from the session cache as far as its budget allows.
+async function benchTranscriptSearch(baseDir, count) {
+    const root = path.join(baseDir, `transcripts-${count}`);
+    const words = ['never', 'gonna', 'give', 'you', 'up', 'let', 'down', 'run', 'around', 'and', 'desert', 'make', 'cry', 'say', 'goodbye', 'tell', 'a', 'lie', 'hurt'];
+    const videos = [];
+    for (let v = 0; v < count; v++) {
+        const videoDir = path.join(root, `v${v}`);
+        const epochDir = path.join(videoDir, '100');
+        if (!fs.existsSync(path.join(epochDir, 'transcript.json'))) {
+            fs.mkdirSync(epochDir, { recursive: true });
+            const segments = Array.from({ length: 900 }, (_, i) => ({
+                start: i * 4, end: i * 4 + 4, text: Array.from({ length: 8 }, (_, w) => words[(v * 7 + i * 3 + w * 5) % words.length]).join(' '),
+            }));
+            fs.writeFileSync(path.join(epochDir, 'transcript.json'), JSON.stringify({ version: 1, language: 'en', languageName: 'English', source: 'auto', segments }));
+        }
+        videos.push({ videoDir, videoFolderName: `v${v}`, latestEpoch: '100', metadata: { videoId: `v${v}`, title: `Video ${v}` }, epochs: [{ epoch: '100', metadata: { transcript: { language: 'en' } } }], clipCount: 0 });
+    }
+    const catalog = createCatalog();
+    catalog.replaceTag('Lib', { channels: [{ videos }] }, [], { readClips: () => [], listExtraLanguages: () => [] });
+    const cache = createContentCache();
+    const scan = (text) => timeAsync(() => scanTranscripts({
+        catalog, targets: listTranscriptTargets(catalog), query: compileQuery({ text }), cache, isCancelled: () => false, onBatch: () => {},
+    }));
+    const first = await scan('desert');
+    const second = await scan('goodbye');
+    return { transcripts: count, transcriptMb: round(diskUsageMb(root)), firstScanMs: round(first.ms), cachedScanMs: round(second.ms), cachedFiles: cache.size, cacheMb: round(cache.usedBytes / 1024 ** 2) };
+}
+
 // PERF-008: a bulk add into an existing library. Replays the main-process
 // side of each item exactly as useBulkAddQueue drives it: library:addEntry
 // (write + awaited rescan, then a second rescan once the thumbnail/icon
@@ -309,6 +376,7 @@ async function main() {
             Object.assign(row, await benchSingleMutation(libraryDir, index));
             Object.assign(row, benchFindVideo(index, summary.videoIdsCount));
             Object.assign(row, benchSearch(index));
+            Object.assign(row, await benchOmniSearch(index));
             if (distribution === 'archive') {
                 Object.assign(row, await benchBulkAdd(libraryDir, size >= 100000 ? 5 : size >= 20000 ? 15 : 50, false));
                 Object.assign(row, await benchBulkAdd(libraryDir, 200, true));
@@ -324,7 +392,13 @@ async function main() {
             rows.push(row);
         }
     }
-    const results = { environment, rows, reconcileRows };
+    const transcriptRows = [];
+    for (const count of args.transcriptCounts) {
+        const r = await benchTranscriptSearch(args.dir, count);
+        console.error('transcripts', r);
+        transcriptRows.push(r);
+    }
+    const results = { environment, rows, reconcileRows, transcriptRows };
     if (args.out) fs.writeFileSync(args.out, JSON.stringify(results, null, 2));
     console.log(JSON.stringify(results, null, 2));
 }
