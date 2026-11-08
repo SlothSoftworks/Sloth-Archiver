@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Snackbar } from '@mui/material';
-import { buildAppVideoUrl } from '../../utils/utils.ts';
+import { buildAppVideoUrl, videoMimeTypeForPath, type VideoMimeType } from '../../utils/utils.ts';
 
 export type BackgroundPlayerVideo = {
   videoId: string;
@@ -40,7 +40,7 @@ export function formatPlaybackTime(seconds: number): string {
 // component and LibraryScreen.tsx's VideoCard. The synchronous fast path
 // resolvePlayableSource (below) always tries first -- this alone doesn't
 // know about the MKV-preview-generation fallback.
-export function nativelyPlayableSource(filePath: string | null | undefined): { sourcePath: string; mimeType: 'video/mp4' | 'video/webm' } | null {
+export function nativelyPlayableSource(filePath: string | null | undefined): { sourcePath: string; mimeType: VideoMimeType } | null {
   if (!filePath) return null;
   const lastDot = filePath.lastIndexOf('.');
   const ext = lastDot === -1 ? '' : filePath.slice(lastDot + 1).toLowerCase();
@@ -60,12 +60,13 @@ export function nativelyPlayableSource(filePath: string | null | undefined): { s
 // the same cached-or-freshly-generated playable derivative the video view
 // itself plays. Returns null only when neither path works (e.g. an
 // audio-only download, or the preview generation itself failed).
-export async function resolvePlayableSource(filePath: string | null | undefined): Promise<{ sourcePath: string; mimeType: 'video/mp4' | 'video/webm' } | null> {
+export async function resolvePlayableSource(filePath: string | null | undefined): Promise<{ sourcePath: string; mimeType: VideoMimeType } | null> {
   const native = nativelyPlayableSource(filePath);
   if (native) return native;
   if (!filePath) return null;
   const result = await window.electronAPI.ensurePlayablePreview({ filePath });
-  return result.success && result.previewPath ? { sourcePath: result.previewPath, mimeType: 'video/mp4' } : null;
+  if (!result.success || !result.previewPath) return null;
+  return { sourcePath: result.previewPath, mimeType: result.direct ? videoMimeTypeForPath(filePath) : 'video/mp4' };
 }
 
 // Mirrors useBulkAddQueue.tsx's provider pattern -- a single instance lives

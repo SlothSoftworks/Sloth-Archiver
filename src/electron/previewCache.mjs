@@ -34,6 +34,34 @@ export function isChromiumCompatible(streams) {
         && (!audio || CHROMIUM_AUDIO_CODECS.has(audio.codecName));
 }
 
+// Containers that play as they are once the codecs inside do, so a file in
+// one is checked (ffprobe) instead of always getting a preview. mp4/webm
+// skip the check entirely (isNativePlayableExtension, localFileAccess.mjs).
+// AVI, MPEG-TS, FLV, .mpg and WMV won't open at all, whatever they hold, so
+// they always go through a preview. Both lists, and the codec lists below,
+// come from playing test clips in Electron 43 (Nov 2026); re-check after an
+// Electron upgrade.
+const DIRECT_PLAY_CHECKED_EXTENSIONS = new Set(['mkv', 'mov', 'm4v', '3gp', 'ogv']);
+const DIRECT_PLAY_VIDEO_CODECS = new Set(['h264', 'vp8', 'vp9', 'av1']);
+// HEVC decodes through the OS: verified on macOS only (Windows needs the
+// HEVC extension plus hardware support, Linux usually lacks it).
+const DIRECT_PLAY_MAC_VIDEO_CODECS = new Set(['hevc']);
+const DIRECT_PLAY_AUDIO_CODECS = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac', 'pcm_s16le']);
+
+export function canPlayFileDirectly(filePath, streams, platform = process.platform) {
+    if (!DIRECT_PLAY_CHECKED_EXTENSIONS.has(path.extname(filePath).slice(1).toLowerCase())) return false;
+    const video = streams.find((s) => s.codecType === 'video');
+    const audio = streams.find((s) => s.codecType === 'audio');
+    if (!video) return false;
+    const videoOk = DIRECT_PLAY_VIDEO_CODECS.has(video.codecName)
+        || (platform === 'darwin' && DIRECT_PLAY_MAC_VIDEO_CODECS.has(video.codecName));
+    return videoOk && (!audio || DIRECT_PLAY_AUDIO_CODECS.has(audio.codecName));
+}
+
+function isDirectPlayCandidate(filePath) {
+    return DIRECT_PLAY_CHECKED_EXTENSIONS.has(path.extname(filePath).slice(1).toLowerCase());
+}
+
 // Generates (or reuses a cached) playback-only derivative of `filePath` for
 // the embedded player to preview -- never touches the original file, which
 // stays exactly as downloaded. Idempotent and cheap on a cache hit: a
@@ -44,13 +72,23 @@ export function isChromiumCompatible(streams) {
 // the source out from under an already-generated preview, since the fresh
 // source file's mtime is always newer than the stale preview's.
 // previewPath overrides the .preview/ sibling, for a source outside the
-// library whose folder this app shouldn't write into (VidTools).
+// library whose folder this app shouldn't write into (VidTools). A file
+// canPlayFileDirectly accepts needs no preview at all: it comes back as its
+// own previewPath with direct: true.
 export async function ensurePlayablePreview({ filePath, previewPath = previewCachePathFor(filePath), ffmpegRunner, onProgress = () => {} }) {
     let sourceStat;
     try {
         sourceStat = fs.statSync(filePath);
     } catch {
         return { success: false, message: 'Source file could not be found.' };
+    }
+
+    let streams = null;
+    if (isDirectPlayCandidate(filePath)) {
+        streams = await ffmpegRunner.probeMediaStreams(filePath).catch(() => null);
+        if (streams && canPlayFileDirectly(filePath, streams)) {
+            return { success: true, previewPath: filePath, generated: false, direct: true };
+        }
     }
 
     if (fs.existsSync(previewPath)) {
@@ -60,11 +98,12 @@ export async function ensurePlayablePreview({ filePath, previewPath = previewCac
         }
     }
 
-    let streams;
-    try {
-        streams = await ffmpegRunner.probeMediaStreams(filePath);
-    } catch (err) {
-        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    if (!streams) {
+        try {
+            streams = await ffmpegRunner.probeMediaStreams(filePath);
+        } catch (err) {
+            return { success: false, message: err instanceof Error ? err.message : String(err) };
+        }
     }
 
     // +faststart moves the moov atom (container index/duration metadata) to

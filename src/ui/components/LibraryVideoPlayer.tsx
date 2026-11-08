@@ -11,7 +11,7 @@ import LibraryVideoPlayerControls from './LibraryVideoPlayerControls';
 import PlayerContextMenu from './PlayerContextMenu';
 import PlayerShortcutsDialog from './PlayerShortcutsDialog';
 import LinearProgressWithLabel from './LinearProgressWithLabel';
-import { buildAppVideoUrl, safeRemoteImageUrl } from '../../utils/utils.ts';
+import { buildAppVideoUrl, safeRemoteImageUrl, videoMimeTypeForPath, type VideoMimeType } from '../../utils/utils.ts';
 import { useBackgroundPlayer } from '../hooks/useBackgroundPlayer.tsx';
 
 // getCurrentTime/getDuration return null (not a misleading 0) when no local
@@ -39,41 +39,37 @@ export type ClipMarkersControl = {
   clearDisabled: boolean;
 };
 
-// Only mp4/webm play reliably in Chromium's <video> element -- other
-// containers (e.g. MKV) are a parsing limitation no delivery mechanism can
-// work around. This component quietly falls back to the static thumbnail
-// rather than attempting a player known to fail; "open in default player"
-// exists in LibraryVideoDetail for exactly this case. Mirrored in
-// localFileAccess.mjs (main), which tells VidTools whether to ask first.
+// mp4/webm play straight away. MKV/MOV/M4V/3GP/OGV also play as they are
+// when the codecs inside do, which main checks first (canPlayFileDirectly,
+// previewCache.mjs) -- a file it doesn't accept gets a preview like any
+// other container. Mirrored in localFileAccess.mjs (main), which tells
+// VidTools whether to ask first.
 const PLAYABLE_VIDEO_EXTENSIONS = new Set(['mp4', 'webm']);
+const DIRECT_PLAY_CHECKED_EXTENSIONS = new Set(['mkv', 'mov', 'm4v', '3gp', 'ogv']);
 
 function getExtension(filePath: string): string {
   const lastDot = filePath.lastIndexOf('.');
   return lastDot === -1 ? '' : filePath.slice(lastDot + 1).toLowerCase();
 }
 
-// Vidstack's own src-type auto-detection doesn't recognize the app's custom
-// app-video:// scheme and silently falls back to treating it as a YouTube
-// embed (an empty iframe, no error) -- an explicit type sidesteps that
-// detection entirely.
-function mimeTypeForExtension(ext: string): 'video/webm' | 'video/mp4' {
-  return ext === 'webm' ? 'video/webm' : 'video/mp4';
-}
-
-// A native-playable extension goes straight to 'ready'. A non-native
-// extension (e.g. MKV) starts in 'preparingPreview' while a playable
-// derivative is generated, landing on 'ready' or 'previewFailed'. With
+// A native-playable extension goes straight to 'ready'. An MKV/MOV/etc.
+// starts in 'checkingPlayback' (just the poster) while main checks its
+// codecs, then goes to 'ready' with the file itself, or on to
+// 'preparingPreview' once a preview starts being made. Any other extension
+// starts in 'preparingPreview' while a playable derivative is generated,
+// landing on 'ready' or 'previewFailed'. With
 // confirmPreview set it waits in 'awaitingPreviewConsent' instead, until the
 // user agrees to the copy being made.
 // 'runtimeFailed' is reachable from either path -- a file that *should* play
 // can still fail at actual decode time. computeInitialState below always
-// resolves synchronously to preparingPreview/ready on the very first render,
+// resolves synchronously to a starting state on the very first render,
 // so there's never a frame where the wrong fallback caption flashes before
 // the mount effect corrects it.
 type PlaybackState =
+  | { kind: 'checkingPlayback' }
   | { kind: 'preparingPreview'; percent: number }
   | { kind: 'previewFailed'; message?: string }
-  | { kind: 'ready'; sourcePath: string; mimeType: 'video/mp4' | 'video/webm' }
+  | { kind: 'ready'; sourcePath: string; mimeType: VideoMimeType }
   | { kind: 'runtimeFailed' }
   | { kind: 'awaitingPreviewConsent' };
 
@@ -83,8 +79,9 @@ function computeInitialState(filePath: string | null, confirmPreview: boolean): 
   if (filePath) {
     const ext = getExtension(filePath);
     if (PLAYABLE_VIDEO_EXTENSIONS.has(ext)) {
-      return { kind: 'ready', sourcePath: filePath, mimeType: mimeTypeForExtension(ext) };
+      return { kind: 'ready', sourcePath: filePath, mimeType: videoMimeTypeForPath(filePath) };
     }
+    if (!confirmPreview && DIRECT_PLAY_CHECKED_EXTENSIONS.has(ext)) return { kind: 'checkingPlayback' };
   }
   return confirmPreview ? { kind: 'awaitingPreviewConsent' } : { kind: 'preparingPreview', percent: 0 };
 }
@@ -186,7 +183,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
 
     const consented = consentedPath === filePath;
     if (isNativePlayable && !consented) {
-      setState({ kind: 'ready', sourcePath: filePath, mimeType: mimeTypeForExtension(ext) });
+      setState({ kind: 'ready', sourcePath: filePath, mimeType: videoMimeTypeForPath(filePath) });
       return;
     }
     if (confirmPreview && !consented) {
@@ -195,19 +192,19 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
       return;
     }
 
-    // Non-native extension (e.g. MKV): ask the backend for a cached or
-    // freshly-generated playback-only derivative before giving up on this
-    // file entirely.
+    // Anything else: ask the backend whether it plays as it is, or for a
+    // cached or freshly-generated playback-only derivative, before giving
+    // up on this file entirely.
     let cancelled = false;
-    setState({ kind: 'preparingPreview', percent: 0 });
+    setState(DIRECT_PLAY_CHECKED_EXTENSIONS.has(ext) && !consented ? { kind: 'checkingPlayback' } : { kind: 'preparingPreview', percent: 0 });
     window.electronAPI.onPreviewGenerationProgress(({ percent }) => {
       if (cancelled) return;
-      setState((prev) => (prev.kind === 'preparingPreview' ? { kind: 'preparingPreview', percent } : prev));
+      setState((prev) => (prev.kind === 'preparingPreview' || prev.kind === 'checkingPlayback' ? { kind: 'preparingPreview', percent } : prev));
     });
     window.electronAPI.ensurePlayablePreview({ filePath }).then((result) => {
       if (cancelled) return;
       if (result.success && result.previewPath) {
-        setState({ kind: 'ready', sourcePath: result.previewPath, mimeType: 'video/mp4' });
+        setState({ kind: 'ready', sourcePath: result.previewPath, mimeType: result.direct ? videoMimeTypeForPath(filePath) : 'video/mp4' });
       } else {
         setState({ kind: 'previewFailed', message: result.message });
       }
@@ -602,7 +599,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             <Typography variant="caption" sx={{ color: 'common.white' }}>Preparing preview...</Typography>
             <LinearProgressWithLabel value={state.percent} valueBuffer={state.percent} />
           </Box>}
-        {state.kind !== 'preparingPreview' && !confirmPreview &&
+        {(state.kind === 'runtimeFailed' || state.kind === 'previewFailed') && !confirmPreview &&
           <Typography
             variant="caption"
             sx={{
@@ -614,7 +611,7 @@ const LibraryVideoPlayer = forwardRef<LibraryVideoPlayerHandle, {
             {state.kind === 'runtimeFailed' && `This .${ext} file couldn't be played here -- use the "Open externally" option.`}
             {state.kind === 'previewFailed' && `Couldn't prepare a playable preview for this .${ext} file -- use the "Open externally" option.`}
           </Typography>}
-        {state.kind !== 'preparingPreview' && confirmPreview &&
+        {state.kind !== 'preparingPreview' && state.kind !== 'checkingPlayback' && confirmPreview &&
           <Box
             sx={{
               position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',

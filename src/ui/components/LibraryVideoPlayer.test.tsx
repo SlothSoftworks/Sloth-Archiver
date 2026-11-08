@@ -261,15 +261,40 @@ describe('LibraryVideoPlayer', () => {
 
   it('asks the backend for a playable preview for a non-native extension, and plays the generated preview once ready', async () => {
     const { container } = render(
-      <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mkv' })} />,
+      <LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.avi' })} />,
     );
     expect(screen.getByText('Preparing preview...')).toBeInTheDocument();
-    expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/c/v1/1/video.mkv' });
+    expect(window.electronAPI.ensurePlayablePreview).toHaveBeenCalledWith({ filePath: '/lib/c/v1/1/video.avi' });
 
     const source = await findSourceEl(container);
     expect(source).toHaveAttribute('src', 'app-video://local/%2Fmock%2Fpreview.mp4?v=0');
     expect(source).toHaveAttribute('type', 'video/mp4');
     expect(screen.queryByText('Preparing preview...')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['/lib/c/v1/1/video.mkv', 'video/mp4'],
+    ['/lib/c/v1/1/video.mov', 'video/mp4'],
+    ['/lib/c/v1/1/video.ogv', 'video/ogg'],
+  ])('plays %s as it is when main says its codecs play, with no preview step shown', async (filePath, type) => {
+    window.electronAPI.ensurePlayablePreview = vi.fn().mockResolvedValue({ success: true, previewPath: filePath, generated: false, direct: true });
+    const { container } = render(<LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: filePath })} />);
+    expect(screen.queryByText('Preparing preview...')).not.toBeInTheDocument();
+
+    const source = await findSourceEl(container);
+    expect(source).toHaveAttribute('src', `app-video://local/${encodeURIComponent(filePath)}?v=0`);
+    expect(source).toHaveAttribute('type', type);
+  });
+
+  it('switches from checking to "Preparing preview" once main starts making one for an MKV', async () => {
+    let progress: ((data: { percent: number }) => void) | null = null;
+    window.electronAPI.onPreviewGenerationProgress = vi.fn((cb) => { progress = cb; });
+    window.electronAPI.ensurePlayablePreview = vi.fn(() => new Promise<never>(() => {}));
+    render(<LibraryVideoPlayer metadata={baseMetadata({ downloadedFilePath: '/lib/c/v1/1/video.mkv' })} />);
+    expect(screen.queryByText('Preparing preview...')).not.toBeInTheDocument();
+
+    act(() => progress!({ percent: 12 }));
+    expect(screen.getByText('Preparing preview...')).toBeInTheDocument();
   });
 
   it('shows an explanatory caption when preview generation itself fails', async () => {

@@ -158,6 +158,18 @@ function formatEpochLabel(epoch: string | number): string {
 // (the protocol handler ignores it, only reading the pathname) purely to
 // force a reload when a file is replaced in place at the same path, e.g. a
 // "download different quality" swap.
+// The source type handed to the player for a file played as it is.
+// Vidstack won't pick its video provider for video/x-matroska or
+// video/quicktime, and Chromium reads the container from the file itself,
+// so MKV/MOV/M4V/3GP go as video/mp4.
+export type VideoMimeType = 'video/mp4' | 'video/webm' | 'video/ogg';
+function videoMimeTypeForPath(filePath: string): VideoMimeType {
+  const ext = filePath.slice(filePath.lastIndexOf('.') + 1).toLowerCase();
+  if (ext === 'webm') return 'video/webm';
+  if (ext === 'ogv') return 'video/ogg';
+  return 'video/mp4';
+}
+
 function buildAppVideoUrl(filePath: string, cacheBustKey = 0): string {
   return `app-video://local/${encodeURIComponent(filePath)}?v=${cacheBustKey}`;
 }
@@ -294,5 +306,5 @@ function cleanElectronErrorMessage(message: string): string {
   return message.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '');
 }
 
-export { isValidUrl, isYouTubeUrl, parseYouTubeChannelUrl, isYouTubeChannelUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatDurationSeconds, formatApproxDate, estimateDownloadBytes, formatBytesApprox, formatEpochLabel, buildAppVideoUrl, getBestDownloadedQuality, getBestDownloadedEpoch, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage, isLongVideoForPostprocess, safeRemoteImageUrl, isValidYouTubeVideoId };
+export { isValidUrl, isYouTubeUrl, parseYouTubeChannelUrl, isYouTubeChannelUrl, getPlatformLabel, convertYYYYMMDDStringToDate, formatDurationSeconds, formatApproxDate, estimateDownloadBytes, formatBytesApprox, formatEpochLabel, buildAppVideoUrl, videoMimeTypeForPath, getBestDownloadedQuality, getBestDownloadedEpoch, responsiveGridTemplateColumns, thumbnailGridTemplateColumns, cleanElectronErrorMessage, isLongVideoForPostprocess, safeRemoteImageUrl, isValidYouTubeVideoId };
 

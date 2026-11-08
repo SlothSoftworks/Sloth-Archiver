@@ -17,7 +17,7 @@ import { downloadImageToFile, createThumbnailFetchers } from './thumbnails.mjs';
 import { createFfmpegRunner } from './ffmpegUtils.mjs';
 import { createRotatingLogWriter, redactHomeDir } from './logFile.mjs';
 import { buildLibraryExport, parseLibraryExport, importLibraryExport, summarizeExport, IMPORT_MAX_BYTES } from './libraryExport.mjs';
-import { ensurePlayablePreview, isChromiumCompatible } from './previewCache.mjs';
+import { ensurePlayablePreview, isChromiumCompatible, canPlayFileDirectly } from './previewCache.mjs';
 import { createLocalFileAccess, validateOpenablePath, isSameFile, isNativePlayableExtension, LOCAL_VIDEO_FILE_EXTENSIONS } from './localFileAccess.mjs';
 import { buildResolutions, reshapeVideoInfo, isDeadVideoInfo, createVideoInfoCache, fetchVideoInfo } from './videoInfo.mjs';
 import { createChannelScanner, createChannelScanSession } from './channelScan.mjs';
@@ -1873,9 +1873,9 @@ export function buildDownloadArgs({ videoUrl, outputPath, resolution, overwriteM
         // constrain against.
         args.push('-f', resolution === 'best' ? 'bestvideo*+bestaudio/best' : `bestvideo[height<=${resolution}]+bestaudio/best`);
         // Without this, yt-dlp's merge step picks MKV whenever the chosen
-        // pair isn't natively MP4-safe (e.g. Opus audio) -- which Chromium's
-        // <video> element can't play at all (see LibraryVideoPlayer.tsx's
-        // PLAYABLE_VIDEO_EXTENSIONS). This only picks the stream-copy
+        // pair isn't natively MP4-safe (e.g. Opus audio). MKV plays too
+        // once its codecs are checked (canPlayFileDirectly, previewCache.mjs),
+        // but an MP4 starts at once with no check. This only picks the stream-copy
         // container, it doesn't transcode, and modern ffmpeg's MP4 muxer
         // already supports every codec this selector can produce, so it's a
         // free fix. Only applies to this default path -- an explicit format
@@ -2547,7 +2547,7 @@ ipcMain.handle('vidtools:openFile', async (e, filePath) => {
         height: videoStream?.height || null,
         videoCodec: videoStream?.codecName || null,
         audioCodec: audioStream?.codecName || null,
-        needsPreview: !isNativePlayableExtension(resolved),
+        needsPreview: !isNativePlayableExtension(resolved) && !canPlayFileDirectly(resolved, streams),
         previewKind: isChromiumCompatible(streams) ? 'remux' : 'reencode',
     };
 });

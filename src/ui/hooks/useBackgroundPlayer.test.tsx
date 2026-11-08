@@ -2,7 +2,7 @@
 import { StrictMode, type ReactNode } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { act, render, renderHook, waitFor } from '@testing-library/react';
-import { BackgroundPlayerProvider, useBackgroundPlayer, videoDetailPathFor, nativelyPlayableSource, type BackgroundPlayerVideo } from './useBackgroundPlayer';
+import { BackgroundPlayerProvider, useBackgroundPlayer, videoDetailPathFor, nativelyPlayableSource, resolvePlayableSource, type BackgroundPlayerVideo } from './useBackgroundPlayer';
 
 function makeVideo(overrides: Partial<BackgroundPlayerVideo> = {}): BackgroundPlayerVideo {
   return {
@@ -20,6 +20,18 @@ describe('videoDetailPathFor', () => {
   it('links into Clip Collection with the clip pre-selected when clipId is set', () => {
     expect(videoDetailPathFor(makeVideo({ videoId: 'abc123', clipId: 'clip1' })))
       .toBe('/library/video/abc123?view=clips&clip=clip1');
+  });
+});
+
+describe('resolvePlayableSource', () => {
+  it('queues the file itself when main says it plays as it is, typed by its container', async () => {
+    window.electronAPI = { ...window.electronAPI, ensurePlayablePreview: vi.fn().mockResolvedValue({ success: true, previewPath: '/lib/c/v1/1/video.ogv', direct: true }) };
+    expect(await resolvePlayableSource('/lib/c/v1/1/video.ogv')).toEqual({ sourcePath: '/lib/c/v1/1/video.ogv', mimeType: 'video/ogg' });
+  });
+
+  it('queues the generated preview as an MP4 otherwise', async () => {
+    window.electronAPI = { ...window.electronAPI, ensurePlayablePreview: vi.fn().mockResolvedValue({ success: true, previewPath: '/lib/c/v1/1/.preview/video.mp4', generated: true }) };
+    expect(await resolvePlayableSource('/lib/c/v1/1/video.mkv')).toEqual({ sourcePath: '/lib/c/v1/1/.preview/video.mp4', mimeType: 'video/mp4' });
   });
 });
 

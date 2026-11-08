@@ -163,11 +163,11 @@ describe('TranscriptPanel', () => {
       const current = await screen.findByText('love. You know the rules and so do');
       await waitFor(() => expect(current.closest('[data-index]')).toHaveAttribute('aria-current', 'true'));
       const lines = screen.getByTestId('transcript-lines');
-      expect(lines.scrollTop).toBe(30);
+      await waitFor(() => expect(lines.scrollTop).toBe(30));
 
       now = 66;
       await waitFor(() => expect(screen.getByText('Never gonna give you up, never gonna let you down').closest('[data-index]')).toHaveAttribute('aria-current', 'true'));
-      expect(lines.scrollTop).toBe(60);
+      await waitFor(() => expect(lines.scrollTop).toBe(60));
       expect(current.closest('[data-index]')).not.toHaveAttribute('aria-current');
     });
 
@@ -185,7 +185,7 @@ describe('TranscriptPanel', () => {
       expect(lines.scrollTop).toBe(5);
 
       await user.click(screen.getByRole('button', { name: 'Back to current' }));
-      expect(lines.scrollTop).toBe(60);
+      await waitFor(() => expect(lines.scrollTop).toBe(60));
       expect(screen.queryByRole('button', { name: 'Back to current' })).not.toBeInTheDocument();
     });
 
